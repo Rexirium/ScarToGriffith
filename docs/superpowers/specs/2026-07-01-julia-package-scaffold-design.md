@@ -5,6 +5,14 @@
 Initialize ScarToGriffith as a conventional Julia package without guessing at
 the eventual physics-domain architecture.
 
+## Scientific Framing
+
+ScarToGriffith investigates the relationship between quantum many-body scars
+(QMBS) and the quantum Griffith phase (QGP). One hypothesis is that QMBS may
+contribute to, or provide a mechanism for, QGP behavior, but the project does
+not assume that this causal relationship is established. Future numerical work
+should distinguish evidence of correlation from evidence of causation.
+
 ## Structure
 
 - `src/ScarToGriffith.jl` defines the top-level `ScarToGriffith` module. It
@@ -32,4 +40,5 @@ test passes.
 
 This initialization does not introduce domain modules, numerical algorithms,
 data formats, plotting APIs, or simulation workflows. Those boundaries should
-be designed when their requirements are known.
+be designed when their requirements are known. In particular, the scaffold
+does not encode a presumed direction of causation between QMBS and QGP.
