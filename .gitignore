@@ -30,7 +30,7 @@ JuliaLocalPreferences.toml
 .vscode/
 **/__pycache__/
 .github/
-**/superpowers
+**/superpowers/
 *.png
 *.pdf
 *.sh
