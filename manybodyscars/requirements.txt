@@ -1,0 +1,5 @@
+matplotlib==3.11.0
+numba==0.65.1
+numpy==2.5.0
+quspin==1.0.1
+scipy==1.18.0
