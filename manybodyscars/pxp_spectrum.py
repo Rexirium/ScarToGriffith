@@ -1,8 +1,8 @@
 import numpy as np
 from quspin.operators import quantum_LinearOperator, quantum_operator
 from quspin.tools.evolution import ED_state_vs_time
-from pxp_basis import pxp_basis_1d
 import matplotlib.pyplot as plt
+from pxp_basis import *
 
 plt.rcParams.update({
     #"text.usetex": True,
@@ -65,7 +65,7 @@ def main(g, r):
     # specify the markersize for scattering
     marksizes = np.where(overlaps > 0.01, 15, 5)
     # label the initial state energy
-    energy_expected = np.dot(E, overlaps)
+    E0 = np.dot(E, overlaps)
 
     # Compute the entanglement entropy of every eigen states
     full_states = basis.pxp_project_from(U, basis_full, enforce_pure=True)
@@ -87,7 +87,7 @@ def main(g, r):
     axes = np.concatenate(([fig.add_subplot(grid[0])], time_axes))
 
     spec = axes[0].scatter(E, overlaps, c=entropies, cmap='plasma', s=marksizes)
-    axes[0].axvline(energy_expected, color="black", linestyle="--")
+    axes[0].axvline(E0, color="black", linestyle="--")
 
     colorbar = fig.colorbar(spec, ax=axes[0], location="right", pad=0.02)
     colorbar.ax.tick_params(length=0, labelsize=10)

@@ -217,6 +217,38 @@ def ops_ent_entropy(self, rho, cut=None):
 
 spin_basis_1d.ops_ent_entropy = ops_ent_entropy
 
+def unfolded_spacings(energies, start=0, stop=None, window=20, etol=1e-6):
+    """
+    Unfolding using local mean density of state in a window with width 2 * window.
+    Levels can be specified in a range betweeen start and stop.
+    """
+    E = np.sort(np.asarray(energies, dtype=float))
+    
+    if stop is None:
+        stop = len(E) - 1
+    
+    idx_start = max(start, window)
+    idx_stop = min(stop, len(E) - window - 1)
+
+    if idx_stop <= idx_start:
+        raise ValueError("level number less than the width of window")
+
+    spacings = []
+
+    for n in range(idx_start, idx_stop):
+        local_mean_gap = (
+            E[n + window] - E[n - window]
+        ) / (2 * window)
+
+        delta = E[n+1] - E[n]
+        if local_mean_gap > 0 and delta > etol:
+            spacings.append(delta / local_mean_gap)
+
+    spacings = np.asarray(spacings)
+    spacings /= np.mean(spacings)
+
+    return spacings
+
 
 if __name__ == "__main__":
     rng = np.random.default_rng()
