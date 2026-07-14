@@ -11,7 +11,7 @@ plt.rcParams.update({
     "xtick.direction": "in",
     "ytick.direction": "in", 
     "legend.frameon": False,
-    "legend.edgecolor": 'none'
+    "legend.edgecolor": "none"
 })
 
 L = 16

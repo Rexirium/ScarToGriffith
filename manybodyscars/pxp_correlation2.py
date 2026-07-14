@@ -11,12 +11,12 @@ plt.rcParams.update({
     "xtick.direction": "in",
     "ytick.direction": "in", 
     "legend.frameon": False,
-    "legend.edgecolor": 'none'
+    "legend.edgecolor": "none"
 })
 
 L = 20
 g, r = -0.4, 0.2
-Temp = 100.0
+Temp = 1.0
 beta = 1 / Temp
 
 # Basis construction
