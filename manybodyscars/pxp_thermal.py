@@ -1,7 +1,7 @@
 import numpy as np
 from quspin.operators import hamiltonian
 import matplotlib.pyplot as plt
-from pxp_basis import pxp_basis_1d
+from pxp_basis import *
 
 plt.rcParams.update({
     #"text.usetex": True,
