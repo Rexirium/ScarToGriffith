@@ -19,6 +19,7 @@ L = 20
 # Basis construction
 basis = pxp_basis_1d(L, a=2, kblock=0)
 basis_full = pxp_basis_1d(L)
+dim = basis.Ns
 
 # Hamiltonian parameters
 eltype = np.float64
@@ -28,8 +29,6 @@ no_checks = dict(check_symm=False, check_pcon=False, check_herm=False)
 Z2state = np.zeros(basis.Ns, dtype=eltype)
 Z2idx = basis.index("10" * (L // 2))
 Z2state[Z2idx] = 1.0
-# time steps
-ts = np.linspace(0.0, 40.0, 2001)
 
 # local correlation to evaluate
 zz_local = quantum_LinearOperator(
@@ -51,7 +50,7 @@ H_pxp_operator = quantum_operator(
 )
 
 
-def main(g, r): 
+def main(g, r, ts:np.ndarray): 
     H_pxp = H_pxp_operator.tohamiltonian(
         {"x": 1.0, "z": g, "zzz": g * r}
     )
@@ -59,6 +58,9 @@ def main(g, r):
     # Diagonalizing
     E, U = H_pxp.eigh()
     print(f"g={g:.1f} r={r:.1f} PXP spectrum solved.")
+    
+    start, stop = int(np.floor(dim / 6)), dim - int(np.floor(dim / 6))
+    spacings = unfolded_spacings(E, start=start, stop=stop, window=5, etol=1e-8)
 
     # compute overlaps
     overlaps = np.abs(U[Z2idx, :]) ** 2
@@ -80,14 +82,17 @@ def main(g, r):
     z2_overlap_t = np.abs(states_t[Z2idx]) ** 2
 
     # Plotting
-    fig = plt.figure(figsize=(6, 8),layout="constrained")
-    grid = fig.add_gridspec(2, 1, height_ratios=(1.3, 2))
-    time_grid = grid[1].subgridspec(2, 1, hspace=0)
+    fig = plt.figure(figsize=(10, 8), layout="constrained")
+    grid = fig.add_gridspec(3, 2, height_ratios=(1.3, 1, 1))
+    time_grid = grid[1:, :].subgridspec(2, 1, hspace=0)
     time_axes = time_grid.subplots(sharex=True)
-    axes = np.concatenate(([fig.add_subplot(grid[0])], time_axes))
+    axes = np.concatenate((
+        [fig.add_subplot(grid[0, 0]), fig.add_subplot(grid[0, 1])],
+        time_axes,
+    ))
 
     spec = axes[0].scatter(E, overlaps, c=entropies, cmap='plasma', s=marksizes)
-    axes[0].axvline(E0, color="black", linestyle="--")
+    axes[0].axvline(E0, color="black", linestyle="--", lw=1)
 
     colorbar = fig.colorbar(spec, ax=axes[0], location="right", pad=0.02)
     colorbar.ax.tick_params(length=0, labelsize=10)
@@ -96,27 +101,24 @@ def main(g, r):
         xlabel=r"$E_n$", ylabel=r"$|\langle \mathbb{Z}_2 |\psi \rangle|^2$", 
     )
     axes[0].set_yscale("log")
-    axes[0].set_ylim(1e-12, 1.0)
+    axes[0].set_ylim(1e-15, 1.0)
 
-    axes[1].plot(ts, zz_correlation_t)
-    axes[1].set(
-        ylabel=r"$\langle Z_{i}Z_{i+1}\rangle$",
-    )
-    axes[1].tick_params(axis="x", labelbottom=False, bottom=False)
+    axes[1].hist(spacings, bins=30, density=True, histtype="stepfilled", alpha=0.7)
+    axes[1].set(xlabel=r"$s$", ylabel=r"$P(s)$")
 
-    axes[2].plot(ts, z2_overlap_t)
-    axes[2].set(
-        xlabel=r"$t$",
-        ylabel=r"$|\langle \mathbb{Z}_2|\psi(t)\rangle|^2$",
-    )
+    axes[2].plot(ts, zz_correlation_t)
+    axes[2].set(ylabel=r"$\langle Z_{i}Z_{i+1}\rangle$")
+    axes[2].tick_params(axis="x", labelbottom=False, bottom=False)
+
+    axes[3].plot(ts, z2_overlap_t)
+    axes[3].set(xlabel=r"$t$", ylabel=r"$|\langle \mathbb{Z}_2|\psi(t)\rangle|^2$")
     # plt.show()
-    plt.savefig(f"manybodyscars/figures/pxp_zandzzz_L={L}_g={g:.1f}_ratio={r:.1f}.png")
+    plt.savefig(f"manybodyscars/figures/pxp_spectrum_L={L}_g={g:.1f}_r={r:.1f}.png")
     plt.close(fig)
 
 
 gs = np.linspace(-0.5, -0.0, 6)
 rs = np.linspace(0.0, 0.5, 6)
+ts = np.linspace(0.0, 100.0, 1001)
 
-for g in gs:
-    for r in rs:
-        main(g, r)
+main(-0.4, 0.2, ts)

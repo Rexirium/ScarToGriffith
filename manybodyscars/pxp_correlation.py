@@ -15,8 +15,8 @@ plt.rcParams.update({
 })
 
 L = 16
-g, r = -0.3, 0.0
-Temp = 0.1
+g, r = -0.4, 0.2
+Temp = 0.5
 beta = 1 / Temp
 
 # Basis construction
@@ -85,5 +85,5 @@ ax.set(
     ylabel=r"$C_{\mathrm{conn}}(t) / L$",
     title=rf"$L={L},\ g={g},\ r={r},\ T={Temp}$"
 )
-# plt.savefig(f"manybodyscars/figures/pxp_autocorr_L={L}_g={g:.1f}_r={r:.1f}_T={Temp:.1f}.png", dpi=300)
-plt.show()
+plt.savefig(f"manybodyscars/figures/pxp_autocorr_L={L}_g={g:.1f}_r={r:.1f}_T={Temp:.1f}.png", dpi=300)
+# plt.show()

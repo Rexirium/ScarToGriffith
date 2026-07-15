@@ -16,7 +16,7 @@ plt.rcParams.update({
     "legend.edgecolor": "none"
 })
 
-L = 20
+L = 16
 g, r = -0.4, 0.2
 h = -0.05
 # Basis construction
@@ -51,7 +51,7 @@ Z2state = np.zeros(dim, dtype=eltype)
 Z2idx = basis.index("10" * (L // 2))
 Z2state[Z2idx] = 1.0
 # time steps
-ts = np.linspace(0.0, 40.0, 2001)
+ts = np.linspace(0.0, 100.0, 1001)
 
 # local correlation to evaluate
 zz_local = quantum_LinearOperator(
@@ -105,22 +105,13 @@ axes[0].set_yscale("log")
 axes[0].set_ylim(1e-15, 1.0)
 
 axes[1].hist(spacings, bins=30, density=True, histtype="stepfilled", alpha=0.7)
-axes[1].set(
-    xlabel=r"$s$",
-    ylabel=r"$P(s)$",
-)
+axes[1].set(xlabel=r"$s$", ylabel=r"$P(s)$")
 
 axes[2].plot(ts, zz_correlation_t)
-axes[2].set(
-    ylabel=r"$\langle Z_{i}Z_{i+1}\rangle$",
-)
+axes[2].set(ylabel=r"$\langle Z_{i}Z_{i+1}\rangle$")
 axes[2].tick_params(axis="x", labelbottom=False, bottom=False)
 
 axes[3].plot(ts, z2_overlap_t)
-axes[3].set(
-    xlabel=r"$t$",
-    ylabel=r"$|\langle \mathbb{Z}_2|\psi(t)\rangle|^2$",
-)
+axes[3].set(xlabel=r"$t$", ylabel=r"$|\langle \mathbb{Z}_2|\psi(t)\rangle|^2$")
 # plt.show()
-# plt.savefig(f"manybodyscars/figures/pxp_zandzzz_L={L}_g={g:.1f}_ratio={r:.1f}.png")
-plt.show()
+plt.savefig(f"manybodyscars/figures/pxp_spectrum_L={L}_g={g:.1f}_r={r:.1f}.png")

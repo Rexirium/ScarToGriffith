@@ -38,6 +38,16 @@ if !isdefined(@__MODULE__, :ScarToGriffith)
 end
 ```
 
+## Skill Development
+
+- Create skills needed specifically by this repository directly under
+  `.agents/skills/<skill-name>`, and update those repository skills in place.
+- For repository-specific skills, run the initializer with
+  `--path .agents/skills` and do not stage them in `.skill-build`.
+- Create cross-project, globally reusable skills under
+  `%USERPROFILE%\.codex\skills\<skill-name>` unless another location is
+  explicitly requested.
+
 ## Development Conventions
 
 - Use four-space indentation and standard Julia naming conventions.
