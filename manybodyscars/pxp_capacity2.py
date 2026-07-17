@@ -50,40 +50,52 @@ def build_pxp_terms(L, r):
     }
 
 
-def canonical_observables(sector_spectra, multiplicities, Ts):
-    """Total energy and heat capacity at fixed temperatures, with k_B = 1."""
-    energy_shift = min(spectrum[0] for spectrum in sector_spectra)
-    betas = 1.0 / Ts
-    partition = np.zeros_like(Ts)
-    first_moment = np.zeros_like(Ts)
-    second_moment = np.zeros_like(Ts)
+def update_thermal_accumulators(
+    spectrum,
+    multiplicity,
+    betas,
+    energy_shift,
+    partition,
+    first_moment,
+    second_moment,
+):
+    """Add one sector spectrum to stable online thermal sums."""
+    new_shift = min(energy_shift, spectrum[0])
 
-    for spectrum, multiplicity in zip(sector_spectra, multiplicities):
-        shifted_energy = spectrum - energy_shift
-        boltzmann = np.exp(-np.outer(betas, shifted_energy))
-        partition += multiplicity * boltzmann.sum(axis=1)
-        first_moment += multiplicity * (boltzmann @ shifted_energy)
-        second_moment += multiplicity * (
-            boltzmann @ np.square(shifted_energy)
+    if np.isfinite(energy_shift) and new_shift < energy_shift:
+        shift_change = energy_shift - new_shift
+        rescale = np.exp(-betas * shift_change)
+        second_moment[:] = rescale * (
+            second_moment
+            + 2.0 * shift_change * first_moment
+            + np.square(shift_change) * partition
         )
+        first_moment[:] = rescale * (
+            first_moment + shift_change * partition
+        )
+        partition *= rescale
 
-    mean_shifted_energy = first_moment / partition
-    energy_variance = np.maximum(
-        second_moment / partition - np.square(mean_shifted_energy),
-        0.0,
+    shifted_energy = spectrum - new_shift
+    boltzmann = np.exp(-np.outer(betas, shifted_energy))
+    partition += multiplicity * boltzmann.sum(axis=1)
+    first_moment += multiplicity * (boltzmann @ shifted_energy)
+    second_moment += multiplicity * (
+        boltzmann @ np.square(shifted_energy)
     )
-    energy = energy_shift + mean_shifted_energy
-    capacity = np.square(betas) * energy_variance
-    return energy, capacity
+    return new_shift
 
 
-def thermodynamics_vs_temperature(L, g_values, r, Ts):
-    """Compute energy and C_V versus T for a small set of g values."""
+def thermodynamics_vs_g(L, g_values, r, Ts):
+    """Compute U(g) and C_V(g) with online thermal accumulation."""
     g_values = np.asarray(g_values, dtype=float)
     Ts = np.asarray(Ts, dtype=float)
+    betas = 1.0 / Ts
     operator_terms = build_pxp_terms(L, r)
-    spectra_by_g = [[] for _ in g_values]
-    multiplicities = []
+    shape = (g_values.size, Ts.size)
+    energy_shifts = np.full(g_values.size, np.inf)
+    partitions = np.zeros(shape)
+    first_moments = np.zeros(shape)
+    second_moments = np.zeros(shape)
 
     for k, multiplicity in independent_momentum_sectors(L):
         basis = pxp_basis_1d(L, a=2, kblock=k)
@@ -93,40 +105,55 @@ def thermodynamics_vs_temperature(L, g_values, r, Ts):
             dtype=MATRIX_DTYPE,
             **NO_CHECKS,
         )
-        multiplicities.append(multiplicity)
         for g_index, g in enumerate(g_values):
             spectrum = parameterized_hamiltonian.eigvalsh(
                 pars={"pxp": 1.0, "deformation": g}
             )
-            spectra_by_g[g_index].append(spectrum)
+            energy_shifts[g_index] = update_thermal_accumulators(
+                spectrum,
+                multiplicity,
+                betas,
+                energy_shifts[g_index],
+                partitions[g_index],
+                first_moments[g_index],
+                second_moments[g_index],
+            )
 
-    energies = np.empty((g_values.size, Ts.size))
-    capacities = np.empty_like(energies)
-    for g_index, sector_spectra in enumerate(spectra_by_g):
-        energies[g_index], capacities[g_index] = canonical_observables(
-            sector_spectra, multiplicities, Ts
-        )
+    mean_shifted_energy = first_moments / partitions
+    energy_variances = np.maximum(
+        second_moments / partitions - np.square(mean_shifted_energy),
+        0.0,
+    )
+    energies = energy_shifts[:, None] + mean_shifted_energy
+    capacities = np.square(betas)[None, :] * energy_variances
     return energies, capacities
 
 
-def plot_thermodynamics_vs_temperature(
-    Ts,
+def plot_thermodynamics_vs_g(
     g_values,
+    Ts,
     energies,
     capacities,
     L,
     r,
     output_path,
 ):
-    """Plot energy and C_V versus temperature for each g."""
+    """Plot U(g) and C_V(g) at several fixed temperatures."""
     fig, axes = plt.subplots(1, 2, figsize=(10, 4), layout="constrained")
-    for g_index, g in enumerate(g_values):
-        label = rf"$g={g:g}$"
-        axes[0].plot(Ts, energies[g_index], label=label)
-        axes[1].plot(Ts, capacities[g_index], label=label)
+    for T_index, T in enumerate(Ts):
+        axes[0].plot(
+            g_values,
+            energies[:, T_index],
+            label=rf"$T={T:g}$",
+        )
+        axes[1].plot(
+            g_values,
+            capacities[:, T_index],
+            label=rf"$T={T:g}$",
+        )
 
-    axes[0].set(xlabel=r"$T$", ylabel=r"$\langle H\rangle$")
-    axes[1].set(xlabel=r"$T$", ylabel=r"$C_V$")
+    axes[0].set(xlabel=r"$g$", ylabel=r"$\langle H\rangle$")
+    axes[1].set(xlabel=r"$g$", ylabel=r"$C_V$")
     for axis in axes:
         axis.legend()
     fig.suptitle(rf"$L={L},\ r={r:g}$")
@@ -139,20 +166,20 @@ def plot_thermodynamics_vs_temperature(
 
 def main():
     L, r = 20, 0.2
-    g_values = np.array([0.0, -0.1, -0.2, -0.3, -0.4, -0.5])
-    Ts = np.linspace(0.05, 8.0, 200)
+    g_values = np.linspace(-0.5, 0.0, 51)
+    Ts = np.array([0.01, 0.1, 0.2, 0.5, 0.8, 1.0])
 
-    energies, capacities = thermodynamics_vs_temperature(
+    energies, capacities = thermodynamics_vs_g(
         L, g_values, r, Ts
     )
     output_path = (
         Path(__file__).resolve().parent
         / "figures"
-        / f"pxp_capacity_T_L={L}_r={r:.1f}.png"
+        / f"pxp_capacity_g_L={L}_r={r:.1f}.png"
     )
-    fig = plot_thermodynamics_vs_temperature(
-        Ts,
+    fig = plot_thermodynamics_vs_g(
         g_values,
+        Ts,
         energies,
         capacities,
         L,
