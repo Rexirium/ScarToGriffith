@@ -3,6 +3,26 @@ from quspin.operators import hamiltonian
 import matplotlib.pyplot as plt
 from pxp_basis import *
 
+def averaging(arr, window=10):
+    """Return the local moving average of a one-dimensional array."""
+    arr = np.asarray(arr)
+    if arr.ndim != 1:
+        raise ValueError("arr must be one-dimensional")
+    if not isinstance(window, (int, np.integer)) or window < 0:
+        raise ValueError("window must be a non-negative integer")
+    if arr.size == 0:
+        return arr.astype(np.result_type(arr.dtype, np.float64))
+
+    indices = np.arange(arr.size)
+    starts = np.maximum(indices - window, 0)
+    stops = np.minimum(indices + window + 1, arr.size)
+
+    dtype = np.result_type(arr.dtype, np.float64)
+    cumulative_sum = np.concatenate(
+        (np.zeros(1, dtype=dtype), np.cumsum(arr, dtype=dtype))
+    )
+    return (cumulative_sum[stops] - cumulative_sum[starts]) / (stops - starts)
+
 plt.rcParams.update({
     #"text.usetex": True,
     "font.family": "serif",
@@ -16,7 +36,7 @@ plt.rcParams.update({
 
 L = 16
 g, r = -0.4, 0.2
-Temp = 0.5
+Temp = 0.1
 beta = 1 / Temp
 
 # Basis construction
@@ -76,14 +96,15 @@ phases = np.exp(1j * np.outer(ts, E1))
 corrs_raw = np.einsum("tb,tb->t", phases @ W, phases.conj(), optimize=True)
 corrs_t = np.einsum("tb,tb->t", phases @ W_t, phases.conj(), optimize=True)
 
-corrs = (corrs_raw - corrs_t).real / L
+corrs = abs(corrs_raw - corrs_t) / L
+corrs_avg = averaging(corrs, window=20)
 
 fig, ax = plt.subplots()
-ax.plot(ts, corrs)
+ax.plot(ts, corrs_avg)
 ax.set(
     xlabel=r"$t$", 
     ylabel=r"$C_{\mathrm{conn}}(t) / L$",
     title=rf"$L={L},\ g={g},\ r={r},\ T={Temp}$"
 )
-plt.savefig(f"manybodyscars/figures/pxp_autocorr_L={L}_g={g:.1f}_r={r:.1f}_T={Temp:.1f}.png", dpi=300)
+plt.savefig(f"manybodyscars/figures/pxp_autocorr_avg_L={L}_g={g:.1f}_r={r:.1f}_T={Temp:.1f}.png", dpi=300)
 # plt.show()

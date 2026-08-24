@@ -140,7 +140,7 @@ def plot_thermodynamics_vs_temperature(
 def main():
     L, r = 20, 0.2
     g_values = np.array([0.0, -0.1, -0.2, -0.3, -0.4, -0.5])
-    Ts = np.linspace(0.05, 8.0, 200)
+    Ts = np.linspace(0.02, 2.0, 200)
 
     energies, capacities = thermodynamics_vs_temperature(
         L, g_values, r, Ts
