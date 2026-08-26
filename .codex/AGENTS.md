@@ -33,7 +33,7 @@ Load the module without redefining it:
 
 ```julia
 if !isdefined(@__MODULE__, :ScarToGriffith)
-    include("src/ScarToGriffith.jl")
+    include("../src/ScarToGriffith.jl")
     using .ScarToGriffith
 end
 ```

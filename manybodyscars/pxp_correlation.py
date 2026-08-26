@@ -109,10 +109,11 @@ boltzmann = np.exp(-beta * (E0 - E0.min()))
 weights = boltzmann / boltzmann.sum()
 
 S = U1.conj().T @ U0
-rho_E = (S * weights[None, :]) @ S.conj().T
-# rho0_E = (U0 * weights[None, :]) @ U0.conj().T
-# rho = basis.pxp_project_from(rho0_E, basis_full)
-# rho_E = U1 @ rho @ U1.conj().T
+rho_quench_E = (S * weights[None, :]) @ S.conj().T
+# Dephase the initial state in the H1 eigenbasis while retaining its populations.
+populations = np.real(np.diag(rho_quench_E)).copy()
+populations /= populations.sum()
+rho_E = np.diag(populations)
 
 W = np.zeros((basis_full.Ns, basis_full.Ns), dtype=np.complex128)
 W_t = np.zeros((basis_full.Ns, basis_full.Ns), dtype=np.complex128)
