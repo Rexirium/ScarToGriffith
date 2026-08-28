@@ -4,26 +4,7 @@ import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
 from scipy.signal import find_peaks
 from pxp_basis import *
-
-def averaging(arr, window=10):
-    """Return the local moving average of a one-dimensional array."""
-    arr = np.asarray(arr)
-    if arr.ndim != 1:
-        raise ValueError("arr must be one-dimensional")
-    if not isinstance(window, (int, np.integer)) or window < 0:
-        raise ValueError("window must be a non-negative integer")
-    if arr.size == 0:
-        return arr.astype(np.result_type(arr.dtype, np.float64))
-
-    indices = np.arange(arr.size)
-    starts = np.maximum(indices - window, 0)
-    stops = np.minimum(indices + window + 1, arr.size)
-
-    dtype = np.result_type(arr.dtype, np.float64)
-    cumulative_sum = np.concatenate(
-        (np.zeros(1, dtype=dtype), np.cumsum(arr, dtype=dtype))
-    )
-    return (cumulative_sum[stops] - cumulative_sum[starts]) / (stops - starts)
+from utils import averaging
 
 
 def exponential_decay(t, amplitude, decay_rate, plateau):
@@ -109,11 +90,11 @@ boltzmann = np.exp(-beta * (E0 - E0.min()))
 weights = boltzmann / boltzmann.sum()
 
 S = U1.conj().T @ U0
-rho_quench_E = (S * weights[None, :]) @ S.conj().T
+rho_E = (S * weights[None, :]) @ S.conj().T
 # Dephase the initial state in the H1 eigenbasis while retaining its populations.
-populations = np.real(np.diag(rho_quench_E)).copy()
-populations /= populations.sum()
-rho_E = np.diag(populations)
+# populations = np.real(np.diag(rho_quench_E)).copy()
+# populations /= populations.sum()
+# rho_E = np.diag(populations)
 
 W = np.zeros((basis_full.Ns, basis_full.Ns), dtype=np.complex128)
 W_t = np.zeros((basis_full.Ns, basis_full.Ns), dtype=np.complex128)
@@ -136,7 +117,8 @@ phases = np.exp(1j * np.outer(ts, E1))
 corrs_raw = np.einsum("tb,tb->t", phases @ W, phases.conj(), optimize=True)
 corrs_t = np.einsum("tb,tb->t", phases @ W_t, phases.conj(), optimize=True)
 
-corrs = abs(corrs_raw - corrs_t) / L
+corrs = np.real(corrs_raw - corrs_t) / L
+
 fit_parameters, fit_errors, envelope_indices = fit_power_law_decay(ts, corrs)
 amplitude, exponent, plateau = fit_parameters
 amplitude_error, exponent_error, plateau_error = fit_errors

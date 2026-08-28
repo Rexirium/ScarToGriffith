@@ -249,6 +249,25 @@ def unfolded_spacings(energies, start=0, stop=None, window=20, etol=1e-6):
 
     return spacings
 
+def averaging(arr, window=10):
+    """Return the local moving average of a one-dimensional array."""
+    arr = np.asarray(arr)
+    if arr.ndim != 1:
+        raise ValueError("arr must be one-dimensional")
+    if not isinstance(window, (int, np.integer)) or window < 0:
+        raise ValueError("window must be a non-negative integer")
+    if arr.size == 0:
+        return arr.astype(np.result_type(arr.dtype, np.float64))
+
+    indices = np.arange(arr.size)
+    starts = np.maximum(indices - window, 0)
+    stops = np.minimum(indices + window + 1, arr.size)
+
+    dtype = np.result_type(arr.dtype, np.float64)
+    cumulative_sum = np.concatenate(
+        (np.zeros(1, dtype=dtype), np.cumsum(arr, dtype=dtype))
+    )
+    return (cumulative_sum[stops] - cumulative_sum[starts]) / (stops - starts)
 
 if __name__ == "__main__":
     rng = np.random.default_rng()
