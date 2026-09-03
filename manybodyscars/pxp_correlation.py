@@ -1,8 +1,8 @@
 import numpy as np
 from quspin.operators import hamiltonian
 import matplotlib.pyplot as plt
-from scipy.optimize import curve_fit
 from scipy.signal import find_peaks
+from scipy.stats import linregress
 from pxp_basis import *
 from utils import averaging
 
@@ -12,9 +12,9 @@ def exponential_decay(t, amplitude, decay_rate, plateau):
     return amplitude * np.exp(-decay_rate * t) + plateau
 
 
-def power_law_decay(t, amplitude, exponent, plateau):
-    """Power-law decay regularized at t = 0 with a finite-size plateau."""
-    return amplitude * (1.0 + t) ** (-exponent) + plateau
+def power_law_decay(t, amplitude, exponent):
+    """Power-law decay C(t) = A t^(-alpha)."""
+    return amplitude * t ** (-exponent)
 
 
 def upper_envelope_indices(corrs):
@@ -29,19 +29,19 @@ def upper_envelope_indices(corrs):
 
 
 def fit_power_law_decay(ts, corrs, t_fit):
-    """Fit C(t) = A (1 + t)^(-alpha) + C_inf for t <= t_fit."""
+    """Fit log(C) = log(A) - alpha log(t) for t <= t_fit."""
     fit_indices = np.flatnonzero(ts <= t_fit)
     fit_ts = ts[fit_indices]
     fit_corrs = corrs[fit_indices]
-    plateau_guess = np.median(fit_corrs[-max(1, fit_corrs.size // 5):])
-    parameters, covariance = curve_fit(
-        power_law_decay,
-        fit_ts,
-        fit_corrs,
-        p0=(fit_corrs[0] - plateau_guess, 1.0, plateau_guess),
-        bounds=(0.0, np.inf),
-    )
-    return parameters, np.sqrt(np.diag(covariance)), fit_indices
+    if np.any(fit_ts <= 0.0) or np.any(fit_corrs <= 0.0):
+        raise ValueError("fit times and correlations must be positive")
+
+    regression = linregress(np.log(fit_ts), np.log(fit_corrs))
+    amplitude = np.exp(regression.intercept)
+    parameters = np.array([amplitude, -regression.slope])
+    errors = np.array([amplitude * regression.intercept_stderr, regression.stderr])
+    r_squared = regression.rvalue**2
+    return parameters, errors, fit_indices, r_squared
 
 plt.rcParams.update({
     #"text.usetex": True,
@@ -59,8 +59,9 @@ g, r = -0.4, 0.2
 Temp = 1
 beta = 1 / Temp
 
-t_final = 50
-t_fit = 20
+t_final = 100
+t_fit = 50
+t_min = 0.1
 
 # Basis construction
 basis = pxp_basis_1d(L, a=2, kblock=0)
@@ -120,24 +121,26 @@ def correlation(t):
     phase = np.exp(1j * E1 * t)
     return phase @ (W - W_t) @ phase.conj() / L
 
-ts = np.linspace(0.0, t_final, 501)
+ts = np.geomspace(t_min, t_final, 501)
 phases = np.exp(1j * np.outer(ts, E1))
 corrs_raw = np.einsum("tb,tb->t", phases @ W, phases.conj(), optimize=True)
 corrs_t = np.einsum("tb,tb->t", phases @ W_t, phases.conj(), optimize=True)
 
 corrs = np.real(corrs_raw - corrs_t) / L
 
-fit_parameters, fit_errors, fit_indices = fit_power_law_decay(ts, corrs, t_fit)
-amplitude, exponent, plateau = fit_parameters
-amplitude_error, exponent_error, plateau_error = fit_errors
+fit_parameters, fit_errors, fit_indices, r_squared = fit_power_law_decay(
+    ts, corrs, t_fit
+)
+amplitude, exponent = fit_parameters
+amplitude_error, exponent_error = fit_errors
 corrs_fit = power_law_decay(ts, *fit_parameters)
 
 print(
-    f"Fit over t <= {t_fit:g}: C(t) = A (1 + t)^(-alpha) + C_inf:\n"
+    f"Log-log fit over t <= {t_fit:g}: C(t) = A t^(-alpha):\n"
     f"  fit points = {fit_indices.size}\n"
     f"  A       = {amplitude:.6g} +/- {amplitude_error:.2g}\n"
     f"  alpha   = {exponent:.6g} +/- {exponent_error:.2g}\n"
-    f"  C_inf   = {plateau:.6g} +/- {plateau_error:.2g}"
+    f"  R^2     = {r_squared:.6g}"
 )
 
 fig, ax = plt.subplots()
@@ -167,8 +170,10 @@ ax.plot(
 ax.set(
     xlabel=r"$t$", 
     ylabel=r"$C_{\mathrm{conn}}(t) / L$",
-    title=rf"$L={L},\ g={g},\ r={r},\ T={Temp}$"
+    title=rf"$L={L},\ g={g},\ r={r},\ T={Temp}$",
+    xscale="log",
+    yscale="log",
 )
 ax.legend()
-# plt.savefig(f"manybodyscars/figures/pxp_autocorr_avg_L={L}_g={g:.1f}_r={r:.1f}_T={Temp:.1f}.png", dpi=300)
-plt.show()
+plt.savefig(f"manybodyscars/figures/pxp_autocorr_avg_L={L}_g={g:.1f}_r={r:.1f}_T={Temp:.1f}.png", dpi=300)
+# plt.show()

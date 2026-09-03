@@ -1,0 +1,332 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx} % Required for inserting images
+\graphicspath{{../manybodyscars/figures/}}
+\usepackage{hyperref}
+\usepackage{mathtools,amssymb}
+\usepackage{amsthm}
+\usepackage{mathrsfs}
+\usepackage{fancyhdr}
+\usepackage{subcaption}
+\captionsetup{font=small,labelfont=bf}
+\usepackage{float}
+\usepackage{mathdots}
+\usepackage{physics}
+\usepackage{indentfirst}
+% \usepackage{fontspec} % Enable with XeLaTeX or LuaLaTeX for custom fonts.
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue,
+  citecolor=blue,
+  urlcolor=blue
+}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{From Quantum Many-Body Scars to Slow Dynamics}
+\fancyhead[R]{Research note}
+\fancyfoot[C]{\thepage}
+\setlength{\headheight}{14pt}
+
+\newcommand{\Hpxp}{H_{\mathrm{PXP}}}
+\newcommand{\Ztwo}{\mathbb{Z}_2}
+\newcommand{\Xtilde}{\widetilde{X}}
+
+\title{From Quantum Many-Body Scars to Slow Dynamics\\
+  \large Exact Diagonalization of a Deformed PXP Chain}
+\author{Zihao Xu}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This note summarizes a numerical study of a periodically closed, constrained spin
+chain derived from the PXP model. The Hamiltonian combines the standard
+Rydberg-blockaded spin-flip term with staggered one-spin and three-spin diagonal
+perturbations. Exact diagonalization is used to resolve the spectrum, identify
+eigenstates with anomalously large overlap with the charge-density-wave product
+state $\ket{\Ztwo}$, and compute equilibrium thermodynamic quantities. The
+largest-overlap scarred eigenstate is found in the low-energy part of the finite-size
+spectrum. The nonequilibrium calculation probes a connected local
+$X$-autocorrelation after a thermal quench. Its early-time decay is fitted directly,
+without selecting peaks, by linear regression of $\log C_X(t)$ against $\log t$.
+The observed power-law decay provides a concrete measure of slow relaxation. It
+motivates comparison with Griffiths-like dynamics, but it does not by itself
+establish a Griffiths phase.
+\end{abstract}
+
+\section{Motivation}
+
+Experiments on Rydberg-atom arrays revealed persistent oscillations following a
+quench from an ordered state, despite the absence of conventional integrability.
+The corresponding constrained spin model supports atypical
+eigenstates embedded in an otherwise thermal spectrum. These states, now called
+quantum many-body scars, violate the usual expectation that all finite-energy-density
+eigenstates of a generic interacting system locally resemble thermal equilibrium.
+
+The present project asks how this scarred spectral structure changes when the PXP
+chain is deformed so that the most strongly scarred state moves toward low energy.
+The numerical workflow connects three complementary diagnostics: the exact energy
+spectrum and $\Ztwo$ overlaps, the canonical heat capacity, and the relaxation of a
+local autocorrelation function. The first diagnoses atypical eigenstates, the second
+tests their thermodynamic context, and the third measures the timescale on which local
+memory is lost.
+
+\section{Constrained spin model}
+
+Consider a periodic chain of $L$ spin-$1/2$ degrees of freedom. Let $X_i$ and
+$Z_i$ denote Pauli operators, and define
+\begin{equation}
+  n_i=\frac{1+Z_i}{2},
+  \qquad
+  P_i=1-n_i=\frac{1-Z_i}{2}.
+\end{equation}
+The Rydberg blockade restricts the Hilbert space to configurations satisfying
+\begin{equation}
+  n_i n_{i+1}=0
+  \quad \text{for every }i,
+\end{equation}
+with site labels understood modulo $L$. Within this constrained space, a local spin
+flip is equivalent to
+\begin{equation}
+  \Xtilde_i=P_{i-1}X_iP_{i+1},
+\end{equation}
+and the standard PXP Hamiltonian is
+\begin{equation}
+  \Hpxp=\sum_{i=0}^{L-1}\Xtilde_i.
+\end{equation}
+
+The model studied here adds staggered diagonal perturbations,
+\begin{equation}
+  H(g,r)=\Hpxp
+  +g\sum_{i=0}^{L-1}(-1)^i
+  \left(Z_i+r Z_{i-1}Z_iZ_{i+1}\right).
+  \label{eq:hamiltonian}
+\end{equation}
+The parameter $g$ sets the overall strength of the deformation and $r$ fixes the
+relative weight of the three-spin term. The staggering reduces one-site translation
+symmetry to translation by two sites. Equation~\eqref{eq:hamiltonian} is implemented
+in a custom constrained basis and diagonalized with QuSpin.
+
+The reference product state is
+\begin{equation}
+  \ket{\Ztwo}=\ket{1010\cdots},
+\end{equation}
+which is invariant under translation by two sites and therefore belongs to the
+zero-momentum sector of that symmetry.
+
+\section{Exact diagonalization and scarred eigenstates}
+
+For the spectral calculation, the Hamiltonian is represented in the two-site
+translation sector $k=0$. The current calculation uses $L=20$ and obtains the full
+dense eigendecomposition
+\begin{equation}
+  H(g,r)\ket{E_n}=E_n\ket{E_n}.
+\end{equation}
+For each eigenstate, the principal scar diagnostic is its overlap with the ordered
+state,
+\begin{equation}
+  w_n=\abs{\braket{\Ztwo}{E_n}}^2.
+  \label{eq:overlap}
+\end{equation}
+The spectral location of the initial state can also be summarized by
+\begin{equation}
+  E_{\Ztwo}=\mel{\Ztwo}{H}{\Ztwo}
+  =\sum_n E_n w_n.
+\end{equation}
+
+The numerical spectrum contains a small set of eigenstates whose values of $w_n$ are
+anomalously large compared with nearby eigenstates. These outliers are identified as
+quantum many-body scar candidates. For the deformation of principal interest,
+$g=-0.4$ and $r=0.2$, the eigenstate with the largest $\Ztwo$ overlap lies in the
+low-energy region of the finite-size spectrum. This placement differs from the
+familiar picture of scarred states near the middle of the spectrum and makes
+low-temperature thermodynamic diagnostics especially relevant.
+
+The half-chain entanglement entropy of every eigenstate is evaluated after lifting the
+states from the symmetry-reduced basis to the full constrained basis. It is used as
+an additional color-coded spectral diagnostic. Unfolded nearest-neighbor level
+spacings are computed from the middle two thirds of the spectrum, where edge effects
+are weaker. These quantities help distinguish isolated nonthermal states from a
+global loss of ergodicity, although a systematic finite-size scaling analysis is
+required before drawing a thermodynamic-limit conclusion.
+
+Figure~\ref{fig:spectrum} collects the spectral diagnostics and the corresponding
+quench dynamics. The upper-left panel makes the anomalously large $\Ztwo$ overlaps
+visible and places the strongest-overlap states toward the low-energy side of the
+spectrum. The lower panels show that the same initial state produces long-lived,
+damped oscillations in both a local observable and the return probability.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.96\linewidth]
+  {pxp_spectrum_L=20_g=-0.4_r=0.2.png}
+  \caption{Spectral and dynamical diagnostics for $L=20$, $g=-0.4$, and
+  $r=0.2$. Upper left: overlap $\abs{\braket{\Ztwo}{E_n}}^2$ versus energy;
+  the color scale gives the half-chain entanglement entropy, and the dashed line
+  marks $E_{\Ztwo}$. Upper right: distribution of unfolded nearest-neighbor level
+  spacings. Lower panels: the site-averaged nearest-neighbor correlation
+  $L^{-1}\sum_i\expval{Z_iZ_{i+1}}$ and the return probability
+  $\abs{\braket{\Ztwo}{\psi(t)}}^2$ after a quench from $\ket{\Ztwo}$.}
+  \label{fig:spectrum}
+\end{figure}
+
+\section{Canonical energy and heat capacity}
+
+The thermodynamic calculation uses the eigenvalues from all two-site momentum
+sectors, rather than only the $k=0$ sector used for the scar plot. If
+$E_{n,k}$ denotes the spectrum in an independent momentum block, the partition
+function is reconstructed as
+\begin{equation}
+  Z(\beta)=\sum_{k\in\mathcal{K}_{\mathrm{ind}}}m_k
+  \sum_n e^{-\beta E_{n,k}},
+  \label{eq:partition}
+\end{equation}
+where $m_k=2$ for a conjugate pair $k$ and $-k$, while self-conjugate sectors have
+$m_k=1$. In practice, the global ground-state energy is subtracted inside the
+Boltzmann factors to avoid numerical underflow; this shift is restored in the mean
+energy.
+
+With $k_{\mathrm B}=1$, the canonical internal energy and heat capacity are
+\begin{align}
+  U(T) &= \expval{H}_\beta
+  =\frac{1}{Z}\sum_{k,n}m_k E_{n,k}e^{-\beta E_{n,k}},\\
+  C_V(T) &= \frac{\partial U}{\partial T}
+  =\beta^2\left(\expval{H^2}_\beta-\expval{H}_\beta^2\right).
+  \label{eq:capacity}
+\end{align}
+The temperature scan in Figure~\ref{fig:capacity-T} uses $L=20$, $r=0.2$,
+$0.02\leq T\leq2$, and $g=0,-0.1,\ldots,-0.5$. The internal energy rises
+smoothly with temperature. Each heat-capacity curve has a broad maximum, whose
+position shifts to higher temperature as the deformation becomes stronger. These
+maxima show where thermal fluctuations sample the largest concentration of spectral
+weight.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{pxp_capacity_T_L=20_r=0.2.png}
+  \caption{Canonical thermodynamics as a function of temperature for $L=20$ and
+  $r=0.2$. The left panel shows the total internal energy $U=\expval{H}$; the
+  right panel shows the total heat capacity $C_V$. Each curve corresponds to a
+  different deformation strength $g$.}
+  \label{fig:capacity-T}
+\end{figure}
+
+Figure~\ref{fig:capacity-g} presents the complementary scan in which temperature is
+fixed and $g$ varies from $-0.5$ to $0$. At the lowest temperatures, the internal
+energy follows the deformation of the low-energy spectrum while $C_V$ remains close
+to zero. At higher temperatures, the heat capacity becomes sensitive to $g$ across
+the full interval. Taken together, Figures~\ref{fig:capacity-T} and
+\ref{fig:capacity-g} show how the same spectral rearrangement appears along two cuts
+through the $(g,T)$ plane. A broad maximum or shoulder in $C_V$ is a crossover
+indicator at these finite sizes, not by itself evidence of a phase transition.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{pxp_capacity_g_L=20_r=0.2.png}
+  \caption{Canonical thermodynamics as a function of deformation strength for
+  $L=20$ and $r=0.2$. The left and right panels show $U(g)$ and $C_V(g)$,
+  respectively, at fixed temperatures $T=0.01$, $0.1$, $0.2$, $0.5$, $0.8$,
+  and $1$.}
+  \label{fig:capacity-g}
+\end{figure}
+
+\section{Connected local autocorrelation}
+
+The dynamical calculation starts from a canonical state of the undeformed PXP
+Hamiltonian,
+\begin{equation}
+  \rho_0=\frac{e^{-\beta\Hpxp}}
+  {\Tr(e^{-\beta\Hpxp})},
+\end{equation}
+and evolves operators with the deformed Hamiltonian $H_1=H(g,r)$,
+\begin{equation}
+  \Xtilde_i(t)=e^{iH_1t}\Xtilde_i e^{-iH_1t}.
+\end{equation}
+The measured quantity is the site-averaged connected autocorrelation
+\begin{equation}
+  C_X(t)=\frac{1}{L}\sum_{i=0}^{L-1}\operatorname{Re}\left[
+  \Tr\!\left(\rho_0\Xtilde_i(t)\Xtilde_i\right)
+  -\Tr\!\left(\rho_0\Xtilde_i(t)\right)
+   \Tr\!\left(\rho_0\Xtilde_i\right)
+  \right].
+  \label{eq:correlation}
+\end{equation}
+The subtraction removes the disconnected one-point contribution. Because $\rho_0$
+need not commute with $H_1$, the time-dependent one-point function is retained in
+that subtraction. The code evaluates Eq.~\eqref{eq:correlation} in the eigenbasis of
+$H_1$, allowing all requested times to be obtained from precomputed matrix
+contractions and phase factors.
+
+The current parameter set is $L=16$, $g=-0.4$, $r=0.2$, and $T=1$. Times are
+sampled geometrically over $0.1\leq t\leq100$, which provides uniform resolution on
+a logarithmic time axis.
+
+\subsection{Power-law fit}
+
+The observed decay is modeled by
+\begin{equation}
+  C_X(t)=A t^{-\alpha}.
+  \label{eq:powerlaw}
+\end{equation}
+For positive correlation values, Eq.~\eqref{eq:powerlaw} becomes the linear relation
+\begin{equation}
+  \log C_X(t)=\log A-\alpha\log t.
+  \label{eq:logfit}
+\end{equation}
+Ordinary least-squares regression is applied directly to all correlation samples in
+the early-time interval
+\begin{equation}
+  0.1\leq t\leq t_{\mathrm{fit}},
+  \qquad t_{\mathrm{fit}}=50.
+\end{equation}
+No peak detection or upper-envelope selection enters the fit. The fitted exponent is
+minus the regression slope, and the amplitude is the exponential of the intercept.
+The plot uses logarithmic axes and marks the fitted time interval with a translucent
+shaded region without an edge line.
+
+Figure~\ref{fig:autocorrelation} shows the correlation data and the fitted power law.
+The regression gives $\alpha=0.486$ for this parameter set. Oscillations remain around
+the fitted trend, but the dashed line captures the overall decrease across the shaded
+time window. Data beyond $t_{\mathrm{fit}}$ are displayed for comparison and do not
+enter the regression.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.88\linewidth]
+  {pxp_autocorr_avg_L=16_g=-0.4_r=0.2_T=1.0.png}
+  \caption{Connected local $X$-autocorrelation for $L=16$, $g=-0.4$,
+  $r=0.2$, and $T=1$ on logarithmic axes. Orange points inside the shaded region
+  are the data used in the regression over $0.1\leq t\leq50$. The green dashed
+  line is the fitted power law $C_X(t)=At^{-\alpha}$ with $\alpha=0.486$; data at
+  later times are excluded from the fit.}
+  \label{fig:autocorrelation}
+\end{figure}
+
+The approximately linear behavior in the log--log representation shows that the
+finite-size autocorrelation decays as a power law over the selected window. Such slow
+relaxation is consistent with the broad phenomenology often associated with
+Griffiths regimes near localization transitions. The present model,
+however, is clean and staggered rather than spatially random. Power-law decay over a
+finite time window is therefore a motivation for further tests, not a sufficient
+identification of a Griffiths phase. Useful next steps include varying $L$, the fit
+window, temperature, and deformation parameters; comparing alternative observables;
+and testing whether the fitted exponent approaches a stable large-system value.
+
+\section{Summary}
+
+This study follows a single chain of evidence from spectral structure to equilibrium
+and nonequilibrium observables. Exact diagonalization reveals scarred eigenstates
+with anomalously large $\Ztwo$ overlap and places the strongest-overlap state in the
+low-energy part of the finite-size spectrum. A symmetry-resolved reconstruction of
+the full partition function yields the internal energy and heat capacity. Finally,
+the connected local $X$-autocorrelation displays a power-law decay when the early-time
+data are fitted directly on logarithmic axes. Together, these calculations provide
+a controlled finite-size framework for studying how scar physics may coexist with,
+or evolve into, slow many-body relaxation.
+
+\end{document}
