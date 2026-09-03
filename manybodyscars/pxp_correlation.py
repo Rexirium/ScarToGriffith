@@ -28,20 +28,20 @@ def upper_envelope_indices(corrs):
     return np.unique(np.concatenate((endpoint_indices, peak_indices))).astype(int)
 
 
-def fit_power_law_decay(ts, corrs):
-    """Fit C_env(t) = A (1 + t)^(-alpha) + C_inf to local maxima."""
-    peak_indices = upper_envelope_indices(corrs)
-    peak_ts = ts[peak_indices]
-    peak_corrs = corrs[peak_indices]
-    plateau_guess = np.median(peak_corrs[-max(1, peak_corrs.size // 5):])
+def fit_power_law_decay(ts, corrs, t_fit):
+    """Fit C(t) = A (1 + t)^(-alpha) + C_inf for t <= t_fit."""
+    fit_indices = np.flatnonzero(ts <= t_fit)
+    fit_ts = ts[fit_indices]
+    fit_corrs = corrs[fit_indices]
+    plateau_guess = np.median(fit_corrs[-max(1, fit_corrs.size // 5):])
     parameters, covariance = curve_fit(
         power_law_decay,
-        peak_ts,
-        peak_corrs,
-        p0=(peak_corrs[0] - plateau_guess, 1.0, plateau_guess),
+        fit_ts,
+        fit_corrs,
+        p0=(fit_corrs[0] - plateau_guess, 1.0, plateau_guess),
         bounds=(0.0, np.inf),
     )
-    return parameters, np.sqrt(np.diag(covariance)), peak_indices
+    return parameters, np.sqrt(np.diag(covariance)), fit_indices
 
 plt.rcParams.update({
     #"text.usetex": True,
@@ -56,8 +56,11 @@ plt.rcParams.update({
 
 L = 16
 g, r = -0.4, 0.2
-Temp = 0.1
+Temp = 1
 beta = 1 / Temp
+
+t_final = 50
+t_fit = 20
 
 # Basis construction
 basis = pxp_basis_1d(L, a=2, kblock=0)
@@ -99,34 +102,39 @@ rho_E = (S * weights[None, :]) @ S.conj().T
 W = np.zeros((basis_full.Ns, basis_full.Ns), dtype=np.complex128)
 W_t = np.zeros((basis_full.Ns, basis_full.Ns), dtype=np.complex128)
 for site in range(L):
-    bitpos = L - site - 1
-    z_diag = 2.0 * ((basis_full.states >> bitpos) & 1) - 1.0
-    Z_E = U1.conj().T @ (z_diag[:, None] * U1)
-    B = Z_E @ rho_E
-    W += Z_E * B.T
-    W_one = Z_E * rho_E.T
-    z_0 = np.trace(Z_E @ rho_E)
-    W_t += z_0 * W_one
+    X = hamiltonian(
+        [["x", [[1.0, site]]]],
+        [],
+        dtype=eltype,
+        basis=basis_full,
+        **no_checks,
+    )
+    X_E = U1.conj().T @ X.dot(U1)
+    B = X_E @ rho_E
+    W += X_E * B.T
+    W_one = X_E * rho_E.T
+    x_0 = np.trace(X_E @ rho_E)
+    W_t += x_0 * W_one
 
 def correlation(t):
     phase = np.exp(1j * E1 * t)
     return phase @ (W - W_t) @ phase.conj() / L
 
-ts = np.linspace(0.0, 100.0, 501)
+ts = np.linspace(0.0, t_final, 501)
 phases = np.exp(1j * np.outer(ts, E1))
 corrs_raw = np.einsum("tb,tb->t", phases @ W, phases.conj(), optimize=True)
 corrs_t = np.einsum("tb,tb->t", phases @ W_t, phases.conj(), optimize=True)
 
 corrs = np.real(corrs_raw - corrs_t) / L
 
-fit_parameters, fit_errors, envelope_indices = fit_power_law_decay(ts, corrs)
+fit_parameters, fit_errors, fit_indices = fit_power_law_decay(ts, corrs, t_fit)
 amplitude, exponent, plateau = fit_parameters
 amplitude_error, exponent_error, plateau_error = fit_errors
 corrs_fit = power_law_decay(ts, *fit_parameters)
 
 print(
-    "Upper-envelope fit C_env(t) = A (1 + t)^(-alpha) + C_inf:\n"
-    f"  envelope points = {envelope_indices.size}\n"
+    f"Fit over t <= {t_fit:g}: C(t) = A (1 + t)^(-alpha) + C_inf:\n"
+    f"  fit points = {fit_indices.size}\n"
     f"  A       = {amplitude:.6g} +/- {amplitude_error:.2g}\n"
     f"  alpha   = {exponent:.6g} +/- {exponent_error:.2g}\n"
     f"  C_inf   = {plateau:.6g} +/- {plateau_error:.2g}"
@@ -134,19 +142,27 @@ print(
 
 fig, ax = plt.subplots()
 ax.plot(ts, corrs, label="correlation")
+ax.axvspan(
+    ts[0],
+    t_fit,
+    facecolor="C1",
+    edgecolor="none",
+    alpha=0.15,
+    label=rf"fit region: $t \leq {t_fit:g}$",
+)
 ax.plot(
-    ts[envelope_indices],
-    corrs[envelope_indices],
+    ts[fit_indices],
+    corrs[fit_indices],
     ".",
     markersize=4,
-    label="upper-envelope peaks",
+    label="fit data",
 )
 ax.plot(
     ts,
     corrs_fit,
     "--",
     linewidth=2,
-    label=rf"power-law envelope fit: $\alpha={exponent:.3g}$",
+    label=rf"power-law fit: $\alpha={exponent:.3g}$",
 )
 ax.set(
     xlabel=r"$t$", 
