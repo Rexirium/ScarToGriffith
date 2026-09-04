@@ -1,6 +1,7 @@
 import numpy as np
 from quspin.operators import hamiltonian
 import matplotlib.pyplot as plt
+from matplotlib.ticker import NullFormatter
 from scipy.signal import find_peaks
 from scipy.stats import linregress
 from pxp_basis import *
@@ -143,7 +144,7 @@ print(
     f"  R^2     = {r_squared:.6g}"
 )
 
-fig, ax = plt.subplots()
+fig, ax = plt.subplots(layout="constrained")
 ax.plot(ts, corrs, label="correlation")
 ax.axvspan(
     ts[0],
@@ -174,6 +175,7 @@ ax.set(
     xscale="log",
     yscale="log",
 )
+ax.yaxis.set_minor_formatter(NullFormatter())
 ax.legend()
 plt.savefig(f"manybodyscars/figures/pxp_autocorr_avg_L={L}_g={g:.1f}_r={r:.1f}_T={Temp:.1f}.png", dpi=300)
 # plt.show()
