@@ -12,6 +12,37 @@ The research direction is still exploratory. Avoid imposing domain boundaries,
 public APIs, or a permanent workflow before concrete research requirements make
 them useful.
 
+## Knowledge Base Use
+
+Treat `.knowledge/` as an on-demand reference, not as default session context, a
+curriculum, or a task list. Never recursively read, concatenate, or summarize the
+whole directory.
+
+- Start with the repository skill that matches the task. Let `quantum-model`,
+  `physics`, `method-*`, `scaling-fit`, or a software skill route the work to the
+  relevant knowledge card.
+- Form a narrow question before opening knowledge files. Search filenames and
+  indexes first, then read at most three `.knowledge/` files initially unless the
+  active skill explicitly requires more. If a concrete question remains, expand
+  one file at a time.
+- For a named model, prefer `models/<name>/MODEL.md`. For a phase, mechanism, or
+  diagnostic, prefer `physics/<topic>/PHYSICS.md`. Read linked cards only when
+  the first card identifies a dependency relevant to the task.
+- For method selection, start with `method-property-map.md` or `methods/INDEX.md`,
+  then open only the selected `methods/<name>/METHOD.md`. Use `conventions.md`,
+  `limits.md`, and `symmetry-cheatsheet.md` only when the task needs those checks.
+- For literature evidence, read the relevant local `INDEX.md` before opening a
+  specific rendered reference. Do not scan an entire literature family or read
+  `ref.bib` unless the task needs bibliography metadata or a collection-wide
+  search.
+- Prefer the most specific structured card and the sources it cites. Do not load
+  adjacent cards merely because they share a directory.
+- Treat local cards as curated project context, not proof that a claim is current.
+  Verify version-sensitive, recent, contested, or source-critical claims against
+  primary sources when the task requires them.
+- When a result depends materially on a knowledge file, name that file in the
+  analysis or report so the user can inspect the basis of the claim.
+
 ## Current Layout
 
 - `Project.toml` and `Manifest.toml` define the Julia dependency environment;
