@@ -1,0 +1,4 @@
+interface:
+  display_name: "SpinMonteCarlo.jl"
+  short_description: "Run validated lattice-spin Monte Carlo workflows"
+  default_prompt: "Use $using-spinmc to build and validate a SpinMonteCarlo.jl calculation for a lattice spin model."

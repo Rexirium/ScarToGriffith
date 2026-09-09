@@ -1,0 +1,27 @@
+id = "spinmontecarlo"
+name = "SpinMonteCarlo.jl"
+language = "julia"
+canonical_for = ["classical-spin-mcmc", "lattice-spin-monte-carlo", "quantum-xxz-loop"]
+default_profile = "cpu"
+
+[profiles.cpu]
+label = "CPU"
+default = true
+install = "cpu"
+smoke = "cpu"
+
+[profiles.cpu.requirements]
+allocation = "local-or-compute"
+mpi = false
+
+[install.cpu]
+command = "julia --project=. -e 'using Pkg; Pkg.add(\"SpinMonteCarlo\")'"
+notes = "Use the active Julia project. Pin a compatible package version when reproducibility requires it."
+
+[smoke.cpu]
+where = "local"
+command = "julia --project=. -e 'using SpinMonteCarlo; @show pkgversion(SpinMonteCarlo)'"
+
+[docs]
+official = "https://yomichi.github.io/SpinMonteCarlo.jl/latest/"
+repository = "https://github.com/yomichi/SpinMonteCarlo.jl"
