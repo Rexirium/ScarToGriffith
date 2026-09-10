@@ -1,6 +1,36 @@
 using Test, Random, Statistics, SpinMonteCarlo
 include("observables.jl")
 
+@testset "threaded realizations match serial runMC" begin
+    L, T = 3, 2.4
+    rng = MersenneTwister(19)
+    disorder = [ifelse.(rand(rng, 2L^2) .< 0.5, 1.0, 0.3) for _ in 1:8]
+    original = deepcopy(disorder)
+    for update in (:sw, :local)
+        out = random_bond_observables(L, T, disorder;
+            mcs=256, thermalization=64, binsize=32, seed=72, update, details=true)
+        for (a, Js) in enumerate(disorder)
+            p = Parameter(
+                "Model" => Ising, "Lattice" => "square lattice", "L" => L,
+                "Use Indicies as Bond Types" => true, "T" => T, "J" => Js,
+                "Update Method" => (update == :sw ? SW_update! : rbim_lazy_local_update!),
+                "Estimator" => rbim_response_estimator,
+                "MCS" => 256, "Thermalization" => 64, "Binning Size" => 32,
+                "Seed" => out.metadata.seeds[a])
+            result = runMC(p)
+            c, chi = L^2 * result["Specific Heat"], L^2 * result["Susceptibility"]
+            localchi = [result["Local Susceptibility $i"] for i in 1:L^2]
+            @test out.heat_capacity[a] == mean(c)
+            @test out.susceptibility[a] == mean(chi)
+            @test out.errors.heat_capacity[a] == stderror(c)
+            @test out.errors.susceptibility[a] == stderror(chi)
+            @test out.local_susceptibility[a] == reshape(mean.(localchi), L, L)
+            @test out.errors.local_susceptibility[a] == reshape(stderror.(localchi), L, L)
+        end
+    end
+    @test disorder == original
+end
+
 # Independent square-torus Hamiltonian, including the L=2 parallel bonds.
 function exact_observables(L, T, Js)
     n = L^2

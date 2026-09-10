@@ -34,74 +34,14 @@ What `/method-mps` and `/method-ltrg` route here for, and what to confirm before
 3. Record energy, variance or residual proxy, discarded weight, and bond-dimension convergence.
 4. Use cluster execution (`/using-slurm`) when bond dimension, cylinder width, or scans exceed the local threshold.
 
-### DMRG
+### Read for the selected workflow
 
-```julia
-using ITensors, ITensorMPS
+Use the API reference sections needed for the current task:
 
-sites = siteinds("S=1/2", N; conserve_qns=true)        # conserve_qns pins the S^z sector
-
-ampo = OpSum()                                          # Hamiltonian as an MPO
-for j in 1:N-1
-    ampo += "Sz", j, "Sz", j+1
-    ampo += 0.5, "S+", j, "S-", j+1
-    ampo += 0.5, "S-", j, "S+", j+1
-end
-H = MPO(ampo, sites)
-
-psi0 = MPS(sites, n -> isodd(n) ? "Up" : "Dn")          # initial state in the target sector
-
-nsweeps = 20
-maxdim  = [10, 20, 50, 100, 200, 200]                   # grow the bond dimension per sweep
-cutoff  = [1e-10]
-energy, psi = dmrg(H, psi0; nsweeps, maxdim, cutoff, outputlevel=1)
-
-sz   = expect(psi, "Sz")
-SiSj = correlation_matrix(psi, "Sz", "Sz")
-```
-
-For Hubbard / fermion problems use `siteinds("Electron", N; conserve_qns=true)` and operators `"Cdagup"`, `"Cup"`, `"Cdagdn"`, `"Cdn"`, `"Nup"`, `"Ndn"`.
-
-### TEBD
-
-```julia
-using ITensors, ITensorMPS
-
-sites = siteinds("S=1/2", N; conserve_qns=true)
-
-function trotter_gates(sites, J, τ)                     # 2nd-order Trotter: half-step forward + reverse
-    gates = ITensor[]
-    for j in 1:N-1
-        s1, s2 = sites[j], sites[j+1]
-        hj = J * (op("Sz", s1) * op("Sz", s2)
-                + 0.5 * op("S+", s1) * op("S-", s2)
-                + 0.5 * op("S-", s1) * op("S+", s2))
-        push!(gates, exp(-τ/2 * hj))
-    end
-    append!(gates, reverse(gates))
-    return gates
-end
-
-psi   = MPS(sites, n -> isodd(n) ? "Up" : "Dn")
-gates = trotter_gates(sites, J, τ)
-for step in 1:round(Int, T_total / τ)
-    psi = apply(gates, psi; cutoff=1e-10, maxdim=200)
-    normalize!(psi)
-end
-energy = inner(psi', H, psi)
-```
-
-### LTRG primitives
-
-The LTRG algorithm — build local transfer tensors, then repeatedly absorb a layer into the boundary, SVD-truncate to `Dc`, normalize, and accumulate log scale factors — is owned by `/method-ltrg` (`## Details`). ITensors supplies the primitives to express it; keep index tags explicit, write convergence data incrementally, and record the normalization convention with the output.
-
-```julia
-using ITensors
-
-s1, s2 = Index(q, "site1"), Index(q, "site2")           # typed local-basis indices, primed for adjacent layers
-gate   = exp(-tau * h)                                   # imaginary-time gate from local h(s1,s2,s1',s2')
-U, S, V = svd(T, (s1, s2); maxdim = Dc, cutoff = 1e-12)  # truncate the boundary to Dc
-```
+- DMRG: [solver API](references/itensors-api.md#dmrg) and worked examples in section 11.
+- TEBD: [gate application](references/itensors-api.md#tebd) and the real-time example in section 11.3; that section also gives the imaginary-time substitution.
+- LTRG: [tensor primitives and normalization](references/itensors-api.md#ltrg).
+- Parameter values: [starting points](references/itensors-api.md#starting-points).
 
 ## Parameters — step 3 (software)
 
@@ -116,26 +56,7 @@ What to pin:
 - **Measurements:** observable, normalization, correlation range, cadence, and whether edge effects require a bulk window.
 - **Convergence diagnostics the tool exposes:** energy vs sweep and `chi`, variance / residual proxy, discarded weight, `tau` extrapolation for TEBD. The *criteria* for "converged" are the method card's.
 
-Concrete starting points (DMRG and TEBD share the bond-dimension / cutoff controls):
-
-### DMRG
-
-| Knob | Effect | Starting point |
-|---|---|---|
-| `maxdim` schedule | Maximum bond dimension per sweep. Drives accuracy and cost. | Grow gently from ~10. Targets: 50–200 (1D chains), 200–1000 (cylinders), 1000+ (frustrated 2D). |
-| `cutoff` | SVD truncation threshold. | `1e-10` for entry/medium accuracy; tighten for critical points or if variance is non-zero at convergence. |
-| `nsweeps` | Number of sweeps. | 10–30; stop when the energy stops changing within the accuracy goal. |
-| Initial state | Random MPS or a product state in the target sector. | Product state for sectors (e.g. Néel for `S^z = 0`); random when there is no clear product-state representative. |
-| `noise` | Adds noise to break stuck states (older API). | Use only if convergence stalls. |
-
-### TEBD
-
-| Knob | Effect | Starting point |
-|---|---|---|
-| `τ` (Trotter step) | Trotter error scales as `τ^2` (2nd order). Smaller is more accurate but slower. | `0.05–0.1` for entry; reduce if energy not converged. |
-| `T_total` | Imaginary-time evolution length. Need `T_total ≫ 1/Δ`. | Start at 10–20 (units where the largest coupling = 1); extend until energy stops dropping. |
-| `maxdim` | MPS bond dimension cap. | 50–200 for 1D entry-level. |
-| `cutoff` | SVD truncation per gate application. | `1e-10`. |
+Read [parameter starting points](references/itensors-api.md#starting-points) for the selected algorithm; these are starting values to converge, not fixed requirements.
 
 ## Caller Contract
 

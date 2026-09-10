@@ -285,6 +285,8 @@ projector(x::MPS; normalize=true)  # |x⟩⟨x|
 
 ---
 
+<a id="dmrg"></a>
+
 ## 7. DMRG (ground / excited states)
 
 ```julia
@@ -340,6 +342,8 @@ C  = correlation_matrix(psi, "Sz", "Sz")
 gate sequence (TEBD) has changed the norm.
 
 ---
+
+<a id="tebd"></a>
 
 ## 9. TEBD (apply gates / time evolution)
 
@@ -584,6 +588,47 @@ end
 ```
 
 ---
+
+<a id="starting-points"></a>
+
+### 11.6 Parameter starting points
+
+Unless the paper or official code fixes a value, start from these software-practice values and converge them against the requested accuracy.
+
+Concrete starting points (DMRG and TEBD share the bond-dimension / cutoff controls):
+
+#### DMRG
+
+| Knob | Effect | Starting point |
+|---|---|---|
+| `maxdim` schedule | Maximum bond dimension per sweep. Drives accuracy and cost. | Grow gently from ~10. Targets: 50–200 (1D chains), 200–1000 (cylinders), 1000+ (frustrated 2D). |
+| `cutoff` | SVD truncation threshold. | `1e-10` for entry/medium accuracy; tighten for critical points or if variance is non-zero at convergence. |
+| `nsweeps` | Number of sweeps. | 10–30; stop when the energy stops changing within the accuracy goal. |
+| Initial state | Random MPS or a product state in the target sector. | Product state for sectors (e.g. Néel for `S^z = 0`); random when there is no clear product-state representative. |
+| `noise` | Adds noise to break stuck states (older API). | Use only if convergence stalls. |
+
+#### TEBD
+
+| Knob | Effect | Starting point |
+|---|---|---|
+| `τ` (Trotter step) | Trotter error scales as `τ^2` (2nd order). Smaller is more accurate but slower. | `0.05–0.1` for entry; reduce if energy not converged. |
+| `T_total` | Imaginary-time evolution length. Need `T_total ≫ 1/Δ`. | Start at 10–20 (units where the largest coupling = 1); extend until energy stops dropping. |
+| `maxdim` | MPS bond dimension cap. | 50–200 for 1D entry-level. |
+| `cutoff` | SVD truncation per gate application. | `1e-10`. |
+
+<a id="ltrg"></a>
+
+### 11.7 LTRG primitives
+
+The LTRG algorithm — build local transfer tensors, then repeatedly absorb a layer into the boundary, SVD-truncate to `Dc`, normalize, and accumulate log scale factors — is owned by `/method-ltrg` (`## Details`). ITensors supplies the primitives to express it; keep index tags explicit, write convergence data incrementally, and record the normalization convention with the output.
+
+```julia
+using ITensors
+
+s1, s2 = Index(q, "site1"), Index(q, "site2")           # typed local-basis indices, primed for adjacent layers
+gate   = exp(-tau * h)                                   # imaginary-time gate from local h(s1,s2,s1',s2')
+U, S, V = svd(T, (s1, s2); maxdim = Dc, cutoff = 1e-12)  # truncate the boundary to Dc
+```
 
 ## 12. Common pitfalls / gotchas
 

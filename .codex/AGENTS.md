@@ -18,9 +18,9 @@ Treat `.knowledge/` as an on-demand reference, not as default session context, a
 curriculum, or a task list. Never recursively read, concatenate, or summarize the
 whole directory.
 
-- Start with the repository skill that matches the task. Let `quantum-model`,
-  `physics`, `method-*`, `scaling-fit`, or a software skill route the work to the
-  relevant knowledge card.
+- Start with the repository skill that matches the task: `quantum-model`,
+  `method-ed`, `scaling-fit`, or a software skill. If no skill applies, use the
+  model, physics, or method indexes below directly.
 - Form a narrow question before opening knowledge files. Search filenames and
   indexes first, then read at most three `.knowledge/` files initially unless the
   active skill explicitly requires more. If a concrete question remains, expand

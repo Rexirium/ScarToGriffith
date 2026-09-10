@@ -1,6 +1,6 @@
 # 二维随机键 Ising 的响应函数
 
-在项目根目录启动 `julia --project=.`，然后运行：
+在项目根目录启动 `julia --project=. --threads=auto`，然后运行：
 
 ```julia
 include("random_ising/observables.jl")
@@ -56,9 +56,12 @@ out.metadata  # 包版本、种子、采样长度、块大小等
 随后总是执行一次随机单点热浴更新，以避免自由自旋的确定性翻转循环。
 每个构型使用独立初始化的随机数流；相同输入、顺序和种子可复现。
 每个构型通过独立的 `Parameter` 调用 `runMC`，由框架负责热化、测量、分块和 jackknife。
+不同构型通过 `Threads.@threads` 并行计算，输出顺序与输入一致，种子不依赖线程调度。
+可用 `--threads=4` 指定线程数，或用 `--threads=1` 串行运行；函数调用方式不变。
 自定义 `Estimator` 在 `simple_estimator` 的基础上添加各格点的 `sᵢM/T`，
 内置后处理负责热容和总磁化率所需的统计，返回前将每格点量乘以 `L²`。
 SpinMonteCarlo v1.2.2 会先保存逐步测量值再分块，因此内存随 `L²*mcs` 增长。
+多线程运行时，每个同时计算的构型都需要这部分内存。
 
 误差描述单个构型的热采样误差，不包含无序平均的误差。
 正式计算前需分别增加热化步数、测量步数和块大小，并比较不同种子，检查结果与误差是否稳定。
@@ -67,10 +70,11 @@ SpinMonteCarlo v1.2.2 会先保存逐步测量值再分块，因此内存随 `L�
 测试命令：
 
 ```powershell
-julia --project=. --check-bounds=yes random_ising/test_observables.jl
+julia --project=. --threads=4 --check-bounds=yes random_ising/test_observables.jl
 ```
 
 测试用独立的 `3×3` 精确枚举核对非均匀耦合与纯模型，
 并检查局域响应求和、零耦合极限、复现性、输入不被修改和非法输入。
+多构型结果及误差还会逐项对照串行 `runMC`，覆盖两种更新算法。
 实现针对本项目已安装的 SpinMonteCarlo v1.2.2 源码核对；
 包的接口说明见 [官方文档](https://yomichi.github.io/SpinMonteCarlo.jl/latest/)。

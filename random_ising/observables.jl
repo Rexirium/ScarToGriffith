@@ -31,6 +31,9 @@ Use more blocks when checking convergence. The local option runs a package
 Metropolis sweep with probability 1/2, then a random-site heat-bath update on
 every step. This avoids deterministic cycles for decoupled spins.
 The default is Swendsen-Wang.
+Realizations run concurrently with `Threads.@threads`; start Julia with
+`--threads=auto` to enable multiple threads. Seeds and output order do not
+depend on thread scheduling. With one Julia thread, execution is serial.
 
 With `details=true`, return a named tuple containing the three arrays, matching
 `errors` arrays from block jackknife, and `metadata` including package version
@@ -62,6 +65,7 @@ function random_bond_observables(L::Integer, T::Real,
     update in (:sw, :local) || throw(ArgumentError("update must be :sw or :local"))
 
     # 包内更新按键编号索引，且此版本的 SW 算法要求非负耦合。
+    num_disorder = length(disorder)
     for (a, Js) in enumerate(disorder)
         length(Js) == 2L^2 || throw(ArgumentError("realization $a must have 2L² bonds"))
         all(j -> isfinite(j) && j >= 0, Js) ||
@@ -70,25 +74,32 @@ function random_bond_observables(L::Integer, T::Real,
 
     # 每个构型分配独立种子，结果顺序与输入顺序一致。
     rng = MersenneTwister(seed)
-    seeds = rand(rng, UInt32, length(disorder))
+    seeds = rand(rng, UInt32, num_disorder)
 
-    C, chi = zeros(length(disorder)), zeros(length(disorder))
-    maps = Matrix{Float64}[]
+    C, chi = zeros(num_disorder), zeros(num_disorder)
+    maps = Vector{Matrix{Float64}}(undef, num_disorder)
     dC, dchi = similar(C), similar(chi)
-    dmaps = Matrix{Float64}[]
+    dmaps = Vector{Matrix{Float64}}(undef, num_disorder)
 
     update! = update == :sw ? SW_update! : rbim_lazy_local_update!
 
-    for (a, Js) in enumerate(disorder)
+    # 固定名称只生成一次，所有任务只读共享，避免每个测量步重复分配字符串。
+    local_keys = ["Local Susceptibility $i" for i in 1:L^2]
+    estimator = (model, temp, bonds, extra) ->
+        rbim_response_estimator(model, temp, bonds, extra; local_keys)
+
+    # 每个任务独占模型、随机数流和输出位置，避免并发 push!。
+    Threads.@threads for a in 1:num_disorder
+        Js = disorder[a]
         # 热化、测量、分块与 jackknife 都交给 runMC。
         param = Parameter(
             "Model" => Ising, "Lattice" => "square lattice", "L" => Int(L),
 
             # Indicies 是包 v1.2.2 中实际使用的拼写。
             "Use Indicies as Bond Types" => true,
-            "T" => Float64(T), "J" => Float64.(collect(Js)),
+            "T" => Float64(T), "J" => collect(Float64, Js),
 
-            "Update Method" => update!, "Estimator" => rbim_response_estimator,
+            "Update Method" => update!, "Estimator" => estimator,
             "MCS" => mcs, "Thermalization" => thermalization,
             "Binning Size" => binsize, "Seed" => seeds[a],
         )
@@ -98,14 +109,14 @@ function random_bond_observables(L::Integer, T::Real,
         # 内置热容和磁化率按格点归一化，乘以 L² 得到整个系统的量。
         cj = L^2 * result["Specific Heat"]
         chij = L^2 * result["Susceptibility"]
-        localj = [result["Local Susceptibility $i"] for i in 1:L^2]
+        localj = [result[key] for key in local_keys]
 
         C[a], chi[a] = mean(cj), mean(chij)
         dC[a], dchi[a] = stderror(cj), stderror(chij)
 
         # 晶格编号的 x 坐标变化最快，与 Julia 的矩阵存储顺序一致。
-        push!(maps, reshape(mean.(localj), L, L))
-        push!(dmaps, reshape(stderror.(localj), L, L))
+        maps[a] = reshape(mean.(localj), L, L)
+        dmaps[a] = reshape(stderror.(localj), L, L)
     end
 
     details || return (C, chi, maps)
@@ -134,15 +145,34 @@ function rbim_lazy_local_update!(model, T, Js)
     return nothing
 end
 
-function rbim_response_estimator(model::Ising, T::Real, Js::AbstractArray, extra=nothing)
+function rbim_response_estimator(model::Ising, T::Real, Js::AbstractArray, extra=nothing;
+        local_keys=("Local Susceptibility $i" for i in 1:numsites(model)))
     # 保留包内能量和磁化强度的估计量；simple_estimator 可处理零耦合。
     measurement = simple_estimator(model, T, Js, extra)
 
     # 零场对称系综下 χᵢ = 〈sᵢM〉/T，每个格点作为一个标量观测量。
     magnetization = sum(model.spins)
-    for i in 1:numsites(model)
-        measurement["Local Susceptibility $i"] = model.spins[i] * magnetization / T
+    for (i, key) in enumerate(local_keys)
+        measurement[key] = model.spins[i] * magnetization / T
     end
 
     return measurement
 end
+
+#=
+using CairoMakie
+let
+    L, T = 10, 2.0
+    Ns, Nb = L * L, 2 * L * L
+
+    disorder = [ifelse.(rand(Nb) .< 0.5, 1.0, 0.0) for _ in 1:1000]
+
+    C, chi, localchi = random_bond_observables(L, T, disorder)
+
+    fig = Figure()
+    ax = Axis(fig[1, 1]; xlabel="χ", ylabel="Probability density",
+        title="Susceptibility distribution (L=$L, T=$T)")
+    hist!(ax, chi; bins=30, normalization=:pdf)
+    display(fig)
+end
+=#

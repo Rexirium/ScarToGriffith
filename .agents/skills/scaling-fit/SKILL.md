@@ -13,7 +13,7 @@ Fit a finite-size scaling form to a size-indexed (and optionally parameter-index
 <audience>
 This primitive is content-agnostic. It receives a typed data table from the calling skill (a model card, a physics card, `/reproduce-paper`, or `solve` chained from `/parameter-scan`) and returns a fit plus a diagnostic plot. The calling skill consumes the fitted parameters; the user reads the 2–3-line report.
 
-This skill MUST NEVER name the physical exponent (ν, γ, c, etc.) or identify a universality class. Labels and interpretation belong to the calling skill.
+Do not infer an exponent's physical identity or a universality class from its fitted value alone. Use labels explicitly defined by the user or calling skill, and state that source. Without a supplied definition, report a generic fit parameter.
 </audience>
 
 ## When to activate
@@ -82,7 +82,7 @@ The script enforces the steps below; the numbered list is the contract it implem
 
 ## Notes
 
-**Binding.** This skill MUST NOT label the fitted parameter with a physics name (ν, γ, c, etc.). The calling skill provides labels.
+**Labels.** Follow the supplied definitions described in Audience / scope. A supplied label does not establish a universality class.
 
 **Explanatory.** Universality-class comparison happens in the calling skill, against published literature. For contested universality classes the result should be presented as a range with the harness's value sitting inside the literature range, not as a definitive identification. The calling skill enforces this; this primitive just produces the fit.
 
@@ -95,7 +95,7 @@ Fit gives exponent = 0.63 ± 0.02 — this is ν, the Ising-class correlation-le
 </example>
 
 <example name="label good">
-Fit gives exponent = 0.63 ± 0.02. The calling skill names this against its physics card; this skill stays generic over the physics label.
+The user defined the fitted parameter as ν: ν = 0.63 ± 0.02. This fit alone does not identify a universality class. Without that definition, report exponent = 0.63 ± 0.02.
 </example>
 
 #### Auto-cycling through fit forms
