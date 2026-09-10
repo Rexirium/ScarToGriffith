@@ -4,7 +4,7 @@ using Statistics
 
 """
     random_bond_observables(L, T, disorder; kwargs...)
-        -> (heat_capacity, susceptibility, local_susceptibility)
+        -> (heat_capacity, susceptibility, local_susceptibility, correlation)
 
 Sample each supplied quenched bond realization of the zero-field square Ising
 model H = -sum(J_ij*s_i*s_j), s_i = ±1, kB = 1, with periodic boundaries.
@@ -24,6 +24,13 @@ This is NOT the |M|-subtracted susceptibility or the N×N pair-response matrix.
 The local map sums to the total susceptibility. Divide total heat capacity and
 total susceptibility by N to obtain per-site values.
 
+`correlation[a][t+1]` is the site- and starting-time-averaged spin correlation
+sum(s_i(k+t)*s_i(k) for i=1:N, k=1:mcs-t) / (N*(mcs-t)), for t=0:mcs-1.
+Each realization returns a length-mcs Vector{Float64}, with C(0)=1.
+Only post-thermalization configurations are used, without subtracting spin means.
+Time is measured in Monte Carlo update steps for the selected `update` method.
+Computing all lags directly costs O(N*mcs^2) time and O(N*mcs) extra memory.
+
 Keywords: `mcs=8192` measured sweeps, `thermalization=2048` discarded sweeps,
 `binsize=64` consecutive sweeps per block, `seed=1234`, `update=:sw` or `:local`.
 MCS must contain at least two complete blocks for jackknife errors.
@@ -35,8 +42,9 @@ Realizations run concurrently with `Threads.@threads`; start Julia with
 `--threads=auto` to enable multiple threads. Seeds and output order do not
 depend on thread scheduling. With one Julia thread, execution is serial.
 
-With `details=true`, return a named tuple containing the three arrays, matching
-`errors` arrays from block jackknife, and `metadata` including package version
+With `details=true`, return a named tuple containing the four arrays,
+`errors` arrays from block jackknife for the three static responses (no correlation
+error estimate), and `metadata` including package version
 and one seed per realization. Sampling and block jackknife use `runMC`.
 In SpinMonteCarlo v1.2.2, memory scales as O(N*mcs): raw measurements are
 retained by the driver before binning.
@@ -48,7 +56,7 @@ Example:
 rng = MersenneTwister(10)
 L, T, p, r = 16, 2.0, 0.5, 0.3
 Js = [ifelse.(rand(rng, 2L^2) .< p, 1.0, r) for _ in 1:4]
-C, chi, chi_local = random_bond_observables(L, T, Js)
+C, chi, chi_local, correlation = random_bond_observables(L, T, Js)
 ```
 """
 function random_bond_observables(L::Integer, T::Real,
@@ -78,6 +86,7 @@ function random_bond_observables(L::Integer, T::Real,
 
     C, chi = zeros(num_disorder), zeros(num_disorder)
     maps = Vector{Matrix{Float64}}(undef, num_disorder)
+    correlations = Vector{Vector{Float64}}(undef, num_disorder)
     dC, dchi = similar(C), similar(chi)
     dmaps = Vector{Matrix{Float64}}(undef, num_disorder)
 
@@ -85,12 +94,18 @@ function random_bond_observables(L::Integer, T::Real,
 
     # 固定名称只生成一次，所有任务只读共享，避免每个测量步重复分配字符串。
     local_keys = ["Local Susceptibility $i" for i in 1:L^2]
-    estimator = (model, temp, bonds, extra) ->
-        rbim_response_estimator(model, temp, bonds, extra; local_keys)
 
     # 每个任务独占模型、随机数流和输出位置，避免并发 push!。
     Threads.@threads for a in 1:num_disorder
         Js = disorder[a]
+        spins = Matrix{Int8}(undef, L^2, mcs)
+        step = Ref(0)
+        estimator = function (model, temp, bonds, extra)
+            # runMC 只在热化结束后调用 estimator，每列保存一个测量时刻。
+            step[] += 1
+            spins[:, step[]] .= vec(model.spins)
+            return rbim_response_estimator(model, temp, bonds, extra; local_keys)
+        end
         # 热化、测量、分块与 jackknife 都交给 runMC。
         param = Parameter(
             "Model" => Ising, "Lattice" => "square lattice", "L" => Int(L),
@@ -105,6 +120,7 @@ function random_bond_observables(L::Integer, T::Real,
         )
 
         result = runMC(param)
+        correlations[a] = rbim_time_correlation(spins)
 
         # 内置热容和磁化率按格点归一化，乘以 L² 得到整个系统的量。
         cj = L^2 * result["Specific Heat"]
@@ -119,14 +135,34 @@ function random_bond_observables(L::Integer, T::Real,
         dmaps[a] = reshape(stderror.(localj), L, L)
     end
 
-    details || return (C, chi, maps)
+    details || return (C, chi, maps, correlations)
 
     return (heat_capacity=C, susceptibility=chi, local_susceptibility=maps,
+        correlation=correlations,
         errors=(heat_capacity=dC, susceptibility=dchi, local_susceptibility=dmaps),
         metadata=(L=L, T=T, seed=seed, seeds=seeds, mcs=mcs,
             thermalization=thermalization, binsize=binsize, update=update,
             boundary=:periodic, normalization=:extensive,
             version=pkgversion(SpinMonteCarlo)))
+end
+
+# 对每个时间间隔，累加所有格点和有效起始时间；不进行时间周期延拓。
+function rbim_time_correlation(spins::Matrix{Int8})
+    ns, m = size(spins)
+    correlation = Vector{Float64}(undef, m)
+    # ponytail: 直接求和为 O(ns*m^2)；长时间序列可改用零填充 FFT。
+    for t in 0:m-1
+        offset = ns * t
+        pairs = ns * (m - t)
+        total = 0
+        # 列主序线性索引等价于先遍历格点，再遍历起始时间。
+        # k 和 k+offset 均在 1:length(spins) 内，用 Int 累加避免 Int8 溢出。
+        @inbounds @simd for k in 1:pairs
+            total += Int(spins[k]) * Int(spins[k + offset])
+        end
+        correlation[t + 1] = total / pairs
+    end
+    return correlation
 end
 
 # 随机单点热浴避免零耦合时固定顺序翻转陷入少数构型的循环。
@@ -167,7 +203,7 @@ let
 
     disorder = [ifelse.(rand(Nb) .< 0.5, 1.0, 0.0) for _ in 1:1000]
 
-    C, chi, localchi = random_bond_observables(L, T, disorder)
+    C, chi, localchi, correlation = random_bond_observables(L, T, disorder)
 
     fig = Figure()
     ax = Axis(fig[1, 1]; xlabel="χ", ylabel="Probability density",

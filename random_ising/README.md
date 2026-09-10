@@ -9,13 +9,15 @@ L, T, p, r = 16, 2.0, 0.5, 0.3
 rng = MersenneTwister(10)
 # 已有构型时，直接用自己的 Js 替换下面这一行。
 Js = [ifelse.(rand(rng, 2L^2) .< p, 1.0, r) for _ in 1:4]
-C, chi, chi_local = random_bond_observables(L, T, Js;
+C, chi, chi_local, correlation = random_bond_observables(L, T, Js;
     mcs=8192, thermalization=2048, binsize=64, seed=1234)
 
 C[1]              # 第一个构型的总热容
 chi[1]            # 第一个构型的总磁化率
 chi_local[1]      # 第一个构型的 L×L 局域磁化率矩阵
 chi_local[1][x,y] # 格点 (x,y) 对均匀外场的响应
+correlation[1]    # 第一个构型的 C(t)，t = 0:mcs-1
+correlation[1][t+1] # 时间间隔 t 的关联函数
 ```
 
 采用周期边界、`sᵢ=±1`、`kB=1`，哈密顿量为 `H=-Σ⟨ij⟩Jᵢⱼsᵢsⱼ`。
@@ -35,17 +37,25 @@ chi_local[1][x,y] # 格点 (x,y) 对均匀外场的响应
 | `C` | `(〈H²〉-〈H〉²)/T²` | `Vector{Float64}` |
 | `chi` | `〈M²〉/T` | `Vector{Float64}` |
 | `chi_local` | 每个格点为 `〈sᵢM〉/T` | `Vector{Matrix{Float64}}` |
+| `correlation` | 各构型的起始时间平均自旋关联函数 | `Vector{Vector{Float64}}` |
+
+关联函数始终计算。令 `Ns=L²`，测量序列长度为 `mcs`，则
+`correlation[a][t+1] = Σ_{τ=0}^{mcs-t-1} Σᵢ sᵢ(τ+t)sᵢ(τ) / (Ns*(mcs-t))`。
+每个数组长度为 `mcs`，包含 `C(0)=1`；只使用热化后的原始自旋序列，
+不减去自旋均值，不对时间做周期延拓。时间单位为所选更新算法的一步 Monte Carlo 更新。
+直接求和的额外时间复杂度为 `O(Ns*mcs²)`，自旋序列占用 `O(Ns*mcs)` 内存。
 
 这里使用有限系统零场对称系综，`〈sᵢ〉=〈M〉=0`。
 局域矩阵是均匀外场下的空间响应图，不是所有格点对的 `χᵢⱼ` 矩阵。
 `sum(chi_local[a]) ≈ chi[a]`。`C` 和 `chi` 都是整个系统的量；
 除以 `L²` 得到每格点热容和磁化率。没有减去 `〈|M|〉²`。
 
-设置 `details=true` 可取得具名结果和每个输出对应的分块 jackknife 误差：
+设置 `details=true` 可取得具名结果和三个静态响应的分块 jackknife 误差；关联函数不提供误差估计：
 
 ```julia
 out = random_bond_observables(L, T, Js; details=true)
 out.heat_capacity
+out.correlation[1] # 第一个构型的 C(t) 数组
 out.errors.heat_capacity
 out.errors.local_susceptibility[1]
 out.metadata  # 包版本、种子、采样长度、块大小等

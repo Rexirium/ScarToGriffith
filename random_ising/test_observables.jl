@@ -1,6 +1,13 @@
 using Test, Random, Statistics, SpinMonteCarlo
 include("observables.jl")
 
+@testset "starting-time averaged spin correlation" begin
+    spins = Int8[1 1 -1 -1; 1 -1 1 -1]
+    @test rbim_time_correlation(spins) == [1.0, -1/3, 0.0, -1.0]
+    @test rbim_time_correlation(ones(Int8, 4, 256)) == ones(256)
+    @test rbim_time_correlation(reshape(Int8[1, -1], 2, 1)) == [1.0]
+end
+
 @testset "threaded realizations match serial runMC" begin
     L, T = 3, 2.4
     rng = MersenneTwister(19)
@@ -10,14 +17,23 @@ include("observables.jl")
         out = random_bond_observables(L, T, disorder;
             mcs=256, thermalization=64, binsize=32, seed=72, update, details=true)
         for (a, Js) in enumerate(disorder)
+            history = Vector{Vector{Int}}()
+            estimator = function (model, temp, bonds, extra)
+                push!(history, vec(copy(model.spins)))
+                return rbim_response_estimator(model, temp, bonds, extra)
+            end
             p = Parameter(
                 "Model" => Ising, "Lattice" => "square lattice", "L" => L,
                 "Use Indicies as Bond Types" => true, "T" => T, "J" => Js,
                 "Update Method" => (update == :sw ? SW_update! : rbim_lazy_local_update!),
-                "Estimator" => rbim_response_estimator,
+                "Estimator" => estimator,
                 "MCS" => 256, "Thermalization" => 64, "Binning Size" => 32,
                 "Seed" => out.metadata.seeds[a])
             result = runMC(p)
+            @test length(history) == 256
+            expected = [sum(history[k+t][i] * history[k][i]
+                for k in 1:256-t, i in 1:L^2) / (L^2 * (256-t)) for t in 0:255]
+            @test out.correlation[a] == expected
             c, chi = L^2 * result["Specific Heat"], L^2 * result["Susceptibility"]
             localchi = [result["Local Susceptibility $i"] for i in 1:L^2]
             @test out.heat_capacity[a] == mean(c)
@@ -80,12 +96,15 @@ end
     @test a[1] == [0.0]
     @test a[2][1] ≈ 9/2 atol=0.2
     @test all(abs.(a[3][1] .- 0.5) .< 0.1)
+    @test length(a) == 4
+    @test length(a[4][1]) == kwargs.mcs
+    @test a[4][1][1] == 1.0
     free_local = random_bond_observables(3, 2.0, [zeros(18)];
         kwargs..., update=:local)
     @test free_local[2][1] ≈ 9/2 atol=0.5
     @test all(abs.(free_local[3][1] .- 0.5) .< 0.2)
     @test random_bond_observables(3, 2.0, Vector{Float64}[]) ==
-        (Float64[], Float64[], Matrix{Float64}[])
+        (Float64[], Float64[], Matrix{Float64}[], Vector{Float64}[])
     @test_throws ArgumentError random_bond_observables(3, 0.0, disorder)
     @test_throws ArgumentError random_bond_observables(3, 2.0, [ones(17)])
     @test_throws ArgumentError random_bond_observables(3, 2.0, [fill(-0.3,18)])
