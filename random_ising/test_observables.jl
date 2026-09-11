@@ -3,9 +3,23 @@ include("observables.jl")
 
 @testset "starting-time averaged spin correlation" begin
     spins = Int8[1 1 -1 -1; 1 -1 1 -1]
-    @test rbim_time_correlation(spins) == [1.0, -1/3, 0.0, -1.0]
-    @test rbim_time_correlation(ones(Int8, 4, 256)) == ones(256)
+    @test rbim_time_correlation(spins) ≈ [1.0, -1/3, 0.0, -1.0] atol=1e-12
+    @test rbim_time_correlation(ones(Int8, 4, 256)) == ones(101)
+    @test rbim_time_correlation(spins; max_corr_time=0) == [1.0]
+    @test_throws ArgumentError rbim_time_correlation(spins; max_corr_time=-1)
     @test rbim_time_correlation(reshape(Int8[1, -1], 2, 1)) == [1.0]
+    rng = MersenneTwister(81)
+    for m in (2, 7, 32, 65, 257)
+        spins = rand(rng, Int8[-1, 1], 5, m)
+        original = copy(spins)
+        expected = [sum(Int(spins[i, k+t]) * Int(spins[i, k])
+            for k in 1:m-t, i in 1:5) / (5 * (m-t)) for t in 0:m-1]
+        for max_corr_time in (0, 1, 10, 100, m + 5)
+            @test rbim_time_correlation(spins; max_corr_time) ≈
+                expected[1:min(max_corr_time, m - 1)+1]
+        end
+        @test spins == original
+    end
 end
 
 @testset "threaded realizations match serial runMC" begin
@@ -15,7 +29,9 @@ end
     original = deepcopy(disorder)
     for update in (:sw, :local)
         out = random_bond_observables(L, T, disorder;
-            mcs=256, thermalization=64, binsize=32, seed=72, update, details=true)
+            mcs=256, thermalization=64, binsize=32, seed=72, update, details=true,
+            max_corr_time=17)
+        @test out.metadata.max_corr_time == 17
         for (a, Js) in enumerate(disorder)
             history = Vector{Vector{Int}}()
             estimator = function (model, temp, bonds, extra)
@@ -25,15 +41,15 @@ end
             p = Parameter(
                 "Model" => Ising, "Lattice" => "square lattice", "L" => L,
                 "Use Indicies as Bond Types" => true, "T" => T, "J" => Js,
-                "Update Method" => (update == :sw ? SW_update! : rbim_lazy_local_update!),
+                "Update Method" => (update == :sw ? SW_update! : rbim_heatbath_update!),
                 "Estimator" => estimator,
                 "MCS" => 256, "Thermalization" => 64, "Binning Size" => 32,
                 "Seed" => out.metadata.seeds[a])
             result = runMC(p)
             @test length(history) == 256
             expected = [sum(history[k+t][i] * history[k][i]
-                for k in 1:256-t, i in 1:L^2) / (L^2 * (256-t)) for t in 0:255]
-            @test out.correlation[a] == expected
+                for k in 1:256-t, i in 1:L^2) / (L^2 * (256-t)) for t in 0:17]
+            @test all(isapprox.(out.correlation[a], expected; atol=1e-12, rtol=1e-12))
             c, chi = L^2 * result["Specific Heat"], L^2 * result["Susceptibility"]
             localchi = [result["Local Susceptibility $i"] for i in 1:L^2]
             @test out.heat_capacity[a] == mean(c)
@@ -97,16 +113,20 @@ end
     @test a[2][1] ≈ 9/2 atol=0.2
     @test all(abs.(a[3][1] .- 0.5) .< 0.1)
     @test length(a) == 4
-    @test length(a[4][1]) == kwargs.mcs
+    @test length(a[4][1]) == 101
     @test a[4][1][1] == 1.0
     free_local = random_bond_observables(3, 2.0, [zeros(18)];
         kwargs..., update=:local)
     @test free_local[2][1] ≈ 9/2 atol=0.5
     @test all(abs.(free_local[3][1] .- 0.5) .< 0.2)
+    @test a == free_local # 默认更新为随机单点热浴。
+    # 自由自旋仅在尚未被选中过时保留记忆，每 sweep 随机选点 N 次。
+    @test free_local[4][1][1:4] ≈ [(1 - 1/9)^(9t) for t in 0:3] atol=0.03
     @test random_bond_observables(3, 2.0, Vector{Float64}[]) ==
         (Float64[], Float64[], Matrix{Float64}[], Vector{Float64}[])
     @test_throws ArgumentError random_bond_observables(3, 0.0, disorder)
     @test_throws ArgumentError random_bond_observables(3, 2.0, [ones(17)])
     @test_throws ArgumentError random_bond_observables(3, 2.0, [fill(-0.3,18)])
     @test_throws ArgumentError random_bond_observables(3, 2.0, disorder; mcs=65)
+    @test_throws ArgumentError random_bond_observables(3, 2.0, disorder; max_corr_time=-1)
 end

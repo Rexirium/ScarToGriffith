@@ -25,19 +25,22 @@ The local map sums to the total susceptibility. Divide total heat capacity and
 total susceptibility by N to obtain per-site values.
 
 `correlation[a][t+1]` is the site- and starting-time-averaged spin correlation
-sum(s_i(k+t)*s_i(k) for i=1:N, k=1:mcs-t) / (N*(mcs-t)), for t=0:mcs-1.
-Each realization returns a length-mcs Vector{Float64}, with C(0)=1.
+sum(s_i(k+t)*s_i(k) for i=1:N, k=1:mcs-t) / (N*(mcs-t)),
+for t=0:min(max_corr_time, mcs-1). Each realization returns a
+Vector{Float64} of length min(max_corr_time, mcs-1)+1, with C(0)=1.
 Only post-thermalization configurations are used, without subtracting spin means.
 Time is measured in Monte Carlo update steps for the selected `update` method.
-Computing all lags directly costs O(N*mcs^2) time and O(N*mcs) extra memory.
+Direct sums compute only the requested lags in O(N*mcs*min(max_corr_time, mcs-1))
+time, retaining the O(N*mcs) spin history.
 
 Keywords: `mcs=8192` measured sweeps, `thermalization=2048` discarded sweeps,
-`binsize=64` consecutive sweeps per block, `seed=1234`, `update=:sw` or `:local`.
+`binsize=64` consecutive sweeps per block, `seed=1234`, `update=:sw` or `:local`,
+`max_corr_time=100` nonnegative maximum correlation lag (inclusive).
 MCS must contain at least two complete blocks for jackknife errors.
-Use more blocks when checking convergence. The local option runs a package
-Metropolis sweep with probability 1/2, then a random-site heat-bath update on
-every step. This avoids deterministic cycles for decoupled spins.
-The default is Swendsen-Wang.
+Use more blocks when checking convergence. The default `update=:local` performs
+N=L² random-site heat-bath updates per sweep, sampling sites with replacement.
+Each selected spin is drawn from its conditional Boltzmann distribution.
+One correlation time unit is one sweep. `update=:sw` selects Swendsen-Wang.
 Realizations run concurrently with `Threads.@threads`; start Julia with
 `--threads=auto` to enable multiple threads. Seeds and output order do not
 depend on thread scheduling. With one Julia thread, execution is serial.
@@ -61,8 +64,9 @@ C, chi, chi_local, correlation = random_bond_observables(L, T, Js)
 """
 function random_bond_observables(L::Integer, T::Real,
         disorder::AbstractVector{<:AbstractVector};
-        mcs::Int=8192, thermalization::Int=2048, binsize::Int=64,
-        seed::Integer=1234, update::Symbol=:sw, details::Bool=false)
+        mcs::Int=8192, thermalization::Int=2048, max_corr_time::Int=100,
+        binsize::Int=64, seed::Integer=1234,
+        update::Symbol=:local, details::Bool=false)
 
     # 只检查晶格、温度和统计计算的必要条件。
     L >= 2 || throw(ArgumentError("L must be at least 2"))
@@ -70,6 +74,7 @@ function random_bond_observables(L::Integer, T::Real,
     binsize > 0 && mcs >= 2binsize && mcs % binsize == 0 ||
         throw(ArgumentError("mcs must contain at least two complete bins"))
     thermalization >= 0 || throw(ArgumentError("thermalization must be nonnegative"))
+    max_corr_time >= 0 || throw(ArgumentError("max_corr_time must be nonnegative"))
     update in (:sw, :local) || throw(ArgumentError("update must be :sw or :local"))
 
     # 包内更新按键编号索引，且此版本的 SW 算法要求非负耦合。
@@ -90,7 +95,7 @@ function random_bond_observables(L::Integer, T::Real,
     dC, dchi = similar(C), similar(chi)
     dmaps = Vector{Matrix{Float64}}(undef, num_disorder)
 
-    update! = update == :sw ? SW_update! : rbim_lazy_local_update!
+    update! = update == :sw ? SW_update! : rbim_heatbath_update!
 
     # 固定名称只生成一次，所有任务只读共享，避免每个测量步重复分配字符串。
     local_keys = ["Local Susceptibility $i" for i in 1:L^2]
@@ -120,7 +125,7 @@ function random_bond_observables(L::Integer, T::Real,
         )
 
         result = runMC(param)
-        correlations[a] = rbim_time_correlation(spins)
+        correlations[a] = rbim_time_correlation(spins; max_corr_time)
 
         # 内置热容和磁化率按格点归一化，乘以 L² 得到整个系统的量。
         cj = L^2 * result["Specific Heat"]
@@ -142,22 +147,23 @@ function random_bond_observables(L::Integer, T::Real,
         errors=(heat_capacity=dC, susceptibility=dchi, local_susceptibility=dmaps),
         metadata=(L=L, T=T, seed=seed, seeds=seeds, mcs=mcs,
             thermalization=thermalization, binsize=binsize, update=update,
+            max_corr_time=max_corr_time,
             boundary=:periodic, normalization=:extensive,
             version=pkgversion(SpinMonteCarlo)))
 end
 
-# 对每个时间间隔，累加所有格点和有效起始时间；不进行时间周期延拓。
-function rbim_time_correlation(spins::Matrix{Int8})
+# 只对指定时间窗口直接求和，按格点数和有效起始时间数归一化。
+function rbim_time_correlation(spins::Matrix{Int8}; max_corr_time::Int=100)
+    max_corr_time >= 0 || throw(ArgumentError("max_corr_time must be nonnegative"))
     ns, m = size(spins)
-    correlation = Vector{Float64}(undef, m)
-    # ponytail: 直接求和为 O(ns*m^2)；长时间序列可改用零填充 FFT。
-    for t in 0:m-1
-        offset = ns * t
-        pairs = ns * (m - t)
+    last_lag = min(max_corr_time, m - 1)
+    correlation = Vector{Float64}(undef, last_lag + 1)
+    correlation[1] = 1.0 # Ising 自旋 sᵢ²=1。
+    for t in 1:last_lag
+        offset, pairs = ns * t, ns * (m - t)
         total = 0
-        # 列主序线性索引等价于先遍历格点，再遍历起始时间。
-        # k 和 k+offset 均在 1:length(spins) 内，用 Int 累加避免 Int8 溢出。
-        @inbounds @simd for k in 1:pairs
+        # 列主序索引保持格点对应；用 Int 累加避免 Int8 溢出。
+        for k in 1:pairs
             total += Int(spins[k]) * Int(spins[k + offset])
         end
         correlation[t + 1] = total / pairs
@@ -165,18 +171,19 @@ function rbim_time_correlation(spins::Matrix{Int8})
     return correlation
 end
 
-# 随机单点热浴避免零耦合时固定顺序翻转陷入少数构型的循环。
-function rbim_lazy_local_update!(model, T, Js)
-    rand(model.rng, Bool) && local_update!(model, T, Js)
+# 每个 sweep 有放回地随机选点 N 次，零局域场时以等概率重采样 ±1。
+function rbim_heatbath_update!(model, T, Js)
+    ns = numsites(model)
+    for _ in 1:ns
+        i = rand(model.rng, 1:ns)
+        field = 0.0
+        for (j, b) in neighbors(model, i)
+            field += Js[bondtype(model, b)] * model.spins[j]
+        end
 
-    i = rand(model.rng, 1:numsites(model))
-    field = 0.0
-    for (j, b) in neighbors(model, i)
-        field += Js[bondtype(model, b)] * model.spins[j]
+        probability_up = (1 + tanh(field / T)) / 2
+        model.spins[i] = rand(model.rng) < probability_up ? 1 : -1
     end
-
-    probability_up = (1 + tanh(field / T)) / 2
-    model.spins[i] = rand(model.rng) < probability_up ? 1 : -1
 
     return nothing
 end
@@ -195,7 +202,7 @@ function rbim_response_estimator(model::Ising, T::Real, Js::AbstractArray, extra
     return measurement
 end
 
-#=
+
 using CairoMakie
 let
     L, T = 10, 2.0
@@ -203,12 +210,23 @@ let
 
     disorder = [ifelse.(rand(Nb) .< 0.5, 1.0, 0.0) for _ in 1:1000]
 
-    C, chi, localchi, correlation = random_bond_observables(L, T, disorder)
+    C, chi, localchi, correlation = random_bond_observables(L, T, disorder; update=:local)
 
-    fig = Figure()
+    fig = Figure(size=(1000, 400))
     ax = Axis(fig[1, 1]; xlabel="χ", ylabel="Probability density",
         title="Susceptibility distribution (L=$L, T=$T)")
     hist!(ax, chi; bins=30, normalization=:pdf)
+
+    # 对每个时间间隔，计算所有无序构型的均值和样本标准差。
+    correlations = reduce(hcat, correlation)
+    correlation_mean = vec(mean(correlations; dims=2))
+    correlation_std = vec(std(correlations; dims=2))
+    lags = 0:length(correlation_mean)-1
+    ax_correlation = Axis(fig[1, 2]; xlabel="Lag (MC steps)", ylabel="Autocorrelation",
+        title="Mean autocorrelation (L=$L, T=$T)")
+    band!(ax_correlation, lags, correlation_mean .- correlation_std,
+        correlation_mean .+ correlation_std; color=(:dodgerblue, 0.25), label="±1 std")
+    lines!(ax_correlation, lags, correlation_mean; color=:dodgerblue, label="Mean")
+    axislegend(ax_correlation)
     display(fig)
 end
-=#

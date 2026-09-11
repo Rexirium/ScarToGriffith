@@ -10,13 +10,13 @@ rng = MersenneTwister(10)
 # 已有构型时，直接用自己的 Js 替换下面这一行。
 Js = [ifelse.(rand(rng, 2L^2) .< p, 1.0, r) for _ in 1:4]
 C, chi, chi_local, correlation = random_bond_observables(L, T, Js;
-    mcs=8192, thermalization=2048, binsize=64, seed=1234)
+    mcs=8192, thermalization=2048, binsize=64, seed=1234, max_corr_time=100)
 
 C[1]              # 第一个构型的总热容
 chi[1]            # 第一个构型的总磁化率
 chi_local[1]      # 第一个构型的 L×L 局域磁化率矩阵
 chi_local[1][x,y] # 格点 (x,y) 对均匀外场的响应
-correlation[1]    # 第一个构型的 C(t)，t = 0:mcs-1
+correlation[1]    # 第一个构型的 C(t)，t = 0:min(max_corr_time, mcs-1)
 correlation[1][t+1] # 时间间隔 t 的关联函数
 ```
 
@@ -41,9 +41,12 @@ correlation[1][t+1] # 时间间隔 t 的关联函数
 
 关联函数始终计算。令 `Ns=L²`，测量序列长度为 `mcs`，则
 `correlation[a][t+1] = Σ_{τ=0}^{mcs-t-1} Σᵢ sᵢ(τ+t)sᵢ(τ) / (Ns*(mcs-t))`。
-每个数组长度为 `mcs`，包含 `C(0)=1`；只使用热化后的原始自旋序列，
+`max_corr_time` 为非负整数关键词参数，默认值为 `100`。
+每个数组长度为 `min(max_corr_time, mcs-1)+1`，包含 `C(0)=1`；只使用热化后的原始自旋序列，
 不减去自旋均值，不对时间做周期延拓。时间单位为所选更新算法的一步 Monte Carlo 更新。
-直接求和的额外时间复杂度为 `O(Ns*mcs²)`，自旋序列占用 `O(Ns*mcs)` 内存。
+只对指定时间窗口直接求和，再按 `Ns*(mcs-t)` 归一化，无需 FFT 工作区。
+时间复杂度为 `O(Ns*mcs*min(max_corr_time, mcs-1))`，自旋序列占用 `O(Ns*mcs)` 内存。
+构型之间仍并行；`max_corr_time=0` 时只返回利用 Ising 自旋恒等式确定的 `C(0)=1`。
 
 这里使用有限系统零场对称系综，`〈sᵢ〉=〈M〉=0`。
 局域矩阵是均匀外场下的空间响应图，不是所有格点对的 `χᵢⱼ` 矩阵。
@@ -61,9 +64,10 @@ out.errors.local_susceptibility[1]
 out.metadata  # 包版本、种子、采样长度、块大小等
 ```
 
-默认使用 SpinMonteCarlo 的 Swendsen–Wang 更新，能处理零耦合。
-`update=:local` 用于交叉检查：每步以 1/2 概率运行包的 Metropolis sweep，
-随后总是执行一次随机单点热浴更新，以避免自由自旋的确定性翻转循环。
+默认 `update=:local` 使用随机单点热浴：每个 sweep 有放回地随机选点 `L²` 次，
+每次按局域场对应的条件玻尔兹曼分布重新抽取该点自旋。
+自相关的一个时间单位对应一个 sweep；零局域场时以等概率取 ±1。
+`update=:sw` 仍可选择 SpinMonteCarlo 的 Swendsen–Wang 更新。
 每个构型使用独立初始化的随机数流；相同输入、顺序和种子可复现。
 每个构型通过独立的 `Parameter` 调用 `runMC`，由框架负责热化、测量、分块和 jackknife。
 不同构型通过 `Threads.@threads` 并行计算，输出顺序与输入一致，种子不依赖线程调度。
