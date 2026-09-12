@@ -64,10 +64,12 @@ out.errors.local_susceptibility[1]
 out.metadata  # 包版本、种子、采样长度、块大小等
 ```
 
-默认 `update=:local` 使用随机单点热浴：每个 sweep 有放回地随机选点 `L²` 次，
+热化阶段固定使用 Swendsen–Wang 更新，共 `thermalization` 步，不计入自相关时间。
+测量阶段统一使用随机单点热浴：每个 sweep 有放回地随机选点 `L²` 次，
 每次按局域场对应的条件玻尔兹曼分布重新抽取该点自旋。
 自相关的一个时间单位对应一个 sweep；零局域场时以等概率取 ±1。
-`update=:sw` 仍可选择 SpinMonteCarlo 的 Swendsen–Wang 更新。
+函数不再接受 `update` 关键词；`metadata.update` 固定为 `:local`。
+`thermalization=0` 时直接进入测量；`metadata.thermalization_update` 记录热化算法为 `:sw`。
 每个构型使用独立初始化的随机数流；相同输入、顺序和种子可复现。
 每个构型通过独立的 `Parameter` 调用 `runMC`，由框架负责热化、测量、分块和 jackknife。
 不同构型通过 `Threads.@threads` 并行计算，输出顺序与输入一致，种子不依赖线程调度。

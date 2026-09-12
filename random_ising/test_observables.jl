@@ -1,6 +1,27 @@
 using Test, Random, Statistics, SpinMonteCarlo
 include("observables.jl")
 
+@testset "reused measurements match package estimator" begin
+    rng = MersenneTwister(18)
+    for L in (2, 3), Js in (zeros(2L^2), rand(rng, 2L^2))
+        T = 2.4
+        model = Ising(Parameter("Lattice" => "square lattice", "L" => L,
+            "Use Indicies as Bond Types" => true, "Seed" => UInt32(18)))
+        measurement = Dict{String,Any}()
+        local_keys = ["Local Susceptibility $i" for i in 1:L^2]
+        for spins in (ones(Int, L^2), -ones(Int, L^2), rand(rng, [-1, 1], L^2))
+            model.spins[:] = spins
+            expected = simple_estimator(model, T, Js)
+            @test rbim_response_estimator!(measurement, model, T, Js; local_keys) === measurement
+            @test length(measurement) == length(expected) + L^2
+            for (key, value) in expected
+                @test measurement[key] ≈ value
+            end
+            @test [measurement[key] for key in local_keys] ≈ spins .* sum(spins) ./ T
+        end
+    end
+end
+
 @testset "starting-time averaged spin correlation" begin
     spins = Int8[1 1 -1 -1; 1 -1 1 -1]
     @test rbim_time_correlation(spins) ≈ [1.0, -1/3, 0.0, -1.0] atol=1e-12
@@ -27,11 +48,13 @@ end
     rng = MersenneTwister(19)
     disorder = [ifelse.(rand(rng, 2L^2) .< 0.5, 1.0, 0.3) for _ in 1:8]
     original = deepcopy(disorder)
-    for update in (:sw, :local)
+    for thermalization in (0, 1, 64)
         out = random_bond_observables(L, T, disorder;
-            mcs=256, thermalization=64, binsize=32, seed=72, update, details=true,
+            mcs=256, thermalization, binsize=32, seed=72, details=true,
             max_corr_time=17)
         @test out.metadata.max_corr_time == 17
+        @test out.metadata.thermalization_update == :sw
+        @test out.metadata.update == :local
         for (a, Js) in enumerate(disorder)
             history = Vector{Vector{Int}}()
             estimator = function (model, temp, bonds, extra)
@@ -41,11 +64,17 @@ end
             p = Parameter(
                 "Model" => Ising, "Lattice" => "square lattice", "L" => L,
                 "Use Indicies as Bond Types" => true, "T" => T, "J" => Js,
-                "Update Method" => (update == :sw ? SW_update! : rbim_heatbath_update!),
+                "Update Method" => rbim_heatbath_update!,
                 "Estimator" => estimator,
-                "MCS" => 256, "Thermalization" => 64, "Binning Size" => 32,
+                "MCS" => 256, "Thermalization" => 0, "Binning Size" => 32,
                 "Seed" => out.metadata.seeds[a])
-            result = runMC(p)
+            # 独立执行 SW 热化，再让 runMC 仅执行测量，验证切换边界和随机数序列。
+            model = Ising(p)
+            SpinMonteCarlo.seed!(model, p["Seed"]) # 与 runMC(param) 构造模型后的重新播种一致。
+            for _ in 1:thermalization
+                SW_update!(model, T, Js)
+            end
+            result = runMC(model, p)
             @test length(history) == 256
             expected = [sum(history[k+t][i] * history[k][i]
                 for k in 1:256-t, i in 1:L^2) / (L^2 * (256-t)) for t in 0:17]
@@ -91,20 +120,18 @@ end
     L, T, r = 3, 2.4, 0.3
     disorder = [[i in (1, 2, 5, 9, 10, 14) ? 1.0 : r for i in 1:2L^2], ones(2L^2)]
     original = deepcopy(disorder)
-    for update in (:sw, :local)
-        out = random_bond_observables(L, T, disorder;
-            mcs=65536, thermalization=4096, binsize=256, seed=72, update, details=true)
-        @test disorder == original
-        @test length(out.heat_capacity) == length(out.susceptibility) == 2
-        @test size.(out.local_susceptibility) == [(L,L), (L,L)]
-        for a in eachindex(disorder)
-            c, chi, loc = exact_observables(L, T, disorder[a])
-            @test abs(out.heat_capacity[a] - c) < 6out.errors.heat_capacity[a] + 0.02
-            @test abs(out.susceptibility[a] - chi) < 6out.errors.susceptibility[a] + 0.02
-            @test all(abs.(out.local_susceptibility[a] - loc) .<
-                6 .* out.errors.local_susceptibility[a] .+ 0.02)
-            @test sum(out.local_susceptibility[a]) ≈ out.susceptibility[a]
-        end
+    out = random_bond_observables(L, T, disorder;
+        mcs=65536, thermalization=4096, binsize=256, seed=72, details=true)
+    @test disorder == original
+    @test length(out.heat_capacity) == length(out.susceptibility) == 2
+    @test size.(out.local_susceptibility) == [(L,L), (L,L)]
+    for a in eachindex(disorder)
+        c, chi, loc = exact_observables(L, T, disorder[a])
+        @test abs(out.heat_capacity[a] - c) < 6out.errors.heat_capacity[a] + 0.02
+        @test abs(out.susceptibility[a] - chi) < 6out.errors.susceptibility[a] + 0.02
+        @test all(abs.(out.local_susceptibility[a] - loc) .<
+            6 .* out.errors.local_susceptibility[a] .+ 0.02)
+        @test sum(out.local_susceptibility[a]) ≈ out.susceptibility[a]
     end
     kwargs = (mcs=8192, thermalization=256, binsize=64, seed=4)
     a = random_bond_observables(3, 2.0, [zeros(18)]; kwargs...)
@@ -115,13 +142,8 @@ end
     @test length(a) == 4
     @test length(a[4][1]) == 101
     @test a[4][1][1] == 1.0
-    free_local = random_bond_observables(3, 2.0, [zeros(18)];
-        kwargs..., update=:local)
-    @test free_local[2][1] ≈ 9/2 atol=0.5
-    @test all(abs.(free_local[3][1] .- 0.5) .< 0.2)
-    @test a == free_local # 默认更新为随机单点热浴。
     # 自由自旋仅在尚未被选中过时保留记忆，每 sweep 随机选点 N 次。
-    @test free_local[4][1][1:4] ≈ [(1 - 1/9)^(9t) for t in 0:3] atol=0.03
+    @test a[4][1][1:4] ≈ [(1 - 1/9)^(9t) for t in 0:3] atol=0.03
     @test random_bond_observables(3, 2.0, Vector{Float64}[]) ==
         (Float64[], Float64[], Matrix{Float64}[], Vector{Float64}[])
     @test_throws ArgumentError random_bond_observables(3, 0.0, disorder)
