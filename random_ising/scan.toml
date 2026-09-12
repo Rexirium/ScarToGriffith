@@ -1,0 +1,19 @@
+# 尺寸、温度和无序构型
+Ls = [8, 12, 16]
+Ts = [1.0, 1.5, 2.0, 2.5]
+ndisorder = 1000
+p = 0.5
+Jstrong = 1.0
+Jweak = 0.0
+seed = 1234
+
+# MC 参数
+mcs = 8192
+thermalization = 1024
+binsize = 64
+max_corr_time = 100
+
+# 等待写盘的结果数量上限
+result_buffer = 2
+# 相对于本 TOML 文件所在目录；也可以使用绝对路径
+output_dir = "results/run_001"

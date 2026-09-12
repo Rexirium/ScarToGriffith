@@ -1,6 +1,6 @@
 # 二维随机键 Ising 的响应函数
 
-Slurm 扫描只需 [run_slurm.jl](run_slurm.jl) 和 [submit.sbatch](submit.sbatch)，用法见文末。
+Slurm 扫描使用 [run_slurm.jl](run_slurm.jl)、[scan.toml](scan.toml) 和 [submit.sbatch](submit.sbatch)，用法见文末。
 
 在项目根目录启动 `julia --project=julia-env/local --threads=auto`，然后运行：
 
@@ -101,7 +101,8 @@ julia --project=julia-env/local --threads=4 --check-bounds=yes random_ising/test
 
 ## Slurm 扫描
 
-修改 `run_slurm.jl` 顶部的 `PARAMETERS` 设置尺寸、温度、无序构型数和 MC 参数，
+修改 `scan.toml` 设置尺寸、温度、无序构型数和 MC 参数，脚本启动时自动读取。
+`output_dir` 的相对路径以 TOML 文件所在目录为基准。
 修改 `submit.sbatch` 设置节点、进程和每进程的 CPU 数。
 个人电脑使用 `julia-env/local/Project.toml`；服务器使用 `julia-env/server/Project.toml`，只安装 MC 扫描所需依赖。
 服务器的所有节点需能访问相同的仓库和服务器 Julia 环境，worker 自动沿用主进程的环境。
@@ -114,7 +115,11 @@ sbatch random_ising/submit.sbatch
 ```
 
 每个 worker 计算一个 `(L,T)`，内部使用 `--cpus-per-task` 个线程计算不同无序构型。
-主进程逐项接收结果并写入 HDF5；相同尺寸在不同温度下使用同一批无序构型。
+结果进入有界队列后，worker 即可领取下一项任务；主进程中单独的写入任务串行写 HDF5。
+`scan.toml` 中的 `result_buffer` 设置队列容量，默认 2；队列满时等待，限制缓存增长。
+除队列外，内存还包括正在写入的结果及各 worker 已返回、等待入队的结果。
+主进程需 `--threads=2`，提交脚本已设置；worker 线程数仍由 `--cpus-per-task` 决定。
+相同尺寸在不同温度下使用同一批无序构型。
 默认输出为 `random_ising/results/run_001/L_8.h5` 等文件，温度分别存入 `T_1.0` 等 group。
 每组保存 `heat_capacity`、`susceptibility`、`local_susceptibility`、`correlation` 和静态量的 `errors`。
 Julia 中局域磁化率的维度为 `(L,L,ndisorder)`，自关联为 `(max_corr_time+1,ndisorder)`，
@@ -125,5 +130,5 @@ Julia 中局域磁化率的维度为 `(L,L,ndisorder)`，自关联为 `(max_corr
 个人电脑无需 Slurm 的小规模验证（两个进程，每进程两个线程，临时输出并与串行结果比较）：
 
 ```bash
-julia random_ising/run_slurm.jl --test
+julia --threads=2 random_ising/run_slurm.jl --test
 ```

@@ -10,16 +10,16 @@ module RandomIsingScan
 using Distributed
 using HDF5
 using Random
+using TOML
 
 include("observables.jl")
 
-# Edit these parameters before submitting the job.
-const PARAMETERS = (
-    Ls=[8, 12, 16], Ts=[1.0, 1.5, 2.0, 2.5], ndisorder=1000,
-    p=0.5, Jstrong=1.0, Jweak=0.0, seed=1234,
-    mcs=8192, thermalization=1024, binsize=64, max_corr_time=100,
-    output_dir=joinpath(@__DIR__, "results", "run_001"),
-)
+"""读取计算参数；相对 output_dir 按 TOML 文件所在目录解析。"""
+function read_config(path=joinpath(@__DIR__, "scan.toml"))
+    params = TOML.parsefile(path)
+    params["output_dir"] = normpath(joinpath(dirname(abspath(path)), params["output_dir"]))
+    return (; (Symbol(key) => value for (key, value) in params)...)
+end
 
 # Parameter-based seeds: shared disorder across temperatures, separate MC streams.
 function case_seeds(cfg, L, T)
@@ -96,10 +96,12 @@ end
 """
     run_scan(cfg, pids)
 
-在已有 worker 上动态分配 (L,T) 任务；完成一个就传回主进程写盘。
+在已有 worker 上动态分配 (L,T) 任务；结果入队后领取下一项，由主进程串行写盘。
 输出目录必须不存在，避免覆盖之前的扫描；worker 的生命周期由调用者管理。
 """
 function run_scan(cfg, pids)
+    Threads.nthreads() >= 2 || error("Start the manager with --threads=2 for concurrent scheduling and writing")
+    cfg.result_buffer isa Integer && cfg.result_buffer > 0 || error("result_buffer must be a positive integer")
     !isempty(cfg.Ls) && !isempty(cfg.Ts) && allunique(cfg.Ls) && allunique(cfg.Ts) ||
         error("Ls and Ts must be nonempty and contain no duplicates")
     all(L -> 2 <= L <= typemax(UInt32), cfg.Ls) && all(T -> isfinite(T) && T > 0, cfg.Ts) ||
@@ -123,16 +125,35 @@ function run_scan(cfg, pids)
     queue = Channel{eltype(jobs)}(length(jobs))
     foreach(job -> put!(queue, job), jobs)
     close(queue)
-    # HDF5 只由主进程串行写；不需要 MPI HDF5，也不累积整批扫描结果。
-    write_lock = ReentrantLock()
-    @sync for pid in pids
-        @async for job in queue
-            @info "Starting MC" worker=pid L=job.L T=job.T
-            data = remotecall_fetch(compute_case, pid, job, cfg)
-            path = lock(write_lock) do
-                write_case(cfg, data)
+    results = Channel{NamedTuple}(cfg.result_buffer)
+    @sync begin
+        # 只有这一个任务调用 HDF5；独立线程避免同步写盘阻塞进程调度。
+        Threads.@spawn begin
+            try
+                for data in results
+                    path = write_case(cfg, data)
+                    @info "Saved MC" worker=data.worker_id L=data.L T=data.T path
+                end
+            finally
+                # 写盘失败也要唤醒因队列满而等待的生产者。
+                close(results)
             end
-            @info "Saved MC" worker=pid L=job.L T=job.T path
+        end
+        @async begin
+            try
+                @sync for pid in pids
+                    @async for job in queue
+                        isopen(results) || break
+                        @info "Starting MC" worker=pid L=job.L T=job.T
+                        data = remotecall_fetch(compute_case, pid, job, cfg)
+                        put!(results, data) # 满时等待，成功入队后即可调度下一项。
+                        data = nothing
+                    end
+                end
+            finally
+                # 所有生产者结束后，写入任务排空队列再退出。
+                close(results)
+            end
         end
     end
     return [joinpath(cfg.output_dir, "L_$L.h5") for L in cfg.Ls]
@@ -145,6 +166,7 @@ if abspath(PROGRAM_FILE) == @__FILE__
     using Distributed, HDF5
     testing = ARGS == ["--test"]
     isempty(ARGS) || testing || error("Usage: run_slurm.jl [--test]")
+    config = RandomIsingScan.read_config()
     threads = testing ? 2 : parse(Int, get(ENV, "SLURM_CPUS_PER_TASK", "1"))
     project = dirname(Base.active_project())
     flags = `--project=$project --threads=$threads --startup-file=no`
@@ -157,7 +179,7 @@ if abspath(PROGRAM_FILE) == @__FILE__
     try
         if testing
             mktempdir() do dir
-                cfg = merge(RandomIsingScan.PARAMETERS, (
+                cfg = merge(config, (
                     Ls=[2, 3], Ts=[1.5, 2.5], ndisorder=3, mcs=32,
                     thermalization=8, binsize=8, max_corr_time=5,
                     output_dir=joinpath(dir, "results")))
@@ -181,7 +203,7 @@ if abspath(PROGRAM_FILE) == @__FILE__
                 println("PASS: 2 workers x 2 threads, 4 cases, HDF5 matches serial results")
             end
         else
-            RandomIsingScan.run_scan(RandomIsingScan.PARAMETERS, pids)
+            RandomIsingScan.run_scan(config, pids)
         end
     finally
         rmprocs(pids)

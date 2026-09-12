@@ -32,7 +32,6 @@ JuliaLocalPreferences.toml
 .github/
 **/superpowers/
 *.png
-*.sh
 *.zip
 
 # LaTeX build artifacts

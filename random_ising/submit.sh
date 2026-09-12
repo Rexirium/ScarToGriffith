@@ -15,4 +15,4 @@ cd "${SLURM_SUBMIT_DIR}"
 export OPENBLAS_NUM_THREADS=1
 export OMP_NUM_THREADS=1
 # 不要再加 srun：SlurmClusterManager 会自行启动 worker。
-julia --startup-file=no --threads=1 random_ising/run_slurm.jl
+julia --startup-file=no --threads=2 random_ising/run_slurm.jl
