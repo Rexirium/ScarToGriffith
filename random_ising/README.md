@@ -1,6 +1,8 @@
 # 二维随机键 Ising 的响应函数
 
-在项目根目录启动 `julia --project=. --threads=auto`，然后运行：
+Slurm 扫描只需 [run_slurm.jl](run_slurm.jl) 和 [submit.sbatch](submit.sbatch)，用法见文末。
+
+在项目根目录启动 `julia --project=julia-env/local --threads=auto`，然后运行：
 
 ```julia
 include("random_ising/observables.jl")
@@ -88,7 +90,7 @@ SpinMonteCarlo v1.2.2 会先保存逐步测量值再分块，因此内存随 `L�
 测试命令：
 
 ```powershell
-julia --project=. --threads=4 --check-bounds=yes random_ising/test_observables.jl
+julia --project=julia-env/local --threads=4 --check-bounds=yes random_ising/test_observables.jl
 ```
 
 测试用独立的 `3×3` 精确枚举核对非均匀耦合与纯模型，
@@ -96,3 +98,32 @@ julia --project=. --threads=4 --check-bounds=yes random_ising/test_observables.j
 多构型结果及误差还会逐项对照串行 `runMC`，覆盖两种更新算法。
 实现针对本项目已安装的 SpinMonteCarlo v1.2.2 源码核对；
 包的接口说明见 [官方文档](https://yomichi.github.io/SpinMonteCarlo.jl/latest/)。
+
+## Slurm 扫描
+
+修改 `run_slurm.jl` 顶部的 `PARAMETERS` 设置尺寸、温度、无序构型数和 MC 参数，
+修改 `submit.sbatch` 设置节点、进程和每进程的 CPU 数。
+个人电脑使用 `julia-env/local/Project.toml`；服务器使用 `julia-env/server/Project.toml`，只安装 MC 扫描所需依赖。
+服务器的所有节点需能访问相同的仓库和服务器 Julia 环境，worker 自动沿用主进程的环境。
+`run_slurm.jl` 在加载依赖前自动激活服务器环境；带 `--test` 时激活本地环境，路径相对于脚本位置解析。
+在服务器上，从仓库根目录安装依赖并提交（Julia 1.9 或更高版本）：
+
+```bash
+julia --project=julia-env/server -e 'using Pkg; Pkg.instantiate()'
+sbatch random_ising/submit.sbatch
+```
+
+每个 worker 计算一个 `(L,T)`，内部使用 `--cpus-per-task` 个线程计算不同无序构型。
+主进程逐项接收结果并写入 HDF5；相同尺寸在不同温度下使用同一批无序构型。
+默认输出为 `random_ising/results/run_001/L_8.h5` 等文件，温度分别存入 `T_1.0` 等 group。
+每组保存 `heat_capacity`、`susceptibility`、`local_susceptibility`、`correlation` 和静态量的 `errors`。
+Julia 中局域磁化率的维度为 `(L,L,ndisorder)`，自关联为 `(max_corr_time+1,ndisorder)`，
+保留每个无序构型的结果。再次扫描时请更换 `output_dir`，脚本不会覆盖已有目录。
+
+两套环境各自维护 `Manifest.toml`，在各自机器上通过 `Pkg` 生成，不复制个人电脑的 Manifest 到服务器环境。
+
+个人电脑无需 Slurm 的小规模验证（两个进程，每进程两个线程，临时输出并与串行结果比较）：
+
+```bash
+julia random_ising/run_slurm.jl --test
+```
