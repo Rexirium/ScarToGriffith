@@ -24,18 +24,19 @@ This is NOT the |M|-subtracted susceptibility or the N×N pair-response matrix.
 The local map sums to the total susceptibility. Divide total heat capacity and
 total susceptibility by N to obtain per-site values.
 
-`correlation[a][t+1]` is the site- and starting-time-averaged spin correlation
-sum(s_i(k+t)*s_i(k) for i=1:N, k=1:mcs-t) / (N*(mcs-t)),
-for t=0:min(max_corr_time, mcs-1). Each realization returns a
-Vector{Float64} of length min(max_corr_time, mcs-1)+1, with C(0)=1.
-Only post-thermalization configurations are used, without subtracting spin means.
+`correlation[a][t+1]` is the fixed-origin spin overlap
+sum(s_i(t)*s_i(0) for i=1:N) / N, with the reference taken at the end of thermalization,
+for t=0:max_corr_time. Each realization returns a Vector{Float64} of length
+max_corr_time+1, with C(0)=1. Time zero is the end of thermalization.
+Each realization uses one trajectory, without averaging over starting times
+or independent trajectories, and without subtracting spin means.
 Time is measured in random-site heat-bath sweeps after thermalization.
-Direct sums compute only the requested lags in O(N*mcs*min(max_corr_time, mcs-1))
-time, retaining the O(N*mcs) spin history.
+Overlaps are computed online in O(N*max_corr_time) time, retaining only one
+reference configuration and the output: O(N+max_corr_time) correlation storage.
 
-Keywords: `mcs=8192` measured sweeps, `thermalization=2048` discarded sweeps,
+Keywords: `mcs=8192` measured sweeps, `thermalization=1024` discarded sweeps,
 `binsize=64` consecutive sweeps per block, `seed=1234`,
-`max_corr_time=100` nonnegative maximum correlation lag (inclusive).
+`max_corr_time=100` maximum correlation lag (inclusive), with 0 <= max_corr_time <= mcs.
 MCS must contain at least two complete blocks for jackknife errors.
 Use more blocks when checking convergence. Thermalization always uses Swendsen-Wang.
 After thermalization, each measurement sweep performs
@@ -75,7 +76,8 @@ function random_bond_observables(L::Integer, T::Real,
     binsize > 0 && mcs >= 2binsize && mcs % binsize == 0 ||
         throw(ArgumentError("mcs must contain at least two complete bins"))
     thermalization >= 0 || throw(ArgumentError("thermalization must be nonnegative"))
-    max_corr_time >= 0 || throw(ArgumentError("max_corr_time must be nonnegative"))
+    0 <= max_corr_time <= mcs ||
+        throw(ArgumentError("max_corr_time must satisfy 0 <= max_corr_time <= mcs"))
 
     # 包内更新按键编号索引，且此版本的 SW 算法要求非负耦合。
     num_disorder = length(disorder)
@@ -101,10 +103,16 @@ function random_bond_observables(L::Integer, T::Real,
     # 每个任务独占模型、随机数流和输出位置，避免并发 push!。
     Threads.@threads for a in 1:num_disorder
         Js = disorder[a]
-        spins = Matrix{Int8}(undef, L^2, mcs)
+        reference = Vector{Int8}(undef, L^2)
+        correlation = Vector{Float64}(undef, max_corr_time + 1)
+        correlation[1] = 1.0
         step = Ref(0)
         updates = Ref(0)
         staged_update! = function (model, temp, bonds)
+            # 第一次热浴更新前保存参考态，即 SW 热化刚结束的时间零点。
+            if updates[] == thermalization
+                copyto!(reference, vec(model.spins))
+            end
             # 计数器由当前构型独占；前 thermalization 步仅用于 SW 热化。
             updates[] += 1
             if updates[] <= thermalization
@@ -115,9 +123,12 @@ function random_bond_observables(L::Integer, T::Real,
         # runMC 立即累积标量值；字典由每个无序构型独占，可在下一步覆盖。
         measurement = Dict{String,Any}()
         estimator = function (model, temp, bonds, extra)
-            # runMC 只在热化结束后调用 estimator，每列保存一个测量时刻。
+            # 首次测量对应热化后的时间 1，只计算前 max_corr_time 步的交叠。
             step[] += 1
-            spins[:, step[]] .= vec(model.spins)
+            if step[] <= max_corr_time
+                correlation[step[] + 1] =
+                    rbim_time_correlation(vec(model.spins), reference)
+            end
             return rbim_response_estimator!(measurement, model, temp, bonds, extra; local_keys)
         end
         # 热化、测量、分块与 jackknife 都交给 runMC。
@@ -134,7 +145,7 @@ function random_bond_observables(L::Integer, T::Real,
         )
 
         result = runMC(param)
-        correlations[a] = rbim_time_correlation(spins; max_corr_time)
+        correlations[a] = correlation
 
         # 内置热容和磁化率按格点归一化，乘以 L² 得到整个系统的量。
         cj = L^2 * result["Specific Heat"]
@@ -157,28 +168,18 @@ function random_bond_observables(L::Integer, T::Real,
         metadata=(L=L, T=T, seed=seed, seeds=seeds, mcs=mcs,
             thermalization=thermalization, thermalization_update=:sw,
             binsize=binsize, update=:local,
-            max_corr_time=max_corr_time,
+            max_corr_time=max_corr_time, corr_t0=0,
             boundary=:periodic, normalization=:extensive,
             version=pkgversion(SpinMonteCarlo)))
 end
 
-# 只对指定时间窗口直接求和，按格点数和有效起始时间数归一化。
-function rbim_time_correlation(spins::Matrix{Int8}; max_corr_time::Int=100)
-    max_corr_time >= 0 || throw(ArgumentError("max_corr_time must be nonnegative"))
-    ns, m = size(spins)
-    last_lag = min(max_corr_time, m - 1)
-    correlation = Vector{Float64}(undef, last_lag + 1)
-    correlation[1] = 1.0 # Ising 自旋 sᵢ²=1。
-    for t in 1:last_lag
-        offset, pairs = ns * t, ns * (m - t)
-        total = 0
-        # 列主序索引保持格点对应；用 Int 累加避免 Int8 溢出。
-        for k in 1:pairs
-            total += Int(spins[k]) * Int(spins[k + offset])
-        end
-        correlation[t + 1] = total / pairs
+# 当前构型与固定参考构型的格点平均交叠，用 Int 累加避免 Int8 溢出。
+function rbim_time_correlation(spins::AbstractVector, reference::AbstractVector)
+    total = 0
+    for i in eachindex(spins, reference)
+        total += Int(spins[i]) * Int(reference[i])
     end
-    return correlation
+    return total / length(spins)
 end
 
 # 每个 sweep 有放回地随机选点 N 次，零局域场时以等概率重采样 ±1。
@@ -232,7 +233,7 @@ function rbim_response_estimator!(measurement::Dict{String,Any}, model::Ising,
     return measurement
 end
 
-
+#=
 using CairoMakie
 let
     L, T = 10, 1.0
@@ -272,3 +273,4 @@ let
     axislegend(ax_correlation)
     display(fig)
 end
+=#

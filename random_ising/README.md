@@ -16,7 +16,7 @@ C[1]              # 第一个构型的总热容
 chi[1]            # 第一个构型的总磁化率
 chi_local[1]      # 第一个构型的 L×L 局域磁化率矩阵
 chi_local[1][x,y] # 格点 (x,y) 对均匀外场的响应
-correlation[1]    # 第一个构型的 C(t)，t = 0:min(max_corr_time, mcs-1)
+correlation[1]    # 第一个构型的固定起点交叠 C(t)，t = 0:max_corr_time
 correlation[1][t+1] # 时间间隔 t 的关联函数
 ```
 
@@ -37,16 +37,18 @@ correlation[1][t+1] # 时间间隔 t 的关联函数
 | `C` | `(〈H²〉-〈H〉²)/T²` | `Vector{Float64}` |
 | `chi` | `〈M²〉/T` | `Vector{Float64}` |
 | `chi_local` | 每个格点为 `〈sᵢM〉/T` | `Vector{Matrix{Float64}}` |
-| `correlation` | 各构型的起始时间平均自旋关联函数 | `Vector{Vector{Float64}}` |
+| `correlation` | 各构型的固定起点自旋交叠 | `Vector{Vector{Float64}}` |
 
-关联函数始终计算。令 `Ns=L²`，测量序列长度为 `mcs`，则
-`correlation[a][t+1] = Σ_{τ=0}^{mcs-t-1} Σᵢ sᵢ(τ+t)sᵢ(τ) / (Ns*(mcs-t))`。
-`max_corr_time` 为非负整数关键词参数，默认值为 `100`。
-每个数组长度为 `min(max_corr_time, mcs-1)+1`，包含 `C(0)=1`；只使用热化后的原始自旋序列，
-不减去自旋均值，不对时间做周期延拓。时间单位为所选更新算法的一步 Monte Carlo 更新。
-只对指定时间窗口直接求和，再按 `Ns*(mcs-t)` 归一化，无需 FFT 工作区。
-时间复杂度为 `O(Ns*mcs*min(max_corr_time, mcs-1))`，自旋序列占用 `O(Ns*mcs)` 内存。
-构型之间仍并行；`max_corr_time=0` 时只返回利用 Ising 自旋恒等式确定的 `C(0)=1`。
+关联函数始终计算。令 `Ns=L²`，参考时刻固定为 SW 热化刚结束的时间零点 `t0=0`，则
+`correlation[a][t+1] = Σᵢ sᵢ(t)sᵢ(0) / Ns`，`t=0:max_corr_time`。
+`max_corr_time` 默认值为 `100`，要求为整数且 `0 ≤ max_corr_time ≤ mcs`。
+每个数组长度为 `max_corr_time+1`，包含 `C(0)=1`。不做时间起点平均、不减去自旋均值。
+每个无序构型仅采样一条轨迹；绘图均值及标准误在所有无序构型之间计算。
+时间单位为热浴 sweep；只计算热化结束后的前 `max_corr_time` 步交叠，静态观测量仍测量全部 `mcs` 步。
+采样时只保存一个参考态并即时计算交叠，自相关计算量为 `O(Ns*max_corr_time)`，
+额外存储为 `O(Ns+max_corr_time)`，不再保存逐步自旋历史。
+`runMC` 仍保存静态观测量的原始测量，总内存仍随测量步数增长。
+构型之间仍并行；`max_corr_time=0` 时只返回 `C(0)=1`，`metadata.corr_t0` 记录参考时刻。
 
 这里使用有限系统零场对称系综，`〈sᵢ〉=〈M〉=0`。
 局域矩阵是均匀外场下的空间响应图，不是所有格点对的 `χᵢⱼ` 矩阵。

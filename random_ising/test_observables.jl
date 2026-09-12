@@ -22,25 +22,14 @@ include("observables.jl")
     end
 end
 
-@testset "starting-time averaged spin correlation" begin
-    spins = Int8[1 1 -1 -1; 1 -1 1 -1]
-    @test rbim_time_correlation(spins) ≈ [1.0, -1/3, 0.0, -1.0] atol=1e-12
-    @test rbim_time_correlation(ones(Int8, 4, 256)) == ones(101)
-    @test rbim_time_correlation(spins; max_corr_time=0) == [1.0]
-    @test_throws ArgumentError rbim_time_correlation(spins; max_corr_time=-1)
-    @test rbim_time_correlation(reshape(Int8[1, -1], 2, 1)) == [1.0]
-    rng = MersenneTwister(81)
-    for m in (2, 7, 32, 65, 257)
-        spins = rand(rng, Int8[-1, 1], 5, m)
-        original = copy(spins)
-        expected = [sum(Int(spins[i, k+t]) * Int(spins[i, k])
-            for k in 1:m-t, i in 1:5) / (5 * (m-t)) for t in 0:m-1]
-        for max_corr_time in (0, 1, 10, 100, m + 5)
-            @test rbim_time_correlation(spins; max_corr_time) ≈
-                expected[1:min(max_corr_time, m - 1)+1]
-        end
-        @test spins == original
-    end
+@testset "fixed-reference spin overlap" begin
+    reference = Int8[1, 1, -1, -1]
+    original = copy(reference)
+    @test rbim_time_correlation(reference, reference) == 1.0
+    @test rbim_time_correlation(-reference, reference) == -1.0
+    @test rbim_time_correlation(Int8[1, -1, 1, -1], reference) == 0.0
+    @test rbim_time_correlation(ones(Int8, 1024), ones(Int8, 1024)) == 1.0
+    @test reference == original
 end
 
 @testset "threaded realizations match serial runMC" begin
@@ -48,11 +37,12 @@ end
     rng = MersenneTwister(19)
     disorder = [ifelse.(rand(rng, 2L^2) .< 0.5, 1.0, 0.3) for _ in 1:8]
     original = deepcopy(disorder)
-    for thermalization in (0, 1, 64)
+    for thermalization in (0, 1, 64), max_corr_time in (0, 17, 256)
         out = random_bond_observables(L, T, disorder;
             mcs=256, thermalization, binsize=32, seed=72, details=true,
-            max_corr_time=17)
-        @test out.metadata.max_corr_time == 17
+            max_corr_time)
+        @test out.metadata.max_corr_time == max_corr_time
+        @test out.metadata.corr_t0 == 0
         @test out.metadata.thermalization_update == :sw
         @test out.metadata.update == :local
         for (a, Js) in enumerate(disorder)
@@ -74,10 +64,13 @@ end
             for _ in 1:thermalization
                 SW_update!(model, T, Js)
             end
+            initial = vec(copy(model.spins)) # 热化结束即时间零点。
             result = runMC(model, p)
             @test length(history) == 256
-            expected = [sum(history[k+t][i] * history[k][i]
-                for k in 1:256-t, i in 1:L^2) / (L^2 * (256-t)) for t in 0:17]
+            # 独立保存完整轨迹，验证在线计算的起点、终点及全部交叠值。
+            trajectory = hcat(initial, history...)
+            expected = [sum(trajectory[i, t+1] * initial[i]
+                for i in 1:L^2) / L^2 for t in 0:max_corr_time]
             @test all(isapprox.(out.correlation[a], expected; atol=1e-12, rtol=1e-12))
             c, chi = L^2 * result["Specific Heat"], L^2 * result["Susceptibility"]
             localchi = [result["Local Susceptibility $i"] for i in 1:L^2]
@@ -142,8 +135,7 @@ end
     @test length(a) == 4
     @test length(a[4][1]) == 101
     @test a[4][1][1] == 1.0
-    # 自由自旋仅在尚未被选中过时保留记忆，每 sweep 随机选点 N 次。
-    @test a[4][1][1:4] ≈ [(1 - 1/9)^(9t) for t in 0:3] atol=0.03
+    @test all(abs.(a[4][1]) .<= 1)
     @test random_bond_observables(3, 2.0, Vector{Float64}[]) ==
         (Float64[], Float64[], Matrix{Float64}[], Vector{Float64}[])
     @test_throws ArgumentError random_bond_observables(3, 0.0, disorder)
@@ -151,4 +143,5 @@ end
     @test_throws ArgumentError random_bond_observables(3, 2.0, [fill(-0.3,18)])
     @test_throws ArgumentError random_bond_observables(3, 2.0, disorder; mcs=65)
     @test_throws ArgumentError random_bond_observables(3, 2.0, disorder; max_corr_time=-1)
+    @test_throws ArgumentError random_bond_observables(3, 2.0, disorder; max_corr_time=8193)
 end
