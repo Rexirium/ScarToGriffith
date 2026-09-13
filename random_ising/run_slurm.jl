@@ -63,7 +63,11 @@ function write_case(cfg, data)
             file_metadata = (L=data.L, ndisorder=cfg.ndisorder, p=cfg.p,
                 Jstrong=cfg.Jstrong, Jweak=cfg.Jweak,
                 disorder_seed=data.disorder_seed, master_seed=cfg.seed,
-                format_version=3, julia_version=string(VERSION),
+                mcs=cfg.mcs, thermalization=cfg.thermalization, binsize=cfg.binsize,
+                max_corr_time=cfg.max_corr_time, corr_start_time=cfg.corr_start_time,
+                boundary=string(data.out.metadata.boundary),
+                normalization=string(data.out.metadata.normalization),
+                format_version=4, julia_version=string(VERSION),
                 version=string(data.out.metadata.version),
                 slurm_job_id=get(ENV, "SLURM_JOB_ID", "local"))
             for (key, value) in pairs(file_metadata)
@@ -93,14 +97,12 @@ function write_case(cfg, data)
             errors[string(key)] = value
         end
 
-        # 合并采样参数和运行信息；包版本已存于文件根属性。
-        group_metadata = merge(out.metadata, (
+        # 温度组只保存本次计算的属性；公共参数已存于文件根。
+        group_metadata = (T=data.T, seed=out.metadata.seed,
             worker_id=data.worker_id, worker_threads=data.worker_threads,
-            elapsed_seconds=data.elapsed_seconds))
+            elapsed_seconds=data.elapsed_seconds)
         for (key, value) in pairs(group_metadata)
-            key in (:seeds, :version) && continue
-            attributes(group)[string(key)] =
-                value isa Symbol ? string(value) : value
+            attributes(group)[string(key)] = value
         end
 
         attributes(group)["complete"] = true # 仅在所有数据写完之后标记。

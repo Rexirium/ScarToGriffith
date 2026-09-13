@@ -27,7 +27,19 @@ try
                     @assert read(attributes(file)["version"]) == string(data.out.metadata.version)
                     @assert read(attributes(g)["complete"])
                     @assert read(attributes(g)["worker_threads"]) == 2
-                    @assert read(attributes(g)["corr_start_time"]) == cfg.corr_start_time
+                    @assert read(attributes(file)["format_version"]) == 4
+                    for key in (:L, :mcs, :thermalization, :binsize, :max_corr_time,
+                            :corr_start_time, :boundary, :normalization)
+                        value = getproperty(data.out.metadata, key)
+                        @assert read(attributes(file)[string(key)]) ==
+                            (value isa Symbol ? string(value) : value)
+                        @assert !haskey(attributes(g), string(key))
+                    end
+                    @assert Set(keys(attributes(g))) == Set([
+                        "T", "seed", "worker_id", "worker_threads", "elapsed_seconds", "complete"])
+                    @assert read(attributes(g)["T"]) == T
+                    @assert read(attributes(g)["seed"]) == data.out.metadata.seed
+                    @assert read(g["realization_seeds"]) == data.out.metadata.seeds
                     @assert read(file["disorder"]) == data.disorder
 
                     @assert read(g["heat_capacity"]) == data.out.heat_capacity

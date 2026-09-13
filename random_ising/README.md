@@ -123,7 +123,7 @@ sbatch random_ising/submit.sbatch
 默认输出为 `random_ising/results/run_001/L_8.h5` 等文件，温度分别存入 `T_1.0` 等 group。
 每组保存 `heat_capacity`、`susceptibility`、`local_susceptibility`、`correlation` 和静态量的 `errors`。
 Julia 中局域磁化率的维度为 `(L,L,ndisorder)`，自关联为 `(max_corr_time+1,ndisorder)`，
-HDF5 格式版本为 `3`，`lags` 保存相对时间差 `0:max_corr_time`；温度组属性 `corr_start_time` 记录参考时刻。SpinMonteCarlo 包版本记录在文件根属性 `version` 中，不使用属性记录自关联函数定义。保留每个无序构型的结果。再次扫描时请更换 `output_dir`，脚本不会覆盖已有目录。
+HDF5 格式版本为 `4`，`lags` 保存相对时间差 `0:max_corr_time`。公共属性 `L`、`mcs`、`thermalization`、`binsize`、`max_corr_time`、`corr_start_time`、`boundary` 和 `normalization` 仅存于文件根，其中 `corr_start_time` 记录参考时刻；读取旧版温度组中这些属性的代码需改为读取根属性。温度组仅保留 `T`、`seed`、`worker_id`、`worker_threads`、`elapsed_seconds` 和 `complete` 属性。SpinMonteCarlo 包版本记录在文件根属性 `version` 中，不使用属性记录自关联函数定义。保留每个无序构型的结果。再次扫描时请更换 `output_dir`，脚本不会覆盖已有目录；已有文件不会自动迁移。
 
 两套环境各自维护 `Manifest.toml`，在各自机器上通过 `Pkg` 生成，不复制个人电脑的 Manifest 到服务器环境。
 
