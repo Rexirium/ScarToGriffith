@@ -2,8 +2,8 @@
 #SBATCH -A hpc1906185151
 #SBATCH --partition=C064M1024G
 #SBATCH --qos=low
-#SBATCH -J wm2-job-20260329-zephyr
-#SBATCH --nodes=6
+#SBATCH -J wm2-job-20260913-zephyr
+#SBATCH --nodes=4
 #SBATCH --cpus-per-task=8
 #SBATCH --ntasks-per-node=7
 #SBATCH --time=7200

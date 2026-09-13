@@ -33,6 +33,8 @@ JuliaLocalPreferences.toml
 **/superpowers/
 *.png
 *.zip
+*.err
+*.out
 
 # LaTeX build artifacts
 *.aux
