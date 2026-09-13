@@ -18,16 +18,17 @@ specify the Hamiltonian; no parameters of the bond distribution are needed.
 For N=L² and M=sum(s), outputs are extensive quantities:
 - heat_capacity[a] = (〈H²〉-〈H〉²)/T², total heat capacity;
 - susceptibility[a] = 〈M²〉/T, total uniform-field susceptibility;
-- local_susceptibility[a][x,y] = 〈s[x,y]*M〉/T, an L×L response map.
+- local_susceptibility[x,y,a] = 〈s[x,y]*M〉/T, an L×L response map.
 Finite-volume zero-field spin-inversion symmetry gives 〈s_i〉=〈M〉=0 exactly.
 This is NOT the |M|-subtracted susceptibility or the N×N pair-response matrix.
+Local maps and their errors have shape (L, L, num_disorder).
 The local map sums to the total susceptibility. Divide total heat capacity and
 total susceptibility by N to obtain per-site values.
 
-`correlation[a][t+1]` is the fixed-origin spin overlap
-sum(s_i(t)*s_i(0) for i=1:N) / N, with the reference taken at the end of thermalization,
-for t=0:max_corr_time. Each realization returns a Vector{Float64} of length
-max_corr_time+1, with C(0)=1. Time zero is the end of thermalization.
+`correlation[t+1,a]` is the fixed-origin spin overlap
+sum(s_i(t0+t)*s_i(t0) for i=1:N) / N, with t0=corr_start_time,
+for t=0:max_corr_time. The output is a (max_corr_time+1) × num_disorder matrix.
+The first row is C(0)=1, including when max_corr_time=0. Time zero is the end of thermalization.
 Each realization uses one trajectory, without averaging over starting times
 or independent trajectories, and without subtracting spin means.
 Time is measured in random-site heat-bath sweeps after thermalization.
@@ -36,7 +37,9 @@ reference configuration and the output: O(N+max_corr_time) correlation storage.
 
 Keywords: `mcs=8192` measured sweeps, `thermalization=1024` discarded sweeps,
 `binsize=64` consecutive sweeps per block, `seed=1234`,
-`max_corr_time=100` maximum correlation lag (inclusive), with 0 <= max_corr_time <= mcs.
+`corr_start_time=0` reference time in sweeps after thermalization,
+`max_corr_time=100` maximum correlation lag (inclusive).
+Require 0 <= corr_start_time <= mcs and 0 <= max_corr_time <= mcs-corr_start_time.
 MCS must contain at least two complete blocks for jackknife errors.
 Use more blocks when checking convergence. Thermalization always uses Swendsen-Wang.
 After thermalization, each measurement sweep performs
@@ -67,7 +70,7 @@ C, chi, chi_local, correlation = random_bond_observables(L, T, Js)
 function random_bond_observables(L::Integer, T::Real,
         disorder::AbstractVector{<:AbstractVector};
         mcs::Int=8192, thermalization::Int=1024, max_corr_time::Int=100,
-        binsize::Int=64, seed::Integer=1234,
+        corr_start_time::Int=0, binsize::Int=64, seed::Integer=1234,
         details::Bool=false)
 
     # 只检查晶格、温度和统计计算的必要条件。
@@ -76,8 +79,10 @@ function random_bond_observables(L::Integer, T::Real,
     binsize > 0 && mcs >= 2binsize && mcs % binsize == 0 ||
         throw(ArgumentError("mcs must contain at least two complete bins"))
     thermalization >= 0 || throw(ArgumentError("thermalization must be nonnegative"))
-    0 <= max_corr_time <= mcs ||
-        throw(ArgumentError("max_corr_time must satisfy 0 <= max_corr_time <= mcs"))
+    0 <= corr_start_time <= mcs ||
+        throw(ArgumentError("corr_start_time must satisfy 0 <= corr_start_time <= mcs"))
+    0 <= max_corr_time <= mcs - corr_start_time ||
+        throw(ArgumentError("max_corr_time must satisfy 0 <= max_corr_time <= mcs - corr_start_time"))
 
     # 包内更新按键编号索引，且此版本的 SW 算法要求非负耦合。
     num_disorder = length(disorder)
@@ -92,10 +97,10 @@ function random_bond_observables(L::Integer, T::Real,
     seeds = rand(rng, UInt32, num_disorder)
 
     C, chi = zeros(num_disorder), zeros(num_disorder)
-    maps = Vector{Matrix{Float64}}(undef, num_disorder)
-    correlations = Vector{Vector{Float64}}(undef, num_disorder)
+    maps = Array{Float64}(undef, L, L, num_disorder)
+    correlations = Matrix{Float64}(undef, max_corr_time + 1, num_disorder)
     dC, dchi = similar(C), similar(chi)
-    dmaps = Vector{Matrix{Float64}}(undef, num_disorder)
+    dmaps = similar(maps)
 
     # 固定名称只生成一次，所有任务只读共享，避免每个测量步重复分配字符串。
     local_keys = ["Local Susceptibility $i" for i in 1:L^2]
@@ -104,13 +109,13 @@ function random_bond_observables(L::Integer, T::Real,
     Threads.@threads for a in 1:num_disorder
         Js = disorder[a]
         reference = Vector{Int8}(undef, L^2)
-        correlation = Vector{Float64}(undef, max_corr_time + 1)
+        correlation = @view correlations[:, a]
         correlation[1] = 1.0
         step = Ref(0)
         updates = Ref(0)
         staged_update! = function (model, temp, bonds)
-            # 第一次热浴更新前保存参考态，即 SW 热化刚结束的时间零点。
-            if updates[] == thermalization
+            # t0=0 时，参考态取自第一次热浴更新之前。
+            if corr_start_time == 0 && updates[] == thermalization
                 copyto!(reference, vec(model.spins))
             end
             # 计数器由当前构型独占；前 thermalization 步仅用于 SW 热化。
@@ -123,10 +128,14 @@ function random_bond_observables(L::Integer, T::Real,
         # runMC 立即累积标量值；字典由每个无序构型独占，可在下一步覆盖。
         measurement = Dict{String,Any}()
         estimator = function (model, temp, bonds, extra)
-            # 首次测量对应热化后的时间 1，只计算前 max_corr_time 步的交叠。
+            # 到达 t0 时保存参考态，之后按相对时间差计算交叠。
             step[] += 1
-            if step[] <= max_corr_time
-                correlation[step[] + 1] =
+            if step[] == corr_start_time
+                copyto!(reference, vec(model.spins))
+            end
+            lag = step[] - corr_start_time
+            if 1 <= lag <= max_corr_time
+                correlation[lag + 1] =
                     rbim_time_correlation(vec(model.spins), reference)
             end
             return rbim_response_estimator!(measurement, model, temp, bonds, extra; local_keys)
@@ -145,7 +154,6 @@ function random_bond_observables(L::Integer, T::Real,
         )
 
         result = runMC(param)
-        correlations[a] = correlation
 
         # 内置热容和磁化率按格点归一化，乘以 L² 得到整个系统的量。
         cj = L^2 * result["Specific Heat"]
@@ -156,8 +164,8 @@ function random_bond_observables(L::Integer, T::Real,
         dC[a], dchi[a] = stderror(cj), stderror(chij)
 
         # 晶格编号的 x 坐标变化最快，与 Julia 的矩阵存储顺序一致。
-        maps[a] = reshape(mean.(localj), L, L)
-        dmaps[a] = reshape(stderror.(localj), L, L)
+        maps[:, :, a] = reshape(mean.(localj), L, L)
+        dmaps[:, :, a] = reshape(stderror.(localj), L, L)
     end
 
     details || return (C, chi, maps, correlations)
@@ -166,9 +174,8 @@ function random_bond_observables(L::Integer, T::Real,
         correlation=correlations,
         errors=(heat_capacity=dC, susceptibility=dchi, local_susceptibility=dmaps),
         metadata=(L=L, T=T, seed=seed, seeds=seeds, mcs=mcs,
-            thermalization=thermalization, thermalization_update=:sw,
-            binsize=binsize, update=:local,
-            max_corr_time=max_corr_time, corr_t0=0,
+            thermalization=thermalization, binsize=binsize,
+            max_corr_time=max_corr_time, corr_start_time=corr_start_time,
             boundary=:periodic, normalization=:extensive,
             version=pkgversion(SpinMonteCarlo)))
 end
@@ -257,11 +264,11 @@ let
     ax_local = Axis(heatmap_layout[1, 1]; xlabel="x", ylabel="y",
         width=230, height=230, aspect=DataAspect(),
         title="Time-averaged local susceptibility (realization $realization)")
-    hm = heatmap!(ax_local, 1:L, 1:L, localchi[realization]; colormap=:viridis)
+    hm = heatmap!(ax_local, 1:L, 1:L, localchi[:, :, realization]; colormap=:viridis)
     Colorbar(heatmap_layout[1, 2], hm; label="Local susceptibility", width=12)
 
     # 对每个时间间隔，计算所有无序构型的均值及其标准误。
-    correlations = reduce(hcat, correlation)
+    correlations = correlation
     correlation_mean = vec(mean(correlations; dims=2))
     correlation_sem = vec(std(correlations; dims=2)) ./ sqrt(Ndis)
     lags = 0:length(correlation_mean)-1

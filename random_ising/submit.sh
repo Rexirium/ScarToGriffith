@@ -1,17 +1,20 @@
 #!/bin/bash
-# 从仓库根目录提交：sbatch random_ising/submit.sbatch
-#SBATCH --job-name=rbim-scan
-#SBATCH --nodes=2
-#SBATCH --ntasks-per-node=2
+#SBATCH -A hpc1906185151
+#SBATCH --partition=C064M1024G
+#SBATCH --qos=low
+#SBATCH -J wm2-job-20260329-zephyr
+#SBATCH --nodes=6
 #SBATCH --cpus-per-task=8
-#SBATCH --time=04:00:00
-#SBATCH --mem=16G
-#SBATCH --output=rbim-%j.out
-#SBATCH --error=rbim-%j.err
+#SBATCH --ntasks-per-node=7
+#SBATCH --time=7200
+#SBATCH --chdir=/lustre/home/2501110202/work/ScarToGriffith
+#SBATCH --output=job.%j.out
+#SBATCH --error=job.%j.err
 
 set -euo pipefail
-cd "${SLURM_SUBMIT_DIR}"
-# 按服务器环境加载 Julia，例如 module load julia/1.12。
+
+module load julia
+
 export OPENBLAS_NUM_THREADS=1
 export OMP_NUM_THREADS=1
 # 不要再加 srun：SlurmClusterManager 会自行启动 worker。
