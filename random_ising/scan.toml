@@ -1,6 +1,6 @@
 # 尺寸、温度和无序构型
-Ls = [12, 16, 20, 24]
-Ts = { start = 0.02, stop = 3.0, length = 300 }
+Ls = [10, 16, 24, 32, 40, 50]
+Ts = { start = 0.01, stop = 3.0, length = 300 }
 ndisorder = 1000
 p = 0.5
 Jstrong = 1.0
@@ -18,4 +18,4 @@ corr_start_time = 4000
 # 等待写盘的结果数量上限
 result_buffer = 4
 # 相对于本 TOML 文件所在目录；也可以使用绝对路径
-output_dir = "results/run_003"
+output_dir = "results/run_004"
