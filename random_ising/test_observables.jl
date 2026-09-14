@@ -8,16 +8,14 @@ include("observables.jl")
         model = Ising(Parameter("Lattice" => "square lattice", "L" => L,
             "Use Indicies as Bond Types" => true, "Seed" => UInt32(18)))
         measurement = Dict{String,Any}()
-        local_keys = ["Local Susceptibility $i" for i in 1:L^2]
         for spins in (ones(Int, L^2), -ones(Int, L^2), rand(rng, [-1, 1], L^2))
             model.spins[:] = spins
             expected = simple_estimator(model, T, Js)
-            @test rbim_response_estimator!(measurement, model, T, Js; local_keys) === measurement
-            @test length(measurement) == length(expected) + L^2
+            @test rbim_response_estimator!(measurement, model, T, Js) === measurement
+            @test length(measurement) == length(expected)
             for (key, value) in expected
                 @test measurement[key] ≈ value
             end
-            @test [measurement[key] for key in local_keys] ≈ spins .* sum(spins) ./ T
         end
     end
 end
@@ -49,7 +47,7 @@ end
             history = Vector{Vector{Int}}()
             estimator = function (model, temp, bonds, extra)
                 push!(history, vec(copy(model.spins)))
-                return rbim_response_estimator(model, temp, bonds, extra)
+                return simple_estimator(model, temp, bonds, extra)
             end
             p = Parameter(
                 "Model" => Ising, "Lattice" => "square lattice", "L" => L,
@@ -73,13 +71,12 @@ end
                 for i in 1:L^2) / L^2 for t in 0:max_corr_time]
             @test all(isapprox.(out.correlation[:, a], expected; atol=1e-12, rtol=1e-12))
             c, chi = L^2 * result["Specific Heat"], L^2 * result["Susceptibility"]
-            localchi = [result["Local Susceptibility $i"] for i in 1:L^2]
             @test out.heat_capacity[a] == mean(c)
             @test out.susceptibility[a] == mean(chi)
             @test out.errors.heat_capacity[a] == stderror(c)
             @test out.errors.susceptibility[a] == stderror(chi)
-            @test out.local_susceptibility[:, :, a] == reshape(mean.(localchi), L, L)
-            @test out.errors.local_susceptibility[:, :, a] == reshape(stderror.(localchi), L, L)
+            @test out.U4[a] == 1 - mean(result["Binder Ratio"]) / 3
+            @test out.errors.U4[a] == stderror(result["Binder Ratio"]) / 3
         end
     end
     @test disorder == original
@@ -88,8 +85,7 @@ end
 # Independent square-torus Hamiltonian, including the L=2 parallel bonds.
 function exact_observables(L, T, Js)
     n = L^2
-    z = e1 = e2 = m2 = 0.0
-    local_chi = zeros(L, L)
+    z = e1 = e2 = m2 = m4 = 0.0
     for bits in 0:(2^n - 1)
         s = reshape([iszero(bits & (1 << (i - 1))) ? -1 : 1 for i in 1:n], L, L)
         e = 0.0
@@ -104,9 +100,9 @@ function exact_observables(L, T, Js)
         e1 += w * e
         e2 += w * e^2
         m2 += w * m^2
-        local_chi .+= (w * m / T) .* s
+        m4 += w * m^4
     end
-    return ((e2/z - (e1/z)^2)/T^2, m2/z/T, local_chi/z)
+    return ((e2/z - (e1/z)^2)/T^2, m2/z/T, 1 - (m4/z)/(3(m2/z)^2))
 end
 
 @testset "random-bond responses" begin
@@ -117,28 +113,30 @@ end
         mcs=65536, thermalization=4096, binsize=256, seed=72, details=true)
     @test disorder == original
     @test length(out.heat_capacity) == length(out.susceptibility) == 2
-    @test size(out.local_susceptibility) == (L, L, 2)
-    @test size(out.errors.local_susceptibility) == (L, L, 2)
+    @test size(out.U4) == (2,)
+    @test keys(out.errors) == (:heat_capacity, :susceptibility, :U4)
+    @test size(out.errors.U4) == (2,)
+    @test all(x -> isfinite(x) && x >= 0, out.errors.U4)
+    @test !hasproperty(out, :local_susceptibility)
     for a in eachindex(disorder)
-        c, chi, loc = exact_observables(L, T, disorder[a])
+        c, chi, u4 = exact_observables(L, T, disorder[a])
         @test abs(out.heat_capacity[a] - c) < 6out.errors.heat_capacity[a] + 0.02
         @test abs(out.susceptibility[a] - chi) < 6out.errors.susceptibility[a] + 0.02
-        @test all(abs.(out.local_susceptibility[:, :, a] - loc) .<
-            6 .* out.errors.local_susceptibility[:, :, a] .+ 0.02)
-        @test sum(out.local_susceptibility[:, :, a]) ≈ out.susceptibility[a]
+        @test isapprox(out.U4[a], u4; atol=0.02)
     end
     kwargs = (mcs=8192, thermalization=256, binsize=64, seed=4)
     a = random_bond_observables(3, 2.0, [zeros(18)]; kwargs...)
     @test a == random_bond_observables(3, 2.0, [zeros(18)]; kwargs...)
     @test a[1] == [0.0]
     @test a[2][1] ≈ 9/2 atol=0.2
-    @test all(abs.(a[3][:, :, 1] .- 0.5) .< 0.1)
+    @test size(a[3]) == (1,)
+    @test isapprox(a[3][1], 2/27; atol=0.04)
     @test length(a) == 4
     @test size(a[4]) == (101, 1)
     @test a[4][1, 1] == 1.0
     @test all(abs.(a[4]) .<= 1)
     @test random_bond_observables(3, 2.0, Vector{Float64}[]) ==
-        (Float64[], Float64[], zeros(3, 3, 0), zeros(101, 0))
+        (Float64[], Float64[], Float64[], zeros(101, 0))
     @test_throws ArgumentError random_bond_observables(3, 0.0, disorder)
     @test_throws ArgumentError random_bond_observables(3, 2.0, [ones(17)])
     @test_throws ArgumentError random_bond_observables(3, 2.0, [fill(-0.3,18)])

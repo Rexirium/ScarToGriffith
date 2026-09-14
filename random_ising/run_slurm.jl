@@ -67,7 +67,7 @@ function write_case(cfg, data)
                 max_corr_time=cfg.max_corr_time, corr_start_time=cfg.corr_start_time,
                 boundary=string(data.out.metadata.boundary),
                 normalization=string(data.out.metadata.normalization),
-                format_version=4, julia_version=string(VERSION),
+                format_version=5, julia_version=string(VERSION),
                 version=string(data.out.metadata.version),
                 slurm_job_id=get(ENV, "SLURM_JOB_ID", "local"))
             for (key, value) in pairs(file_metadata)
@@ -85,7 +85,7 @@ function write_case(cfg, data)
 
         # 直接保存数组；最后一维对应输入的无序构型顺序。
         out = data.out
-        for key in (:heat_capacity, :susceptibility, :local_susceptibility, :correlation)
+        for key in (:heat_capacity, :susceptibility, :U4, :correlation)
             group[string(key)] = getproperty(out, key)
         end
         group["lags"] = collect(0:cfg.max_corr_time)

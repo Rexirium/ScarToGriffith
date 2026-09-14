@@ -27,7 +27,7 @@ try
                     @assert read(attributes(file)["version"]) == string(data.out.metadata.version)
                     @assert read(attributes(g)["complete"])
                     @assert read(attributes(g)["worker_threads"]) == 2
-                    @assert read(attributes(file)["format_version"]) == 4
+                    @assert read(attributes(file)["format_version"]) == 5
                     for key in (:L, :mcs, :thermalization, :binsize, :max_corr_time,
                             :corr_start_time, :boundary, :normalization)
                         value = getproperty(data.out.metadata, key)
@@ -44,16 +44,19 @@ try
 
                     @assert read(g["heat_capacity"]) == data.out.heat_capacity
                     @assert read(g["susceptibility"]) == data.out.susceptibility
-                    @assert read(g["local_susceptibility"]) == data.out.local_susceptibility
+                    @assert read(g["U4"]) == data.out.U4
                     @assert read(g["correlation"]) == data.out.correlation
 
-                    @assert size(read(g["local_susceptibility"])) == (L, L, cfg.ndisorder)
+                    @assert size(read(g["U4"])) == (cfg.ndisorder,)
                     @assert size(read(g["correlation"])) == (cfg.max_corr_time + 1, cfg.ndisorder)
                     @assert read(g["lags"]) == collect(0:cfg.max_corr_time)
 
                     @assert read(g["errors/heat_capacity"]) == data.out.errors.heat_capacity
                     @assert read(g["errors/susceptibility"]) == data.out.errors.susceptibility
-                    @assert read(g["errors/local_susceptibility"]) == data.out.errors.local_susceptibility
+                    @assert read(g["errors/U4"]) == data.out.errors.U4
+                    @assert size(read(g["errors/U4"])) == (cfg.ndisorder,)
+                    @assert !haskey(g, "local_susceptibility")
+                    @assert Set(keys(g["errors"])) == Set(["heat_capacity", "susceptibility", "U4"])
                 end
             end
         end

@@ -4,7 +4,7 @@ using Statistics
 
 """
     random_bond_observables(L, T, disorder; kwargs...)
-        -> (heat_capacity, susceptibility, local_susceptibility, correlation)
+        -> (heat_capacity, susceptibility, U4, correlation)
 
 Sample each supplied quenched bond realization of the zero-field square Ising
 model H = -sum(J_ij*s_i*s_j), s_i = ±1, kB = 1, with periodic boundaries.
@@ -15,15 +15,14 @@ periodically. L≥2; L=2 retains the torus's parallel bonds.
 Realizations are neither mutated nor regenerated. The supplied couplings fully
 specify the Hamiltonian; no parameters of the bond distribution are needed.
 
-For N=L² and M=sum(s), outputs are extensive quantities:
+For N=L^2 and M=sum(s), the static outputs are:
 - heat_capacity[a] = (〈H²〉-〈H〉²)/T², total heat capacity;
 - susceptibility[a] = 〈M²〉/T, total uniform-field susceptibility;
-- local_susceptibility[x,y,a] = 〈s[x,y]*M〉/T, an L×L response map.
-Finite-volume zero-field spin-inversion symmetry gives 〈s_i〉=〈M〉=0 exactly.
-This is NOT the |M|-subtracted susceptibility or the N×N pair-response matrix.
-Local maps and their errors have shape (L, L, num_disorder).
-The local map sums to the total susceptibility. Divide total heat capacity and
-total susceptibility by N to obtain per-site values.
+- U4[a] = 1 - <M^4>/(3<M^2>^2), the dimensionless Binder cumulant.
+U4 has length num_disorder and uses the package's jackknife Binder Ratio,
+consistent with critical_temp.jl. Its jackknife error is the Binder Ratio error / 3.
+Finite-volume zero-field spin-inversion symmetry gives <M>=0 exactly.
+Divide total heat capacity and susceptibility by N to obtain per-site values.
 
 `correlation[t+1,a]` is the fixed-origin spin overlap
 sum(s_i(t0+t)*s_i(t0) for i=1:N) / N, with t0=corr_start_time,
@@ -51,10 +50,10 @@ Realizations run concurrently with `Threads.@threads`; start Julia with
 depend on thread scheduling. With one Julia thread, execution is serial.
 
 With `details=true`, return a named tuple containing the four arrays,
-`errors` arrays from block jackknife for the three static responses (no correlation
+`errors` arrays from block jackknife for heat capacity, susceptibility and U4 (no correlation
 error estimate), and `metadata` including package version
 and one seed per realization. Sampling and block jackknife use `runMC`.
-In SpinMonteCarlo v1.2.2, memory scales as O(N*mcs): raw measurements are
+In SpinMonteCarlo v1.2.2, memory scales as O(N+mcs): raw measurements are
 retained by the driver before binning.
 Errors do not include disorder averaging. Check convergence by increasing
 thermalization, MCS and block size, and comparing independent seeds.
@@ -64,7 +63,7 @@ Example:
 rng = MersenneTwister(10)
 L, T, p, r = 16, 2.0, 0.5, 0.3
 Js = [ifelse.(rand(rng, 2L^2) .< p, 1.0, r) for _ in 1:4]
-C, chi, chi_local, correlation = random_bond_observables(L, T, Js)
+C, chi, U4, correlation = random_bond_observables(L, T, Js)
 ```
 """
 function random_bond_observables(L::Integer, T::Real,
@@ -97,13 +96,9 @@ function random_bond_observables(L::Integer, T::Real,
     seeds = rand(rng, UInt32, num_disorder)
 
     C, chi = zeros(num_disorder), zeros(num_disorder)
-    maps = Array{Float64}(undef, L, L, num_disorder)
+    U4 = zeros(num_disorder)
     correlations = Matrix{Float64}(undef, max_corr_time + 1, num_disorder)
-    dC, dchi = similar(C), similar(chi)
-    dmaps = similar(maps)
-
-    # 固定名称只生成一次，所有任务只读共享，避免每个测量步重复分配字符串。
-    local_keys = ["Local Susceptibility $i" for i in 1:L^2]
+    dC, dchi, dU4 = similar(C), similar(chi), similar(U4)
 
     # 每个任务独占模型、随机数流和输出位置，避免并发 push!。
     Threads.@threads for a in 1:num_disorder
@@ -138,7 +133,7 @@ function random_bond_observables(L::Integer, T::Real,
                 correlation[lag + 1] =
                     rbim_time_correlation(vec(model.spins), reference)
             end
-            return rbim_response_estimator!(measurement, model, temp, bonds, extra; local_keys)
+            return rbim_response_estimator!(measurement, model, temp, bonds, extra)
         end
         # 热化、测量、分块与 jackknife 都交给 runMC。
         param = Parameter(
@@ -158,21 +153,18 @@ function random_bond_observables(L::Integer, T::Real,
         # 内置热容和磁化率按格点归一化，乘以 L² 得到整个系统的量。
         cj = L^2 * result["Specific Heat"]
         chij = L^2 * result["Susceptibility"]
-        localj = [result[key] for key in local_keys]
+        U4[a] = 1 - mean(result["Binder Ratio"]) / 3
+        dU4[a] = stderror(result["Binder Ratio"]) / 3
 
         C[a], chi[a] = mean(cj), mean(chij)
         dC[a], dchi[a] = stderror(cj), stderror(chij)
-
-        # 晶格编号的 x 坐标变化最快，与 Julia 的矩阵存储顺序一致。
-        maps[:, :, a] = reshape(mean.(localj), L, L)
-        dmaps[:, :, a] = reshape(stderror.(localj), L, L)
     end
 
-    details || return (C, chi, maps, correlations)
+    details || return (C, chi, U4, correlations)
 
-    return (heat_capacity=C, susceptibility=chi, local_susceptibility=maps,
+    return (heat_capacity=C, susceptibility=chi, U4=U4,
         correlation=correlations,
-        errors=(heat_capacity=dC, susceptibility=dchi, local_susceptibility=dmaps),
+        errors=(heat_capacity=dC, susceptibility=dchi, U4=dU4),
         metadata=(L=L, T=T, seed=seed, seeds=seeds, mcs=mcs,
             thermalization=thermalization, binsize=binsize,
             max_corr_time=max_corr_time, corr_start_time=corr_start_time,
@@ -206,15 +198,8 @@ function rbim_heatbath_update!(model, T, Js)
     return nothing
 end
 
-function rbim_response_estimator(model::Ising, T::Real, Js::AbstractArray, extra=nothing;
-        local_keys=("Local Susceptibility $i" for i in 1:numsites(model)))
-    return rbim_response_estimator!(Dict{String,Any}(), model, T, Js, extra; local_keys)
-end
-
 function rbim_response_estimator!(measurement::Dict{String,Any}, model::Ising,
-        T::Real, Js::AbstractArray, extra=nothing;
-        local_keys=("Local Susceptibility $i" for i in 1:numsites(model)))
-    # 沿用 SpinMonteCarlo simple_estimator 的归一化和逐键数值，直接覆盖已有字典。
+        T::Real, Js::AbstractArray, extra=nothing)
     ns = numsites(model)
     magnetization = sum(model.spins)
     m = magnetization / ns
@@ -231,12 +216,6 @@ function rbim_response_estimator!(measurement::Dict{String,Any}, model::Ising,
     measurement["Energy"] = energy
     measurement["Energy^2"] = energy^2
 
-    # 零场对称系综下 χᵢ = 〈sᵢM〉/T，每步只计算一次公共因子。
-    magnetization_over_T = magnetization / T
-    for (i, key) in enumerate(local_keys)
-        measurement[key] = model.spins[i] * magnetization_over_T
-    end
-
     return measurement
 end
 
@@ -249,7 +228,7 @@ let
 
     disorder = [ifelse.(rand(Nb) .< 0.5, 1.0, 0.0) for _ in 1:Ndis]
 
-    C, chi, localchi, correlation = random_bond_observables(L, T, disorder)
+    C, chi, U4, correlation = random_bond_observables(L, T, disorder)
 
     fig = Figure(size=(650, 800), figure_padding=12)
     rowgap!(fig.layout, 10)
@@ -257,15 +236,9 @@ let
         title="Susceptibility distribution (L=$L, T=$T)")
     hist!(ax, chi; bins=30, normalization=:pdf)
 
-    # 展示一个无序构型在采样结束后得到的时间平均局域磁化率。
-    realization = 1
-    heatmap_layout = GridLayout(fig[2, 1]; tellwidth=false)
-    colgap!(heatmap_layout, 8)
-    ax_local = Axis(heatmap_layout[1, 1]; xlabel="x", ylabel="y",
-        width=230, height=230, aspect=DataAspect(),
-        title="Time-averaged local susceptibility (realization $realization)")
-    hm = heatmap!(ax_local, 1:L, 1:L, localchi[:, :, realization]; colormap=:viridis)
-    Colorbar(heatmap_layout[1, 2], hm; label="Local susceptibility", width=12)
+    ax_u4 = Axis(fig[2, 1]; xlabel="U4", ylabel="Probability density",
+        title="Binder cumulant distribution (L=$L, T=$T)")
+    hist!(ax_u4, U4; bins=30, normalization=:pdf)
 
     # 对每个时间间隔，计算所有无序构型的均值及其标准误。
     correlations = correlation

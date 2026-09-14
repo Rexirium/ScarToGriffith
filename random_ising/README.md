@@ -11,13 +11,12 @@ L, T, p, r = 16, 2.0, 0.5, 0.3
 rng = MersenneTwister(10)
 # 已有构型时，直接用自己的 Js 替换下面这一行。
 Js = [ifelse.(rand(rng, 2L^2) .< p, 1.0, r) for _ in 1:4]
-C, chi, chi_local, correlation = random_bond_observables(L, T, Js;
+C, chi, U4, correlation = random_bond_observables(L, T, Js;
     mcs=8192, thermalization=2048, binsize=64, seed=1234, max_corr_time=100)
 
 C[1]              # 第一个构型的总热容
 chi[1]            # 第一个构型的总磁化率
-chi_local[:,:,1]      # 第一个构型的 L×L 局域磁化率矩阵
-chi_local[x,y,1] # 格点 (x,y) 对均匀外场的响应
+U4[1]             # 第一个构型的 Binder 累积量
 correlation[:,1]    # 第一个构型的固定起点交叠 C(t)，t = 0:max_corr_time
 correlation[t+1,1] # 时间间隔 t 的关联函数
 ```
@@ -38,7 +37,7 @@ correlation[t+1,1] # 时间间隔 t 的关联函数
 | --- | --- | --- |
 | `C` | `(〈H²〉-〈H〉²)/T²` | `Vector{Float64}` |
 | `chi` | `〈M²〉/T` | `Vector{Float64}` |
-| `chi_local` | 每个格点为 `〈sᵢM〉/T` | `Array{Float64,3}`，维度 `(L,L,num_disorder)` |
+| `U4` | `1-〈M⁴〉/(3〈M²〉²)` | `Vector{Float64}`，长度 `num_disorder` |
 | `correlation` | 各构型的固定起点自旋交叠 | `Matrix{Float64}`，维度 `(max_corr_time+1,num_disorder)` |
 
 关联函数始终计算。令 `Ns=L²`，参考时刻为 `t0=corr_start_time`，以 SW 热化结束后的热浴 sweep 数计时，则
@@ -53,18 +52,19 @@ correlation[t+1,1] # 时间间隔 t 的关联函数
 构型之间仍并行；`max_corr_time=0` 时返回仅含 `C(0)=1` 的 `1×num_disorder` 矩阵，`metadata.corr_start_time` 记录参考时刻。
 
 这里使用有限系统零场对称系综，`〈sᵢ〉=〈M〉=0`。
-局域矩阵是均匀外场下的空间响应图，不是所有格点对的 `χᵢⱼ` 矩阵。
-`sum(chi_local[:,:,a]) ≈ chi[a]`。`C` 和 `chi` 都是整个系统的量；
+`C` 和 `chi` 都是整个系统的量；
 除以 `L²` 得到每格点热容和磁化率。没有减去 `〈|M|〉²`。
 
-设置 `details=true` 可取得具名结果和三个静态响应的分块 jackknife 误差；局域响应误差同样为 `(L,L,num_disorder)`，关联函数不提供误差估计：
+`U4` 使用 `1-mean(result["Binder Ratio"])/3`，与 `critical_temp.jl` 一致，逐构型计算后返回，不先做无序平均。
+设置 `details=true` 可取得具名结果及热容、总磁化率、U4 的分块 jackknife 误差；`errors.U4` 是长度 `num_disorder` 的向量，计算为 `stderror(result["Binder Ratio"])/3`。关联函数不提供误差估计：
 
 ```julia
 out = random_bond_observables(L, T, Js; details=true)
 out.heat_capacity
 out.correlation[:,1] # 第一个构型的 C(t) 数组
 out.errors.heat_capacity
-out.errors.local_susceptibility[:,:,1]
+out.U4[1]
+out.errors.U4[1]
 out.metadata  # 包版本、种子、采样长度、块大小等
 ```
 
@@ -78,9 +78,9 @@ out.metadata  # 包版本、种子、采样长度、块大小等
 每个构型通过独立的 `Parameter` 调用 `runMC`，由框架负责热化、测量、分块和 jackknife。
 不同构型通过 `Threads.@threads` 并行计算，输出顺序与输入一致，种子不依赖线程调度。
 可用 `--threads=4` 指定线程数，或用 `--threads=1` 串行运行；函数调用方式不变。
-自定义 `Estimator` 在 `simple_estimator` 的基础上添加各格点的 `sᵢM/T`，
-内置后处理负责热容和总磁化率所需的统计，返回前将每格点量乘以 `L²`。
-SpinMonteCarlo v1.2.2 会先保存逐步测量值再分块，因此内存随 `L²*mcs` 增长。
+自定义 `Estimator` 复用字典，仅测量能量和磁化强度的矩，与 `simple_estimator` 一致。
+内置后处理负责热容、总磁化率和 Binder 比的统计，返回前将热容和总磁化率乘以 `L²`。
+SpinMonteCarlo v1.2.2 会先保存逐步测量值再分块；移除局域测量后，单构型内存为 `O(L²+mcs)`。
 多线程运行时，每个同时计算的构型都需要这部分内存。
 
 误差描述单个构型的热采样误差，不包含无序平均的误差。
@@ -94,7 +94,7 @@ julia --project=julia-env/local --threads=4 --check-bounds=yes random_ising/test
 ```
 
 测试用独立的 `3×3` 精确枚举核对非均匀耦合与纯模型，
-并检查局域响应求和、零耦合极限、复现性、输入不被修改和非法输入。
+并检查 U4、零耦合极限、复现性、输入不被修改和非法输入。
 多构型结果及误差还会逐项对照串行 `runMC`，覆盖两种更新算法。
 实现针对本项目已安装的 SpinMonteCarlo v1.2.2 源码核对；
 包的接口说明见 [官方文档](https://yomichi.github.io/SpinMonteCarlo.jl/latest/)。
@@ -121,9 +121,9 @@ sbatch random_ising/submit.sbatch
 主进程需 `--threads=2`，提交脚本已设置；worker 线程数仍由 `--cpus-per-task` 决定。
 相同尺寸在不同温度下使用同一批无序构型。
 默认输出为 `random_ising/results/run_001/L_8.h5` 等文件，温度分别存入 `T_1.0` 等 group。
-每组保存 `heat_capacity`、`susceptibility`、`local_susceptibility`、`correlation` 和静态量的 `errors`。
-Julia 中局域磁化率的维度为 `(L,L,ndisorder)`，自关联为 `(max_corr_time+1,ndisorder)`，
-HDF5 格式版本为 `4`，`lags` 保存相对时间差 `0:max_corr_time`。公共属性 `L`、`mcs`、`thermalization`、`binsize`、`max_corr_time`、`corr_start_time`、`boundary` 和 `normalization` 仅存于文件根，其中 `corr_start_time` 记录参考时刻；读取旧版温度组中这些属性的代码需改为读取根属性。温度组仅保留 `T`、`seed`、`worker_id`、`worker_threads`、`elapsed_seconds` 和 `complete` 属性。SpinMonteCarlo 包版本记录在文件根属性 `version` 中，不使用属性记录自关联函数定义。保留每个无序构型的结果。再次扫描时请更换 `output_dir`，脚本不会覆盖已有目录；已有文件不会自动迁移。
+每组保存 `heat_capacity`、`susceptibility`、`U4`、`correlation`，`errors` 保存热容、总磁化率和 U4 误差（`errors/U4`），不再保存局域磁化率及其误差。
+Julia 中 `U4` 的维度为 `(ndisorder,)`，自关联为 `(max_corr_time+1,ndisorder)`，
+HDF5 格式版本为 `5`，`lags` 保存相对时间差 `0:max_corr_time`。公共属性 `L`、`mcs`、`thermalization`、`binsize`、`max_corr_time`、`corr_start_time`、`boundary` 和 `normalization` 仅存于文件根，其中 `corr_start_time` 记录参考时刻；读取旧版温度组中这些属性的代码需改为读取根属性。温度组仅保留 `T`、`seed`、`worker_id`、`worker_threads`、`elapsed_seconds` 和 `complete` 属性。SpinMonteCarlo 包版本记录在文件根属性 `version` 中，不使用属性记录自关联函数定义。保留每个无序构型的结果。再次扫描时请更换 `output_dir`，脚本不会覆盖已有目录；已有文件不会自动迁移。
 
 两套环境各自维护 `Manifest.toml`，在各自机器上通过 `Pkg` 生成，不复制个人电脑的 Manifest 到服务器环境。
 
