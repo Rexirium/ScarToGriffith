@@ -18,4 +18,4 @@ corr_start_time = 4000
 # 等待写盘的结果数量上限
 result_buffer = 4
 # 相对于本 TOML 文件所在目录；也可以使用绝对路径
-output_dir = "results/run_001"
+output_dir = "results/run_002"
