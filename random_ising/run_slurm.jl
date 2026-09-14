@@ -71,7 +71,7 @@ function write_case(cfg, data)
                 max_corr_time=cfg.max_corr_time, corr_start_time=cfg.corr_start_time,
                 boundary=string(data.out.metadata.boundary),
                 normalization=string(data.out.metadata.normalization),
-                format_version=6, julia_version=string(VERSION),
+                format_version=7, julia_version=string(VERSION),
                 version=string(data.out.metadata.version),
                 slurm_job_id=get(ENV, "SLURM_JOB_ID", "local"))
             for (key, value) in pairs(file_metadata)
@@ -87,7 +87,7 @@ function write_case(cfg, data)
         haskey(file, group_name) && error("Refusing to overwrite $path/$group_name")
         group = create_group(file, group_name)
 
-        # 直接保存数组；最后一维对应输入的无序构型顺序。
+        # 静态量逐构型保存；correlation 保存跨构型均值向量。
         out = data.out
         for key in (:heat_capacity, :susceptibility, :U4, :correlation)
             group[string(key)] = getproperty(out, key)
@@ -96,7 +96,7 @@ function write_case(cfg, data)
         group["lags"] = collect(0:cfg.max_corr_time)
         group["realization_seeds"] = out.metadata.seeds
 
-        # 静态响应的采样误差单独存放，自关联不提供误差估计。
+        # 静态量保存分块误差；自关联保存跨构型样本标准误。
         errors = create_group(group, "errors")
         for (key, value) in pairs(out.errors)
             errors[string(key)] = value

@@ -40,7 +40,8 @@ end
         out = random_bond_observables(L, T, disorder;
             mcs=256, thermalization, binsize=32, seed=72, details=true,
             max_corr_time, corr_start_time)
-        @test size(out.correlation) == (max_corr_time + 1, length(disorder))
+        @test size(out.correlation) == size(out.errors.correlation) == (max_corr_time + 1,)
+        expected_samples = Matrix{Float64}(undef, max_corr_time + 1, length(disorder))
         @test out.metadata.max_corr_time == max_corr_time
         @test out.metadata.corr_start_time == corr_start_time
         for (a, Js) in enumerate(disorder)
@@ -69,7 +70,7 @@ end
             trajectory = hcat(initial, history...)
             expected = [sum(trajectory[i, corr_start_time+t+1] * trajectory[i, corr_start_time+1]
                 for i in 1:L^2) / L^2 for t in 0:max_corr_time]
-            @test all(isapprox.(out.correlation[:, a], expected; atol=1e-12, rtol=1e-12))
+            expected_samples[:, a] = expected
             c, chi = L^2 * result["Specific Heat"], L^2 * result["Susceptibility"]
             @test out.heat_capacity[a] == mean(c)
             @test out.susceptibility[a] == mean(chi)
@@ -78,6 +79,10 @@ end
             @test out.U4[a] == 1 - mean(result["Binder Ratio"]) / 3
             @test out.errors.U4[a] == stderror(result["Binder Ratio"]) / 3
         end
+        @test out.correlation ≈ vec(mean(expected_samples; dims=2))
+        @test out.errors.correlation ≈ vec(std(expected_samples; dims=2)) ./ sqrt(length(disorder))
+        @test out.correlation[1] == 1.0
+        @test out.errors.correlation[1] == 0.0
     end
     @test disorder == original
 end
@@ -169,7 +174,7 @@ end
     @test disorder == original
     @test length(out.heat_capacity) == length(out.susceptibility) == 2
     @test size(out.U4) == (2,)
-    @test keys(out.errors) == (:heat_capacity, :susceptibility, :U4)
+    @test keys(out.errors) == (:heat_capacity, :susceptibility, :U4, :correlation)
     @test size(out.errors.U4) == (2,)
     @test all(x -> isfinite(x) && x >= 0, out.errors.U4)
     @test !hasproperty(out, :local_susceptibility)
@@ -187,11 +192,19 @@ end
     @test size(a[3]) == (1,)
     @test isapprox(a[3][1], 2/27; atol=0.04)
     @test length(a) == 4
-    @test size(a[4]) == (101, 1)
-    @test a[4][1, 1] == 1.0
+    @test size(a[4]) == (101,)
+    @test a[4][1] == 1.0
     @test all(abs.(a[4]) .<= 1)
-    @test random_bond_observables(3, 2.0, Vector{Float64}[]) ==
-        (Float64[], Float64[], Float64[], zeros(101, 0))
+    single = random_bond_observables(3, 2.0, [zeros(18)]; kwargs..., details=true)
+    @test single.correlation == a[4]
+    @test size(single.errors.correlation) == (101,)
+    @test all(isnan, single.errors.correlation)
+    empty = random_bond_observables(3, 2.0, Vector{Float64}[]; details=true)
+    @test isempty(empty.heat_capacity) && isempty(empty.susceptibility) && isempty(empty.U4)
+    @test size(empty.correlation) == size(empty.errors.correlation) == (101,)
+    @test all(isnan, empty.correlation) && all(isnan, empty.errors.correlation)
+    @test isequal(random_bond_observables(3, 2.0, Vector{Float64}[]),
+        (Float64[], Float64[], Float64[], fill(NaN, 101)))
     @test_throws ArgumentError random_bond_observables(3, 0.0, disorder)
     @test_throws ArgumentError random_bond_observables(3, 2.0, [ones(17)])
     @test_throws ArgumentError random_bond_observables(3, 2.0, [fill(-0.3,18)])

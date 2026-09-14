@@ -24,15 +24,20 @@ consistent with critical_temp.jl. Its jackknife error is the Binder Ratio error 
 Finite-volume zero-field spin-inversion symmetry gives <M>=0 exactly.
 Divide total heat capacity and susceptibility by N to obtain per-site values.
 
-`correlation[t+1,a]` is the fixed-origin spin overlap
+For each realization a, C_a(t) is the fixed-origin spin overlap
 sum(s_i(t0+t)*s_i(t0) for i=1:N) / N, with t0=corr_start_time,
-for t=0:max_corr_time. The output is a (max_corr_time+1) × num_disorder matrix.
-The first row is C(0)=1, including when max_corr_time=0. Time zero is the end of thermalization.
+for t=0:max_corr_time. `correlation` returns the sample mean across realizations,
+as a vector of length max_corr_time+1. With details=true, `errors.correlation`
+is the corrected sample standard deviation divided by sqrt(num_disorder).
+For nonempty input C(0)=1; its SEM is zero when num_disorder >= 2.
+With one sample the SEM is NaN; with no samples both vectors contain NaN.
+Time zero is the end of thermalization.
 Each realization uses one trajectory, without averaging over starting times
 or independent trajectories, and without subtracting spin means.
 Time is measured in random-site heat-bath sweeps after thermalization.
 Overlaps are computed online in O(N*max_corr_time) time, retaining only one
-reference configuration and the output: O(N+max_corr_time) correlation storage.
+reference configuration per active realization. Sample overlaps are retained
+in a (max_corr_time+1) × num_disorder workspace until the final reduction.
 
 Keywords: `mcs=8192` measured sweeps, `thermalization=1024` discarded sweeps,
 `binsize=64` consecutive sweeps per block, `seed=1234`,
@@ -50,12 +55,14 @@ Realizations run concurrently with `Threads.@threads`; start Julia with
 depend on thread scheduling. With one Julia thread, execution is serial.
 
 With `details=true`, return a named tuple containing the four arrays,
-`errors` arrays from block jackknife for heat capacity, susceptibility and U4 (no correlation
-error estimate), and `metadata` including package version
+`errors` arrays from block jackknife for heat capacity, susceptibility and U4,
+the across-sample SEM for correlation, and `metadata` including package version
 and one seed per realization. Sampling and block jackknife use `runMC`.
 In SpinMonteCarlo v1.2.2, memory scales as O(N+mcs): raw measurements are
 retained by the driver before binning.
-Errors do not include disorder averaging. Check convergence by increasing
+Static errors do not include disorder averaging. Correlation errors reflect
+across-sample variation, including the single-trajectory sampling noise.
+Check convergence by increasing
 thermalization, MCS and block size, and comparing independent seeds.
 
 Example:
@@ -157,11 +164,17 @@ function random_bond_observables(L::Integer, T::Real,
         dC[a], dchi[a], dU4[a] = stderror(cj), stderror(chij), stderror(binder) / 3
     end
 
-    details || return (C, chi, U4, correlations)
+    correlation_mean = num_disorder > 0 ? vec(mean(correlations; dims=2)) :
+        fill(NaN, max_corr_time + 1)
+    correlation_sem = num_disorder > 1 ?
+        vec(std(correlations; dims=2, corrected=true)) ./ sqrt(num_disorder) :
+        fill(NaN, max_corr_time + 1)
+
+    details || return (C, chi, U4, correlation_mean)
 
     return (heat_capacity=C, susceptibility=chi, U4=U4,
-        correlation=correlations,
-        errors=(heat_capacity=dC, susceptibility=dchi, U4=dU4),
+        correlation=correlation_mean,
+        errors=(heat_capacity=dC, susceptibility=dchi, U4=dU4, correlation=correlation_sem),
         metadata=(L=L, T=T, seed=seed, seeds=seeds, mcs=mcs,
             thermalization=thermalization, binsize=binsize,
             max_corr_time=max_corr_time, corr_start_time=corr_start_time,
@@ -294,7 +307,8 @@ let
 
     disorder = [ifelse.(rand(Nb) .< 0.5, 1.0, 0.0) for _ in 1:Ndis]
 
-    C, chi, U4, correlation = random_bond_observables(L, T, disorder)
+    out = random_bond_observables(L, T, disorder; details=true)
+    chi, U4 = out.susceptibility, out.U4
 
     fig = Figure(size=(650, 800), figure_padding=12)
     rowgap!(fig.layout, 10)
@@ -307,9 +321,7 @@ let
     hist!(ax_u4, U4; bins=30, normalization=:pdf)
 
     # 对每个时间间隔，计算所有无序构型的均值及其标准误。
-    correlations = correlation
-    correlation_mean = vec(mean(correlations; dims=2))
-    correlation_sem = vec(std(correlations; dims=2)) ./ sqrt(Ndis)
+    correlation_mean, correlation_sem = out.correlation, out.errors.correlation
     lags = 0:length(correlation_mean)-1
     ax_correlation = Axis(fig[3, 1]; xlabel="Lag (MC steps)", ylabel="Autocorrelation",
         title="Mean autocorrelation (L=$L, T=$T)")

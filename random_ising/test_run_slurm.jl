@@ -27,7 +27,7 @@ try
                     @assert read(attributes(file)["version"]) == string(data.out.metadata.version)
                     @assert read(attributes(g)["complete"])
                     @assert read(attributes(g)["worker_threads"]) == 2
-                    @assert read(attributes(file)["format_version"]) == 6
+                    @assert read(attributes(file)["format_version"]) == 7
                     for key in (:L, :mcs, :thermalization, :binsize, :max_corr_time,
                             :corr_start_time, :boundary, :normalization)
                         value = getproperty(data.out.metadata, key)
@@ -57,7 +57,11 @@ try
                     @assert sum(chi_local) ≈ data.out.susceptibility[1]
 
                     @assert size(read(g["U4"])) == (cfg.ndisorder,)
-                    @assert size(read(g["correlation"])) == (cfg.max_corr_time + 1, cfg.ndisorder)
+                    @assert size(read(g["correlation"])) == (cfg.max_corr_time + 1,)
+                    @assert read(g["errors/correlation"]) == data.out.errors.correlation
+                    @assert size(read(g["errors/correlation"])) == (cfg.max_corr_time + 1,)
+                    @assert read(g["correlation"])[1] == 1.0
+                    @assert read(g["errors/correlation"])[1] == 0.0
                     @assert read(g["lags"]) == collect(0:cfg.max_corr_time)
 
                     @assert read(g["errors/heat_capacity"]) == data.out.errors.heat_capacity
@@ -65,7 +69,7 @@ try
                     @assert read(g["errors/U4"]) == data.out.errors.U4
                     @assert size(read(g["errors/U4"])) == (cfg.ndisorder,)
                     @assert !haskey(g, "local_susceptibility")
-                    @assert Set(keys(g["errors"])) == Set(["heat_capacity", "susceptibility", "U4", "err_local"])
+                    @assert Set(keys(g["errors"])) == Set(["heat_capacity", "susceptibility", "U4", "correlation", "err_local"])
                 end
             end
         end

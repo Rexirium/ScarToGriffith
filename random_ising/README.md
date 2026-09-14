@@ -17,8 +17,8 @@ C, chi, U4, correlation = random_bond_observables(L, T, Js;
 C[1]              # 第一个构型的总热容
 chi[1]            # 第一个构型的总磁化率
 U4[1]             # 第一个构型的 Binder 累积量
-correlation[:,1]    # 第一个构型的固定起点交叠 C(t)，t = 0:max_corr_time
-correlation[t+1,1] # 时间间隔 t 的关联函数
+correlation       # 所有无序样本的平均交叠，t = 0:max_corr_time
+correlation[t+1]  # 时间间隔 t 的平均关联函数
 ```
 
 采用周期边界、`sᵢ=±1`、`kB=1`，哈密顿量为 `H=-Σ⟨ij⟩Jᵢⱼsᵢsⱼ`。
@@ -38,30 +38,33 @@ correlation[t+1,1] # 时间间隔 t 的关联函数
 | `C` | `(〈H²〉-〈H〉²)/T²` | `Vector{Float64}` |
 | `chi` | `〈M²〉/T` | `Vector{Float64}` |
 | `U4` | `1-〈M⁴〉/(3〈M²〉²)` | `Vector{Float64}`，长度 `num_disorder` |
-| `correlation` | 各构型的固定起点自旋交叠 | `Matrix{Float64}`，维度 `(max_corr_time+1,num_disorder)` |
+| `correlation` | 固定起点自旋交叠的跨样本均值 | `Vector{Float64}`，长度 `max_corr_time+1` |
 
 关联函数始终计算。令 `Ns=L²`，参考时刻为 `t0=corr_start_time`，以 SW 热化结束后的热浴 sweep 数计时，则
-`correlation[t+1,a] = Σᵢ sᵢ(t0+t)sᵢ(t0) / Ns`，`t=0:max_corr_time` 为相对时间差。
+每个样本的 `C_a(t) = Σᵢ sᵢ(t0+t)sᵢ(t0) / Ns`，`t=0:max_corr_time` 为相对时间差。
+返回 `correlation[t+1] = mean(C_a(t))`；`errors.correlation[t+1] = std(C_a(t); corrected=true)/sqrt(num_disorder)`。
 `corr_start_time` 默认为 `0`，`max_corr_time` 默认为 `100`；两者均为非负整数，且其和不得超过 `mcs`。
-每列长度为 `max_corr_time+1`，首行为 `C(0)=1`。不做时间起点平均、不减去自旋均值。
-每个无序构型仅采样一条轨迹；绘图均值及标准误在所有无序构型之间计算。
+均值和误差均为长度 `max_corr_time+1` 的向量。非空输入的首项为 `C(0)=1`，至少两个样本时其标准误为零。
+单样本的标准误为 `NaN`；空输入的均值和标准误均为 `NaN` 向量。
+每个无序构型仅采样一条轨迹；不做时间起点平均、不减去自旋均值。
 时间单位为热浴 sweep；在 `corr_start_time` 保存参考态，计算随后 `max_corr_time` 步的交叠，静态观测量仍测量全部 `mcs` 步。
 采样时只保存一个参考态并即时计算交叠，自相关计算量为 `O(Ns*max_corr_time)`，
-额外存储为 `O(Ns+max_corr_time)`，不再保存逐步自旋历史。
+每个活动构型保存一个参考态，内部暂存 `(max_corr_time+1,num_disorder)` 交叠矩阵，完成后归约为均值与标准误，不返回或写出逐样本交叠。
 `runMC` 仍保存静态观测量的原始测量，总内存仍随测量步数增长。
-构型之间仍并行；`max_corr_time=0` 时返回仅含 `C(0)=1` 的 `1×num_disorder` 矩阵，`metadata.corr_start_time` 记录参考时刻。
+构型之间仍并行；非空输入且 `max_corr_time=0` 时返回 `[1.0]`，`metadata.corr_start_time` 记录参考时刻。
 
 这里使用有限系统零场对称系综，`〈sᵢ〉=〈M〉=0`。
 `C` 和 `chi` 都是整个系统的量；
 除以 `L²` 得到每格点热容和磁化率。没有减去 `〈|M|〉²`。
 
 `U4` 使用 `1-mean(result["Binder Ratio"])/3`，与 `critical_temp.jl` 一致，逐构型计算后返回，不先做无序平均。
-设置 `details=true` 可取得具名结果及热容、总磁化率、U4 的分块 jackknife 误差；`errors.U4` 是长度 `num_disorder` 的向量，计算为 `stderror(result["Binder Ratio"])/3`。关联函数不提供误差估计：
+设置 `details=true` 可取得具名结果及热容、总磁化率、U4 的分块 jackknife 误差；`errors.U4` 是长度 `num_disorder` 的向量，计算为 `stderror(result["Binder Ratio"])/3`。`errors.correlation` 则是跨样本标准误：
 
 ```julia
 out = random_bond_observables(L, T, Js; details=true)
 out.heat_capacity
-out.correlation[:,1] # 第一个构型的 C(t) 数组
+out.correlation # 跨样本平均 C(t)
+out.errors.correlation # 各时间点的样本标准误
 out.errors.heat_capacity
 out.U4[1]
 out.errors.U4[1]
@@ -83,7 +86,8 @@ out.metadata  # 包版本、种子、采样长度、块大小等
 SpinMonteCarlo v1.2.2 会先保存逐步测量值再分块；移除局域测量后，单构型内存为 `O(L²+mcs)`。
 多线程运行时，每个同时计算的构型都需要这部分内存。
 
-误差描述单个构型的热采样误差，不包含无序平均的误差。
+静态量误差描述单个构型的热采样误差，不包含无序平均的误差。
+自关联误差描述跨样本平均的标准误，包含无序差异及每个样本单条轨迹的采样涨落。
 正式计算前需分别增加热化步数、测量步数和块大小，并比较不同种子，检查结果与误差是否稳定。
 默认步数不保证所有温度和无序强度下都已收敛。
 
@@ -144,12 +148,12 @@ sbatch random_ising/submit.sbatch
 主进程需 `--threads=2`，提交脚本已设置；worker 线程数仍由 `--cpus-per-task` 决定。
 相同尺寸在不同温度下使用同一批无序构型。
 默认输出为 `random_ising/results/run_001/L_8.h5` 等文件，温度分别存入 `T_1.0` 等 group。
-每组保存 `heat_capacity`、`susceptibility`、`U4`、`correlation`，`errors` 保存热容、总磁化率和 U4 误差（`errors/U4`）。
+每组保存 `heat_capacity`、`susceptibility`、`U4`、`correlation`，`errors` 保存热容、总磁化率和 U4 误差，以及自关联样本标准误 `errors/correlation`。
 随后对第一个无序构型额外调用局域响应函数，同组保存 `chi_local` 和 `errors/err_local`，两者均为 `L×L` 矩阵。
 局域计算使用相同的 `L`、`T`、热化步数、测量步数和块大小，输入为文件中的 `disorder[:,1]`，MC 种子为该温度组的 `realization_seeds[1]`。
 因此复现第一个构型的采样轨迹，`sum(chi_local) ≈ susceptibility[1]`；`elapsed_seconds` 包含两次计算的耗时。
-Julia 中 `U4` 的维度为 `(ndisorder,)`，自关联为 `(max_corr_time+1,ndisorder)`，
-HDF5 格式版本为 `6`，`lags` 保存相对时间差 `0:max_corr_time`。公共属性 `L`、`mcs`、`thermalization`、`binsize`、`max_corr_time`、`corr_start_time`、`boundary` 和 `normalization` 仅存于文件根，其中 `corr_start_time` 记录参考时刻；读取旧版温度组中这些属性的代码需改为读取根属性。温度组仅保留 `T`、`seed`、`worker_id`、`worker_threads`、`elapsed_seconds` 和 `complete` 属性。SpinMonteCarlo 包版本记录在文件根属性 `version` 中，不使用属性记录自关联函数定义。保留每个无序构型的结果。再次扫描时请更换 `output_dir`，脚本不会覆盖已有目录；已有文件不会自动迁移。
+Julia 中 `U4` 的维度为 `(ndisorder,)`，自关联均值及其标准误均为 `(max_corr_time+1,)`，
+HDF5 格式版本为 `7`，`lags` 保存相对时间差 `0:max_corr_time`。公共属性 `L`、`mcs`、`thermalization`、`binsize`、`max_corr_time`、`corr_start_time`、`boundary` 和 `normalization` 仅存于文件根，其中 `corr_start_time` 记录参考时刻；读取旧版温度组中这些属性的代码需改为读取根属性。温度组仅保留 `T`、`seed`、`worker_id`、`worker_threads`、`elapsed_seconds` 和 `complete` 属性。SpinMonteCarlo 包版本记录在文件根属性 `version` 中，不使用属性记录自关联函数定义。静态量保留每个无序构型的结果，自关联仅保留均值和标准误。再次扫描时请更换 `output_dir`，脚本不会覆盖已有目录；已有文件不会自动迁移。
 
 两套环境各自维护 `Manifest.toml`，在各自机器上通过 `Pkg` 生成，不复制个人电脑的 Manifest 到服务器环境。
 
