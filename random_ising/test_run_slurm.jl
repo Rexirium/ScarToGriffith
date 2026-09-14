@@ -27,7 +27,7 @@ try
                     @assert read(attributes(file)["version"]) == string(data.out.metadata.version)
                     @assert read(attributes(g)["complete"])
                     @assert read(attributes(g)["worker_threads"]) == 2
-                    @assert read(attributes(file)["format_version"]) == 5
+                    @assert read(attributes(file)["format_version"]) == 6
                     for key in (:L, :mcs, :thermalization, :binsize, :max_corr_time,
                             :corr_start_time, :boundary, :normalization)
                         value = getproperty(data.out.metadata, key)
@@ -46,6 +46,15 @@ try
                     @assert read(g["susceptibility"]) == data.out.susceptibility
                     @assert read(g["U4"]) == data.out.U4
                     @assert read(g["correlation"]) == data.out.correlation
+                    @assert read(g["chi_local"]) == data.chi_local
+                    @assert read(g["errors/err_local"]) == data.err_local
+                    @assert size(data.chi_local) == size(data.err_local) == (L, L)
+                    chi_local, err_local = RandomIsingScan.random_bond_local_susceptibility(
+                        L, T, read(file["disorder"])[:, 1];
+                        mcs=cfg.mcs, thermalization=cfg.thermalization, binsize=cfg.binsize,
+                        seed=read(g["realization_seeds"])[1])
+                    @assert data.chi_local == chi_local && data.err_local == err_local
+                    @assert sum(chi_local) ≈ data.out.susceptibility[1]
 
                     @assert size(read(g["U4"])) == (cfg.ndisorder,)
                     @assert size(read(g["correlation"])) == (cfg.max_corr_time + 1, cfg.ndisorder)
@@ -56,7 +65,7 @@ try
                     @assert read(g["errors/U4"]) == data.out.errors.U4
                     @assert size(read(g["errors/U4"])) == (cfg.ndisorder,)
                     @assert !haskey(g, "local_susceptibility")
-                    @assert Set(keys(g["errors"])) == Set(["heat_capacity", "susceptibility", "U4"])
+                    @assert Set(keys(g["errors"])) == Set(["heat_capacity", "susceptibility", "U4", "err_local"])
                 end
             end
         end

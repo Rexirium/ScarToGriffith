@@ -82,6 +82,61 @@ end
     @test disorder == original
 end
 
+@testset "online local response matches stored block jackknife" begin
+    rng = MersenneTwister(31)
+    for L in (2, 3), thermalization in (0, 16), binsize in (1, 16)
+        T, seed, mcs = 2.4, 73, 128
+        Js = rand(rng, 2L^2)
+        original = copy(Js)
+        chi, err = random_bond_local_susceptibility(L, T, Js;
+            mcs, thermalization, binsize, seed)
+        @test size(chi) == size(err) == (L, L)
+        @test Js == original
+
+        # Store a serial runMC trajectory independently, then explicitly form
+        # all delete-one-block estimates instead of using online variance.
+        history = Vector{Vector{Float64}}()
+        estimator = function (model, temp, bonds, extra)
+            push!(history, vec(model.spins .* (sum(model.spins) / temp)))
+            return simple_estimator(model, temp, bonds, extra)
+        end
+        param = Parameter("Lattice" => "square lattice", "L" => L,
+            "Use Indicies as Bond Types" => true, "Seed" => seed,
+            "T" => T, "J" => Js, "Update Method" => rbim_heatbath_update!,
+            "Estimator" => estimator, "MCS" => mcs, "Thermalization" => 0,
+            "Binning Size" => binsize)
+        model = Ising(param)
+        SpinMonteCarlo.seed!(model, seed)
+        for _ in 1:thermalization
+            SW_update!(model, T, Js)
+        end
+        runMC(model, param)
+        nblocks = mcs ÷ binsize
+        blocks = dropdims(mean(reshape(hcat(history...), L^2, binsize, nblocks);
+            dims=2); dims=2)
+        expected = mean(blocks; dims=2)
+        leave_one_out = (sum(blocks; dims=2) .- blocks) ./ (nblocks - 1)
+        deviations = leave_one_out .- mean(leave_one_out; dims=2)
+        expected_error = sqrt.((nblocks - 1) / nblocks .* sum(abs2, deviations; dims=2))
+        @test chi ≈ reshape(expected, L, L)
+        @test err ≈ reshape(expected_error, L, L)
+    end
+
+    kwargs = (mcs=32768, thermalization=256, binsize=128, seed=14)
+    chi, err = random_bond_local_susceptibility(3, 2.0, zeros(18); kwargs...)
+    @test (chi, err) == random_bond_local_susceptibility(3, 2.0, zeros(18); kwargs...)
+    @test all(isfinite, err) && all(err .>= 0)
+    @test all(abs.(chi .- 0.5) .< 6 .* err .+ 0.02) # Independent spins: chi_i = 1/T.
+    for (L, T, Js) in ((1, 2.0, ones(2)), (3, 0.0, ones(18)),
+            (3, Inf, ones(18)), (3, 2.0, ones(17)),
+            (3, 2.0, fill(-1.0, 18)), (3, 2.0, fill(NaN, 18)))
+        @test_throws ArgumentError random_bond_local_susceptibility(L, T, Js)
+    end
+    for options in ((mcs=64, binsize=64), (mcs=65,), (binsize=0,), (thermalization=-1,))
+        @test_throws ArgumentError random_bond_local_susceptibility(3, 2.0, ones(18); options...)
+    end
+end
+
 # Independent square-torus Hamiltonian, including the L=2 parallel bonds.
 function exact_observables(L, T, Js)
     n = L^2

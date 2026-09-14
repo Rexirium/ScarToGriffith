@@ -99,6 +99,29 @@ julia --project=julia-env/local --threads=4 --check-bounds=yes random_ising/test
 实现针对本项目已安装的 SpinMonteCarlo v1.2.2 源码核对；
 包的接口说明见 [官方文档](https://yomichi.github.io/SpinMonteCarlo.jl/latest/)。
 
+## 单构型局域磁化率
+
+只需局域响应时，可用独立函数，返回两个 `L×L` 矩阵：
+
+```julia
+L, T = 16, 2.0
+disorder_seed, mc_seed = 10, 1234
+rng = MersenneTwister(disorder_seed)
+Js = ifelse.(rand(rng, 2L^2) .< 0.5, 1.0, 0.3)
+chi_local, err_local = random_bond_local_susceptibility(L, T, Js;
+    mcs=8192, thermalization=1024, binsize=64, seed=mc_seed)
+```
+
+`chi_local[x,y] = 〈s[x,y]M〉/T` 是零场下该格点对均匀外场的响应，
+不除以 `L²`，不减去有限采样的自旋均值。输入实际耦合 `Js` 不会被修改。
+热化仍用 SW，测量每个随机单点热浴 sweep 后的局域响应，不计算其他物理量。
+此处 `seed` 直接控制单条 MC 轨迹，与生成无序的 `disorder_seed` 分开。
+
+函数自行执行 MC 循环，只保留当前块累加值及 Welford 在线统计，内存为 `O(L²)`。
+`err_local` 来自等长块均值的标准误，对此线性平均等价于删除一个块的 jackknife；
+要求至少两个完整块，且 `mcs` 能被 `binsize` 整除。
+应增加块大小检查误差收敛；误差只描述热采样，不包含无序平均。
+
 ## Slurm 扫描
 
 修改 `scan.toml` 设置尺寸、温度、无序构型数和 MC 参数，脚本启动时自动读取。
@@ -121,9 +144,12 @@ sbatch random_ising/submit.sbatch
 主进程需 `--threads=2`，提交脚本已设置；worker 线程数仍由 `--cpus-per-task` 决定。
 相同尺寸在不同温度下使用同一批无序构型。
 默认输出为 `random_ising/results/run_001/L_8.h5` 等文件，温度分别存入 `T_1.0` 等 group。
-每组保存 `heat_capacity`、`susceptibility`、`U4`、`correlation`，`errors` 保存热容、总磁化率和 U4 误差（`errors/U4`），不再保存局域磁化率及其误差。
+每组保存 `heat_capacity`、`susceptibility`、`U4`、`correlation`，`errors` 保存热容、总磁化率和 U4 误差（`errors/U4`）。
+随后对第一个无序构型额外调用局域响应函数，同组保存 `chi_local` 和 `errors/err_local`，两者均为 `L×L` 矩阵。
+局域计算使用相同的 `L`、`T`、热化步数、测量步数和块大小，输入为文件中的 `disorder[:,1]`，MC 种子为该温度组的 `realization_seeds[1]`。
+因此复现第一个构型的采样轨迹，`sum(chi_local) ≈ susceptibility[1]`；`elapsed_seconds` 包含两次计算的耗时。
 Julia 中 `U4` 的维度为 `(ndisorder,)`，自关联为 `(max_corr_time+1,ndisorder)`，
-HDF5 格式版本为 `5`，`lags` 保存相对时间差 `0:max_corr_time`。公共属性 `L`、`mcs`、`thermalization`、`binsize`、`max_corr_time`、`corr_start_time`、`boundary` 和 `normalization` 仅存于文件根，其中 `corr_start_time` 记录参考时刻；读取旧版温度组中这些属性的代码需改为读取根属性。温度组仅保留 `T`、`seed`、`worker_id`、`worker_threads`、`elapsed_seconds` 和 `complete` 属性。SpinMonteCarlo 包版本记录在文件根属性 `version` 中，不使用属性记录自关联函数定义。保留每个无序构型的结果。再次扫描时请更换 `output_dir`，脚本不会覆盖已有目录；已有文件不会自动迁移。
+HDF5 格式版本为 `6`，`lags` 保存相对时间差 `0:max_corr_time`。公共属性 `L`、`mcs`、`thermalization`、`binsize`、`max_corr_time`、`corr_start_time`、`boundary` 和 `normalization` 仅存于文件根，其中 `corr_start_time` 记录参考时刻；读取旧版温度组中这些属性的代码需改为读取根属性。温度组仅保留 `T`、`seed`、`worker_id`、`worker_threads`、`elapsed_seconds` 和 `complete` 属性。SpinMonteCarlo 包版本记录在文件根属性 `version` 中，不使用属性记录自关联函数定义。保留每个无序构型的结果。再次扫描时请更换 `output_dir`，脚本不会覆盖已有目录；已有文件不会自动迁移。
 
 两套环境各自维护 `Manifest.toml`，在各自机器上通过 `Pkg` 生成，不复制个人电脑的 Manifest 到服务器环境。
 

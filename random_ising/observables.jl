@@ -95,10 +95,9 @@ function random_bond_observables(L::Integer, T::Real,
     rng = MersenneTwister(seed)
     seeds = rand(rng, UInt32, num_disorder)
 
-    C, chi = zeros(num_disorder), zeros(num_disorder)
-    U4 = zeros(num_disorder)
-    correlations = Matrix{Float64}(undef, max_corr_time + 1, num_disorder)
+    C, chi, U4 = zeros(num_disorder), zeros(num_disorder), zeros(num_disorder)
     dC, dchi, dU4 = similar(C), similar(chi), similar(U4)
+    correlations = Matrix{Float64}(undef, max_corr_time + 1, num_disorder)
 
     # 每个任务独占模型、随机数流和输出位置，避免并发 push!。
     Threads.@threads for a in 1:num_disorder
@@ -106,7 +105,6 @@ function random_bond_observables(L::Integer, T::Real,
         reference = Vector{Int8}(undef, L^2)
         correlation = @view correlations[:, a]
         correlation[1] = 1.0
-        step = Ref(0)
         updates = Ref(0)
         staged_update! = function (model, temp, bonds)
             # t0=0 时，参考态取自第一次热浴更新之前。
@@ -124,11 +122,11 @@ function random_bond_observables(L::Integer, T::Real,
         measurement = Dict{String,Any}()
         estimator = function (model, temp, bonds, extra)
             # 到达 t0 时保存参考态，之后按相对时间差计算交叠。
-            step[] += 1
-            if step[] == corr_start_time
+            step = updates[] - thermalization
+            if step == corr_start_time
                 copyto!(reference, vec(model.spins))
             end
-            lag = step[] - corr_start_time
+            lag = step - corr_start_time
             if 1 <= lag <= max_corr_time
                 correlation[lag + 1] =
                     rbim_time_correlation(vec(model.spins), reference)
@@ -153,11 +151,10 @@ function random_bond_observables(L::Integer, T::Real,
         # 内置热容和磁化率按格点归一化，乘以 L² 得到整个系统的量。
         cj = L^2 * result["Specific Heat"]
         chij = L^2 * result["Susceptibility"]
-        U4[a] = 1 - mean(result["Binder Ratio"]) / 3
-        dU4[a] = stderror(result["Binder Ratio"]) / 3
+        binder = result["Binder Ratio"]
 
-        C[a], chi[a] = mean(cj), mean(chij)
-        dC[a], dchi[a] = stderror(cj), stderror(chij)
+        C[a], chi[a], U4[a] = mean(cj), mean(chij), 1 - mean(binder) / 3
+        dC[a], dchi[a], dU4[a] = stderror(cj), stderror(chij), stderror(binder) / 3
     end
 
     details || return (C, chi, U4, correlations)
@@ -170,6 +167,75 @@ function random_bond_observables(L::Integer, T::Real,
             max_corr_time=max_corr_time, corr_start_time=corr_start_time,
             boundary=:periodic, normalization=:extensive,
             version=pkgversion(SpinMonteCarlo)))
+end
+
+"""
+    random_bond_local_susceptibility(L, T, Js; kwargs...) -> (chi_local, err_local)
+
+Sample one supplied bond realization with the same Hamiltonian, bond order and
+periodic boundaries as `random_bond_observables`. `Js` contains 2L^2 finite
+nonnegative actual couplings and is not mutated.
+
+Return two L-by-L Float64 matrices: the zero-field uniform-field response
+chi_local[i] = <s_i*M>/T, M=sum(s), and its block standard error. These are
+site responses, without division by L^2 or subtraction of sampled spin means.
+No other observables or trajectories are recorded.
+
+Keywords: `mcs=8192`, `thermalization=1024`, `binsize=64`, `seed=1234`.
+Thermalization uses SW updates; measurements follow each random-site heat-bath
+sweep. The seed controls this single MC trajectory directly.
+Require at least two equal complete blocks. Block means are accumulated online
+with Welford's algorithm, using O(L^2) storage and O(L^2*mcs) measurement work.
+For this linear mean, the block standard error equals delete-one-block jackknife.
+Increase binsize to check error convergence; correlated blocks underestimate
+uncertainty. Errors describe thermal sampling, not disorder averaging.
+
+For seeded disorder, generate `Js` with a separate `MersenneTwister(disorder_seed)`
+and an explicitly chosen bond distribution, then pass it to this function.
+"""
+function random_bond_local_susceptibility(L::Integer, T::Real,
+        Js::AbstractVector; mcs::Int=8192, thermalization::Int=1024,
+        binsize::Int=64, seed::Integer=1234)
+    L >= 2 || throw(ArgumentError("L must be at least 2"))
+    isfinite(T) && T > 0 || throw(ArgumentError("T must be finite and positive"))
+    binsize > 0 && mcs >= 2binsize && mcs % binsize == 0 ||
+        throw(ArgumentError("mcs must contain at least two complete bins"))
+    thermalization >= 0 || throw(ArgumentError("thermalization must be nonnegative"))
+    length(Js) == 2L^2 || throw(ArgumentError("Js must have 2L^2 bonds"))
+    all(j -> isfinite(j) && j >= 0, Js) ||
+        throw(ArgumentError("Js must contain finite nonnegative couplings"))
+
+    param = Parameter("Lattice" => "square lattice", "L" => Int(L),
+        "Use Indicies as Bond Types" => true, "Seed" => seed)
+    model = Ising(param)
+    SpinMonteCarlo.seed!(model, seed) # Match runMC's reseeding after construction.
+    temp, couplings = Float64(T), collect(Float64, Js)
+    for _ in 1:thermalization
+        SW_update!(model, temp, couplings)
+    end
+
+    block_sum = zeros(L, L)
+    chi_local, err_local = zeros(L, L), zeros(L, L)
+    nblocks = mcs ÷ binsize
+    for b in 1:nblocks
+        fill!(block_sum, 0.0)
+        for _ in 1:binsize
+            rbim_heatbath_update!(model, temp, couplings)
+            magnetization_over_T = sum(model.spins) / temp
+            for i in eachindex(block_sum, model.spins)
+                block_sum[i] += model.spins[i] * magnetization_over_T
+            end
+        end
+        for i in eachindex(chi_local)
+            block_mean = block_sum[i] / binsize
+            delta = block_mean - chi_local[i]
+            chi_local[i] += delta / b
+            err_local[i] += delta * (block_mean - chi_local[i])
+        end
+    end
+    # err_local holds the sum of squared deviations until this final conversion.
+    err_local .= sqrt.(err_local ./ (nblocks * (nblocks - 1)))
+    return chi_local, err_local
 end
 
 # 当前构型与固定参考构型的格点平均交叠，用 Int 累加避免 Int8 溢出。

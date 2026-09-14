@@ -48,8 +48,12 @@ function compute_case(job, cfg)
         mcs=cfg.mcs, thermalization=cfg.thermalization, binsize=cfg.binsize,
         max_corr_time=cfg.max_corr_time, corr_start_time=cfg.corr_start_time,
         seed=mc_seed, details=true)
+    # 复用第一个构型的采样种子，使局域响应与该构型的总磁化率对应。
+    chi_local, err_local = random_bond_local_susceptibility(L, T, disorder[1];
+        mcs=cfg.mcs, thermalization=cfg.thermalization, binsize=cfg.binsize,
+        seed=out.metadata.seeds[1])
 
-    return (; L, T, out, disorder=reduce(hcat, disorder), disorder_seed,
+    return (; L, T, out, chi_local, err_local, disorder=reduce(hcat, disorder), disorder_seed,
         worker_id=myid(), worker_threads=Threads.nthreads(),
         elapsed_seconds=(time_ns() - started) / 1e9)
 end
@@ -67,7 +71,7 @@ function write_case(cfg, data)
                 max_corr_time=cfg.max_corr_time, corr_start_time=cfg.corr_start_time,
                 boundary=string(data.out.metadata.boundary),
                 normalization=string(data.out.metadata.normalization),
-                format_version=5, julia_version=string(VERSION),
+                format_version=6, julia_version=string(VERSION),
                 version=string(data.out.metadata.version),
                 slurm_job_id=get(ENV, "SLURM_JOB_ID", "local"))
             for (key, value) in pairs(file_metadata)
@@ -88,6 +92,7 @@ function write_case(cfg, data)
         for key in (:heat_capacity, :susceptibility, :U4, :correlation)
             group[string(key)] = getproperty(out, key)
         end
+        group["chi_local"] = data.chi_local # L×L，仅对应 disorder[:, 1]。
         group["lags"] = collect(0:cfg.max_corr_time)
         group["realization_seeds"] = out.metadata.seeds
 
@@ -96,6 +101,7 @@ function write_case(cfg, data)
         for (key, value) in pairs(out.errors)
             errors[string(key)] = value
         end
+        errors["err_local"] = data.err_local
 
         # 温度组只保存本次计算的属性；公共参数已存于文件根。
         group_metadata = (T=data.T, seed=out.metadata.seed,
