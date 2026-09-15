@@ -150,10 +150,32 @@ sbatch random_ising/submit.sbatch
 默认输出为 `random_ising/results/run_001/L_8.h5` 等文件，温度分别存入 `T_1.0` 等 group。
 每组保存 `heat_capacity`、`susceptibility`、`U4`、`correlation`，`errors` 保存热容、总磁化率和 U4 误差，以及自关联样本标准误 `errors/correlation`。
 随后对第一个无序构型额外调用局域响应函数，同组保存 `chi_local` 和 `errors/err_local`，两者均为 `L×L` 矩阵。
-局域计算使用相同的 `L`、`T`、热化步数、测量步数和块大小，输入为文件中的 `disorder[:,1]`，MC 种子为该温度组的 `realization_seeds[1]`。
+局域计算使用相同的 `L`、`T`、热化步数、测量步数和块大小，输入为第一个无序构型，MC 种子为该温度组重构出的 `realization_seeds[1]`。
 因此复现第一个构型的采样轨迹，`sum(chi_local) ≈ susceptibility[1]`；`elapsed_seconds` 包含两次计算的耗时。
 Julia 中 `U4` 的维度为 `(ndisorder,)`，自关联均值及其标准误均为 `(max_corr_time+1,)`，
-HDF5 格式版本为 `7`，`lags` 保存相对时间差 `0:max_corr_time`。公共属性 `L`、`mcs`、`thermalization`、`binsize`、`max_corr_time`、`corr_start_time`、`boundary` 和 `normalization` 仅存于文件根，其中 `corr_start_time` 记录参考时刻；读取旧版温度组中这些属性的代码需改为读取根属性。温度组仅保留 `T`、`seed`、`worker_id`、`worker_threads`、`elapsed_seconds` 和 `complete` 属性。SpinMonteCarlo 包版本记录在文件根属性 `version` 中，不使用属性记录自关联函数定义。静态量保留每个无序构型的结果，自关联仅保留均值和标准误。再次扫描时请更换 `output_dir`，脚本不会覆盖已有目录；已有文件不会自动迁移。
+HDF5 格式版本为 `12`，温度组不再存储 `lags`；相对时间差可由根属性重构：`lags = 0:read(attributes(file)["max_corr_time"])`，与 `correlation` 及 `errors/correlation` 的元素一一对应。公共属性 `L`、`mcs`、`thermalization`、`binsize`、`max_corr_time`、`corr_start_time`、`boundary` 和 `normalization` 仅存于文件根，其中 `corr_start_time` 记录参考时刻；读取旧版温度组中这些属性的代码需改为读取根属性。温度组仅保留 `T`、`seed`、`elapsed_seconds` 和 `complete` 属性；不再保存 `worker_id`、`worker_threads`，文件根也不再保存 `slurm_job_id`。SpinMonteCarlo 包版本记录在文件根属性 `version` 中，不使用属性记录自关联函数定义。静态量保留每个无序构型的结果，自关联仅保留均值和标准误。再次扫描时请更换 `output_dir`，脚本不会覆盖已有目录；已有文件不会自动迁移。
+
+从版本 8 起不再保存 `disorder` 数组，也不从 worker 返回该数组。根属性保留 `disorder_seed`、`L`、`ndisorder`、`p`、`Jstrong`、`Jweak` 和 `julia_version`。需要构型时，使用写入时的 Julia/Random 版本及生成代码重构（跨版本不保证随机序列一致）：
+
+```julia
+using HDF5
+include("random_ising/run_slurm.jl") # 从仓库根目录，在已配置的 Julia 环境中执行
+disorder = h5open(RandomIsingScan.read_disorder, "random_ising/results/run_004/L_10.h5", "r")
+# disorder 的 Julia 维度为 (2L^2, ndisorder)，第 a 列对应第 a 个无序构型。
+```
+
+`read_disorder(file)` 也支持直接读取旧文件已有的 `disorder` dataset。原先使用 `read(file["disorder"])` 的分析代码应改用该接口。从版本 12 起不再保存 `parameters` dataset；文件初始化以根属性 `format_version` 是否存在判断，该属性在公共属性及 `temperatures` 写完后设置。
+
+从版本 11 起，温度组不再保存 `realization_seeds`。保留组属性 `seed` 和根属性 `ndisorder`，通过以下接口读取或重构采样种子（同样需要写入时的 Julia/Random 版本）：
+
+```julia
+realization_seeds = RandomIsingScan.read_realization_seeds(file, group)
+# 新文件等价于：
+# rand(MersenneTwister(read(attributes(group)["seed"])), UInt32,
+#      read(attributes(file)["ndisorder"]))
+```
+
+该接口兼容旧文件已有的 `realization_seeds` dataset；原先直接读取该 dataset 的代码应改用此接口。
 
 两套环境各自维护 `Manifest.toml`，在各自机器上通过 `Pkg` 生成，不复制个人电脑的 Manifest 到服务器环境。
 

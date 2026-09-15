@@ -34,13 +34,38 @@ function case_seeds(cfg, L, T)
     return disorder_seed, mc_seed
 end
 
+"""按固定顺序生成无序构型；扫描和文件重构共用此实现。"""
+function generate_disorder(cfg, L, disorder_seed)
+    rng = MersenneTwister(disorder_seed)
+    return [ifelse.(rand(rng, 2L^2) .< cfg.p, cfg.Jstrong, cfg.Jweak)
+        for _ in 1:cfg.ndisorder]
+end
+
+"""读取旧文件的 disorder 或从新文件根属性重构，返回 (bond, realization) 矩阵。
+重构需使用写入时的 Julia/Random 版本，以保持随机序列一致。
+"""
+function read_disorder(file)
+    haskey(file, "disorder") && return read(file["disorder"])
+    attrs = attributes(file)
+    cfg = (; (key => read(attrs[string(key)])
+        for key in (:ndisorder, :p, :Jstrong, :Jweak))...)
+    return reduce(hcat, generate_disorder(cfg, read(attrs["L"]), read(attrs["disorder_seed"])))
+end
+
+"""读取旧温度组的采样种子，或由 seed 和文件根的 ndisorder 重构。
+重构需使用写入时的 Julia/Random 版本。
+"""
+function read_realization_seeds(file, group)
+    haskey(group, "realization_seeds") && return read(group["realization_seeds"])
+    return rand(MersenneTwister(read(attributes(group)["seed"])), UInt32,
+        read(attributes(file)["ndisorder"]))
+end
+
 """一个 worker 计算一个 (L,T)，内部由 random_bond_observables 多线程处理无序。"""
 function compute_case(job, cfg)
     L, T = job.L, job.T
     disorder_seed, mc_seed = case_seeds(cfg, L, T)
-    rng = MersenneTwister(disorder_seed)
-    disorder = [ifelse.(rand(rng, 2L^2) .< cfg.p, cfg.Jstrong, cfg.Jweak)
-        for _ in 1:cfg.ndisorder]
+    disorder = generate_disorder(cfg, L, disorder_seed)
 
     # 计时从采样开始；各无序构型在当前 worker 内并行计算。
     started = time_ns()
@@ -53,8 +78,12 @@ function compute_case(job, cfg)
         mcs=cfg.mcs, thermalization=cfg.thermalization, binsize=cfg.binsize,
         seed=out.metadata.seeds[1])
 
-    return (; L, T, out, chi_local, err_local, disorder=reduce(hcat, disorder), disorder_seed,
-        worker_id=myid(), worker_threads=Threads.nthreads(),
+    # 局域计算后不再需要完整种子数组，避免随结果传回主进程。
+    out = merge(out, (; metadata=(; (key => value for (key, value) in
+        pairs(out.metadata) if key != :seeds)...)))
+
+    return (; L, T, out, chi_local, err_local, disorder_seed,
+        worker_id=myid(),
         elapsed_seconds=(time_ns() - started) / 1e9)
 end
 
@@ -62,25 +91,28 @@ end
 function write_case(cfg, data)
     path = joinpath(cfg.output_dir, "L_$(data.L).h5")
     h5open(path, "cw") do file
-        # 同一 L 的公共参数和无序只写一次，供所有温度组共享。
-        if !haskey(file, "disorder")
-            file_metadata = (L=data.L, ndisorder=cfg.ndisorder, p=cfg.p,
+        # 同一 L 的公共参数只写一次；无序由根属性中的种子和参数重构。
+        if !haskey(attributes(file), "format_version")
+            file_metadata = (
+                L=data.L, ndisorder=cfg.ndisorder, p=cfg.p,
                 Jstrong=cfg.Jstrong, Jweak=cfg.Jweak,
                 disorder_seed=data.disorder_seed, master_seed=cfg.seed,
+
                 mcs=cfg.mcs, thermalization=cfg.thermalization, binsize=cfg.binsize,
                 max_corr_time=cfg.max_corr_time, corr_start_time=cfg.corr_start_time,
                 boundary=string(data.out.metadata.boundary),
+
                 normalization=string(data.out.metadata.normalization),
-                format_version=7, julia_version=string(VERSION),
-                version=string(data.out.metadata.version),
-                slurm_job_id=get(ENV, "SLURM_JOB_ID", "local"))
+                julia_version=string(VERSION),
+                version=string(data.out.metadata.version)
+            )
+
             for (key, value) in pairs(file_metadata)
                 attributes(file)[string(key)] = value
             end
 
-            file["parameters"] = repr(cfg)
             file["temperatures"] = cfg.Ts
-            file["disorder"] = data.disorder # Julia 维度：(bond, realization)。
+            attributes(file)["format_version"] = 12 # 公共数据写完后标记初始化完成。
         end
 
         group_name = "T_$(repr(data.T))"
@@ -92,9 +124,7 @@ function write_case(cfg, data)
         for key in (:heat_capacity, :susceptibility, :U4, :correlation)
             group[string(key)] = getproperty(out, key)
         end
-        group["chi_local"] = data.chi_local # L×L，仅对应 disorder[:, 1]。
-        group["lags"] = collect(0:cfg.max_corr_time)
-        group["realization_seeds"] = out.metadata.seeds
+        group["chi_local"] = data.chi_local # L×L，仅对应重构的第一个无序构型。
 
         # 静态量保存分块误差；自关联保存跨构型样本标准误。
         errors = create_group(group, "errors")
@@ -105,7 +135,6 @@ function write_case(cfg, data)
 
         # 温度组只保存本次计算的属性；公共参数已存于文件根。
         group_metadata = (T=data.T, seed=out.metadata.seed,
-            worker_id=data.worker_id, worker_threads=data.worker_threads,
             elapsed_seconds=data.elapsed_seconds)
         for (key, value) in pairs(group_metadata)
             attributes(group)[string(key)] = value
