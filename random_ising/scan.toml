@@ -11,9 +11,9 @@ seed = 1234
 mcs = 8192
 thermalization = 1024
 binsize = 64
-max_corr_time = 100
+max_corr_time = 128
 # 参考态所在的热化后 sweep；与 max_corr_time 之和不得超过 mcs。
-corr_start_time = 4000
+corr_start_time = 4096
 
 # 等待写盘的结果数量上限
 result_buffer = 4
