@@ -40,18 +40,18 @@ correlation[t+1]  # 时间间隔 t 的平均关联函数
 | `U4` | `1-〈M⁴〉/(3〈M²〉²)` | `Vector{Float64}`，长度 `num_disorder` |
 | `correlation` | 固定起点自旋交叠的跨样本均值 | `Vector{Float64}`，长度 `max_corr_time+1` |
 
-关联函数始终计算。令 `Ns=L²`，参考时刻为 `t0=corr_start_time`，以 SW 热化结束后的热浴 sweep 数计时，则
+关联函数始终计算。令 `Ns=L²`，参考时刻 `t0=0` 为 SW 静态测量末态，以随后热浴 sweep 数计时，则
 每个样本的 `C_a(t) = Σᵢ sᵢ(t0+t)sᵢ(t0) / Ns`，`t=0:max_corr_time` 为相对时间差。
 返回 `correlation[t+1] = mean(C_a(t))`；`errors.correlation[t+1] = std(C_a(t); corrected=true)/sqrt(num_disorder)`。
-`corr_start_time` 默认为 `0`，`max_corr_time` 默认为 `100`；两者均为非负整数，且其和不得超过 `mcs`。
+`max_corr_time` 默认为 `100`，为非负整数，不受 `mcs` 限制；不再接受 `corr_start_time`。
 均值和误差均为长度 `max_corr_time+1` 的向量。非空输入的首项为 `C(0)=1`，至少两个样本时其标准误为零。
 单样本的标准误为 `NaN`；空输入的均值和标准误均为 `NaN` 向量。
 每个无序构型仅采样一条轨迹；不做时间起点平均、不减去自旋均值。
-时间单位为热浴 sweep；在 `corr_start_time` 保存参考态，计算随后 `max_corr_time` 步的交叠，静态观测量仍测量全部 `mcs` 步。
+时间单位为热浴 sweep；保存 SW 末态作为参考态，额外计算随后 `max_corr_time` 步的交叠，热浴步不计入静态统计。
 采样时只保存一个参考态并即时计算交叠，自相关计算量为 `O(Ns*max_corr_time)`，
 每个活动构型保存一个参考态，内部暂存 `(max_corr_time+1,num_disorder)` 交叠矩阵，完成后归约为均值与标准误，不返回或写出逐样本交叠。
 `runMC` 仍保存静态观测量的原始测量，总内存仍随测量步数增长。
-构型之间仍并行；非空输入且 `max_corr_time=0` 时返回 `[1.0]`，`metadata.corr_start_time` 记录参考时刻。
+构型之间仍并行；非空输入且 `max_corr_time=0` 时返回 `[1.0]`。
 
 这里使用有限系统零场对称系综，`〈sᵢ〉=〈M〉=0`。
 `C` 和 `chi` 都是整个系统的量；
@@ -72,13 +72,13 @@ out.metadata  # 包版本、种子、采样长度、块大小等
 ```
 
 热化阶段固定使用 Swendsen–Wang 更新，共 `thermalization` 步，不计入自相关时间。
-测量阶段统一使用随机单点热浴：每个 sweep 有放回地随机选点 `L²` 次，
+静态测量阶段继续执行 `mcs` 次 SW 更新。之后自关联阶段使用随机单点热浴：每个 sweep 有放回地随机选点 `L²` 次，
 每次按局域场对应的条件玻尔兹曼分布重新抽取该点自旋。
 自相关的一个时间单位对应一个 sweep；零局域场时以等概率取 ±1。
 函数不接受 `update` 关键词；metadata 和 HDF5 属性不包含 `update` 或 `thermalization_update`。
 `thermalization=0` 时直接进入测量。
 每个构型使用独立初始化的随机数流；相同输入、顺序和种子可复现。
-每个构型通过独立的 `Parameter` 调用 `runMC`，由框架负责热化、测量、分块和 jackknife。
+每个构型独立创建模型并播种，通过 `runMC(model, param)` 完成 SW 热化、静态测量、分块和 jackknife，然后沿同一随机数流继续热浴演化。
 不同构型通过 `Threads.@threads` 并行计算，输出顺序与输入一致，种子不依赖线程调度。
 可用 `--threads=4` 指定线程数，或用 `--threads=1` 串行运行；函数调用方式不变。
 自定义 `Estimator` 复用字典，仅测量能量和磁化强度的矩，与 `simple_estimator` 一致。
@@ -118,7 +118,7 @@ chi_local, err_local = random_bond_local_susceptibility(L, T, Js;
 
 `chi_local[x,y] = 〈s[x,y]M〉/T` 是零场下该格点对均匀外场的响应，
 不除以 `L²`，不减去有限采样的自旋均值。输入实际耦合 `Js` 不会被修改。
-热化仍用 SW，测量每个随机单点热浴 sweep 后的局域响应，不计算其他物理量。
+热化和测量均用 SW，测量每次 SW 更新后的局域响应，不计算其他物理量。
 此处 `seed` 直接控制单条 MC 轨迹，与生成无序的 `disorder_seed` 分开。
 
 函数自行执行 MC 循环，只保留当前块累加值及 Welford 在线统计，内存为 `O(L²)`。
@@ -153,7 +153,8 @@ sbatch random_ising/submit.sbatch
 局域计算使用相同的 `L`、`T`、热化步数、测量步数和块大小，输入为第一个无序构型，MC 种子为该温度组重构出的 `realization_seeds[1]`。
 因此复现第一个构型的采样轨迹，`sum(chi_local) ≈ susceptibility[1]`；`elapsed_seconds` 包含两次计算的耗时。
 Julia 中 `U4` 的维度为 `(ndisorder,)`，自关联均值及其标准误均为 `(max_corr_time+1,)`，
-HDF5 格式版本为 `12`，温度组不再存储 `lags`；相对时间差可由根属性重构：`lags = 0:read(attributes(file)["max_corr_time"])`，与 `correlation` 及 `errors/correlation` 的元素一一对应。公共属性 `L`、`mcs`、`thermalization`、`binsize`、`max_corr_time`、`corr_start_time`、`boundary` 和 `normalization` 仅存于文件根，其中 `corr_start_time` 记录参考时刻；读取旧版温度组中这些属性的代码需改为读取根属性。温度组仅保留 `T`、`seed`、`elapsed_seconds` 和 `complete` 属性；不再保存 `worker_id`、`worker_threads`，文件根也不再保存 `slurm_job_id`。SpinMonteCarlo 包版本记录在文件根属性 `version` 中，不使用属性记录自关联函数定义。静态量保留每个无序构型的结果，自关联仅保留均值和标准误。再次扫描时请更换 `output_dir`，脚本不会覆盖已有目录；已有文件不会自动迁移。
+版本 13 使用 SW 进行静态采样，自关联从 SW 末态开始热浴演化，并移除 `corr_start_time`。
+HDF5 格式版本为 `13`，温度组不再存储 `lags`；相对时间差可由根属性重构：`lags = 0:read(attributes(file)["max_corr_time"])`，与 `correlation` 及 `errors/correlation` 的元素一一对应。公共属性 `L`、`mcs`、`thermalization`、`binsize`、`max_corr_time`、`boundary` 和 `normalization` 仅存于文件根；读取旧版温度组中这些属性的代码需改为读取根属性。温度组仅保留 `T`、`seed`、`elapsed_seconds` 和 `complete` 属性；不再保存 `worker_id`、`worker_threads`，文件根也不再保存 `slurm_job_id`。SpinMonteCarlo 包版本记录在文件根属性 `version` 中，不使用属性记录自关联函数定义。静态量保留每个无序构型的结果，自关联仅保留均值和标准误。再次扫描时请更换 `output_dir`，脚本不会覆盖已有目录；已有文件不会自动迁移。
 
 从版本 8 起不再保存 `disorder` 数组，也不从 worker 返回该数组。根属性保留 `disorder_seed`、`L`、`ndisorder`、`p`、`Jstrong`、`Jweak` 和 `julia_version`。需要构型时，使用写入时的 Julia/Random 版本及生成代码重构（跨版本不保证随机序列一致）：
 

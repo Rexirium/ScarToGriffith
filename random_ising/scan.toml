@@ -1,21 +1,19 @@
 # 尺寸、温度和无序构型
 Ls = [10, 16, 24, 32, 40, 50]
-Ts = { start = 0.01, stop = 3.0, length = 300 }
+Ts = { start = 0.02, stop = 3.0, length = 150 }
 ndisorder = 1000
-p = 0.5
+p = 0.6
 Jstrong = 1.0
 Jweak = 0.0
 seed = 1234
 
 # MC 参数
-mcs = 65536
+mcs = 16384
 thermalization = 2048
 binsize = 256
-max_corr_time = 128
-# 参考态所在的热化后 sweep；与 max_corr_time 之和不得超过 mcs。
-corr_start_time = 4096
+max_corr_time = 4096
 
 # 等待写盘的结果数量上限
 result_buffer = 4
 # 相对于本 TOML 文件所在目录；也可以使用绝对路径
-output_dir = "results/run_004"
+output_dir = "results/run_005"

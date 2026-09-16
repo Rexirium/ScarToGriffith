@@ -35,26 +35,19 @@ end
     rng = MersenneTwister(19)
     disorder = [ifelse.(rand(rng, 2L^2) .< 0.5, 1.0, 0.3) for _ in 1:8]
     original = deepcopy(disorder)
-    for thermalization in (0, 1, 64), (corr_start_time, max_corr_time) in
-            ((0, 0), (0, 17), (0, 256), (1, 17), (23, 233), (256, 0))
+    for thermalization in (0, 1, 64), max_corr_time in (0, 17, 300)
         out = random_bond_observables(L, T, disorder;
             mcs=256, thermalization, binsize=32, seed=72, details=true,
-            max_corr_time, corr_start_time)
+            max_corr_time)
         @test size(out.correlation) == size(out.errors.correlation) == (max_corr_time + 1,)
         expected_samples = Matrix{Float64}(undef, max_corr_time + 1, length(disorder))
         @test out.metadata.max_corr_time == max_corr_time
-        @test out.metadata.corr_start_time == corr_start_time
         for (a, Js) in enumerate(disorder)
-            history = Vector{Vector{Int}}()
-            estimator = function (model, temp, bonds, extra)
-                push!(history, vec(copy(model.spins)))
-                return simple_estimator(model, temp, bonds, extra)
-            end
             p = Parameter(
                 "Model" => Ising, "Lattice" => "square lattice", "L" => L,
                 "Use Indicies as Bond Types" => true, "T" => T, "J" => Js,
-                "Update Method" => rbim_heatbath_update!,
-                "Estimator" => estimator,
+                "Update Method" => SW_update!,
+                "Estimator" => simple_estimator,
                 "MCS" => 256, "Thermalization" => 0, "Binning Size" => 32,
                 "Seed" => out.metadata.seeds[a])
             # 独立执行 SW 热化，再让 runMC 仅执行测量，验证切换边界和随机数序列。
@@ -63,13 +56,14 @@ end
             for _ in 1:thermalization
                 SW_update!(model, T, Js)
             end
-            initial = vec(copy(model.spins)) # 热化结束即时间零点。
             result = runMC(model, p)
-            @test length(history) == 256
-            # 独立保存完整轨迹，验证在线计算的起点、终点及全部交叠值。
-            trajectory = hcat(initial, history...)
-            expected = [sum(trajectory[i, corr_start_time+t+1] * trajectory[i, corr_start_time+1]
-                for i in 1:L^2) / L^2 for t in 0:max_corr_time]
+            # Store the full post-SW heat-bath trajectory to check overlap boundaries.
+            history = [vec(copy(model.spins))]
+            for _ in 1:max_corr_time
+                rbim_heatbath_update!(model, T, Js)
+                push!(history, vec(copy(model.spins)))
+            end
+            expected = [sum(state .* history[1]) / L^2 for state in history]
             expected_samples[:, a] = expected
             c, chi = L^2 * result["Specific Heat"], L^2 * result["Susceptibility"]
             @test out.heat_capacity[a] == mean(c)
@@ -210,8 +204,4 @@ end
     @test_throws ArgumentError random_bond_observables(3, 2.0, [fill(-0.3,18)])
     @test_throws ArgumentError random_bond_observables(3, 2.0, disorder; mcs=65)
     @test_throws ArgumentError random_bond_observables(3, 2.0, disorder; max_corr_time=-1)
-    @test_throws ArgumentError random_bond_observables(3, 2.0, disorder; max_corr_time=8193)
-    @test_throws ArgumentError random_bond_observables(3, 2.0, disorder; corr_start_time=-1)
-    @test_throws ArgumentError random_bond_observables(3, 2.0, disorder; corr_start_time=8193, max_corr_time=0)
-    @test_throws ArgumentError random_bond_observables(3, 2.0, disorder; corr_start_time=8192, max_corr_time=1)
 end

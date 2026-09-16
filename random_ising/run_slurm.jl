@@ -71,9 +71,9 @@ function compute_case(job, cfg)
     started = time_ns()
     out = random_bond_observables(L, T, disorder;
         mcs=cfg.mcs, thermalization=cfg.thermalization, binsize=cfg.binsize,
-        max_corr_time=cfg.max_corr_time, corr_start_time=cfg.corr_start_time,
+        max_corr_time=cfg.max_corr_time,
         seed=mc_seed, details=true)
-    # 第一个无序构型用同一种子另跑 SW 采样；与总磁化率的 heat-bath 轨迹不同。
+    # 第一个无序构型用同一种子重现 SW 静态采样轨迹。
     chi_local, err_local = random_bond_local_susceptibility(L, T, disorder[1];
         mcs=cfg.mcs, thermalization=cfg.thermalization, binsize=cfg.binsize,
         seed=out.metadata.seeds[1])
@@ -99,7 +99,7 @@ function write_case(cfg, data)
                 disorder_seed=data.disorder_seed, master_seed=cfg.seed,
 
                 mcs=cfg.mcs, thermalization=cfg.thermalization, binsize=cfg.binsize,
-                max_corr_time=cfg.max_corr_time, corr_start_time=cfg.corr_start_time,
+                max_corr_time=cfg.max_corr_time,
                 boundary=string(data.out.metadata.boundary),
 
                 normalization=string(data.out.metadata.normalization),
@@ -112,7 +112,7 @@ function write_case(cfg, data)
             end
 
             file["temperatures"] = cfg.Ts
-            attributes(file)["format_version"] = 12 # 公共数据写完后标记初始化完成。
+            attributes(file)["format_version"] = 13 # 公共数据写完后标记初始化完成。
         end
 
         group_name = "T_$(repr(data.T))"
@@ -164,8 +164,7 @@ function run_scan(cfg, pids)
         error("Invalid disorder count, probability, or seed")
     all(J -> isfinite(J) && J >= 0, (cfg.Jstrong, cfg.Jweak)) || error("Invalid couplings")
     cfg.binsize > 0 && cfg.mcs >= 2cfg.binsize && cfg.mcs % cfg.binsize == 0 &&
-        cfg.thermalization >= 0 && 0 <= cfg.corr_start_time <= cfg.mcs &&
-        0 <= cfg.max_corr_time <= cfg.mcs - cfg.corr_start_time || error("Invalid MC parameters")
+        cfg.thermalization >= 0 && cfg.max_corr_time >= 0 || error("Invalid MC parameters")
 
     myid() == 1 || error("run_scan must run on the manager process")
     !isempty(pids) && all(pid -> pid != 1 && pid in workers(), pids) ||

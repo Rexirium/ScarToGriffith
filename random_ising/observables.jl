@@ -25,31 +25,30 @@ Finite-volume zero-field spin-inversion symmetry gives <M>=0 exactly.
 Divide total heat capacity and susceptibility by N to obtain per-site values.
 
 For each realization a, C_a(t) is the fixed-origin spin overlap
-sum(s_i(t0+t)*s_i(t0) for i=1:N) / N, with t0=corr_start_time,
+sum(s_i(t0+t)*s_i(t0) for i=1:N) / N, with t0 at the end of SW measurement,
 for t=0:max_corr_time. `correlation` returns the sample mean across realizations,
 as a vector of length max_corr_time+1. With details=true, `errors.correlation`
 is the corrected sample standard deviation divided by sqrt(num_disorder).
 For nonempty input C(0)=1; its SEM is zero when num_disorder >= 2.
 With one sample the SEM is NaN; with no samples both vectors contain NaN.
-Time zero is the end of thermalization.
+Time zero is the end of all thermalization + mcs SW updates.
 Each realization uses one trajectory, without averaging over starting times
 or independent trajectories, and without subtracting spin means.
-Time is measured in random-site heat-bath sweeps after thermalization.
+Time is measured in random-site heat-bath sweeps after SW measurement.
 Overlaps are computed online in O(N*max_corr_time) time, retaining only one
 reference configuration per active realization. Sample overlaps are retained
 in a (max_corr_time+1) × num_disorder workspace until the final reduction.
 
 Keywords: `mcs=8192` measured sweeps, `thermalization=1024` discarded sweeps,
 `binsize=64` consecutive sweeps per block, `seed=1234`,
-`corr_start_time=0` reference time in sweeps after thermalization,
-`max_corr_time=100` maximum correlation lag (inclusive).
-Require 0 <= corr_start_time <= mcs and 0 <= max_corr_time <= mcs-corr_start_time.
+`max_corr_time=100` additional heat-bath sweeps (nonnegative, independent of mcs).
 MCS must contain at least two complete blocks for jackknife errors.
-Use more blocks when checking convergence. Thermalization always uses Swendsen-Wang.
-After thermalization, each measurement sweep performs
-N=L² random-site heat-bath updates per sweep, sampling sites with replacement.
-Each selected spin is drawn from its conditional Boltzmann distribution.
-One correlation time unit is one measurement sweep; thermalization steps are excluded.
+Use more blocks when checking convergence. Thermalization and static measurements
+both use Swendsen-Wang. After runMC finishes, its final configuration is copied
+as the reference, then max_corr_time random-site heat-bath sweeps are performed.
+Each heat-bath sweep draws N=L^2 sites with replacement and resamples each selected
+spin from its conditional Boltzmann distribution. These sweeps do not contribute
+to the static measurements; SW steps are excluded from correlation time.
 Realizations run concurrently with `Threads.@threads`; start Julia with
 `--threads=auto` to enable multiple threads. Seeds and output order do not
 depend on thread scheduling. With one Julia thread, execution is serial.
@@ -75,8 +74,8 @@ C, chi, U4, correlation = random_bond_observables(L, T, Js)
 """
 function random_bond_observables(L::Integer, T::Real,
         disorder::AbstractVector{<:AbstractVector};
-        mcs::Int=8192, thermalization::Int=1024, max_corr_time::Int=100,
-        corr_start_time::Int=0, binsize::Int=64, seed::Integer=1234,
+        mcs::Int=8192, thermalization::Int=1024, max_corr_time::Int=128,
+        binsize::Int=64, seed::Integer=1234,
         details::Bool=false)
 
     # 只检查晶格、温度和统计计算的必要条件。
@@ -85,10 +84,7 @@ function random_bond_observables(L::Integer, T::Real,
     binsize > 0 && mcs >= 2binsize && mcs % binsize == 0 ||
         throw(ArgumentError("mcs must contain at least two complete bins"))
     thermalization >= 0 || throw(ArgumentError("thermalization must be nonnegative"))
-    0 <= corr_start_time <= mcs ||
-        throw(ArgumentError("corr_start_time must satisfy 0 <= corr_start_time <= mcs"))
-    0 <= max_corr_time <= mcs - corr_start_time ||
-        throw(ArgumentError("max_corr_time must satisfy 0 <= max_corr_time <= mcs - corr_start_time"))
+    max_corr_time >= 0 || throw(ArgumentError("max_corr_time must be nonnegative"))
 
     # 包内更新按键编号索引，且此版本的 SW 算法要求非负耦合。
     num_disorder = length(disorder)
@@ -109,38 +105,10 @@ function random_bond_observables(L::Integer, T::Real,
     # 每个任务独占模型、随机数流和输出位置，避免并发 push!。
     Threads.@threads for a in 1:num_disorder
         Js = disorder[a]
-        reference = Vector{Int8}(undef, L^2)
-        correlation = @view correlations[:, a]
-        correlation[1] = 1.0
-        updates = Ref(0)
-        staged_update! = function (model, temp, bonds)
-            # t0=0 时，参考态取自第一次热浴更新之前。
-            if corr_start_time == 0 && updates[] == thermalization
-                copyto!(reference, vec(model.spins))
-            end
-            # 计数器由当前构型独占；前 thermalization 步仅用于 SW 热化。
-            updates[] += 1
-            if updates[] <= thermalization
-                return SW_update!(model, temp, bonds)
-            end
-            return rbim_heatbath_update!(model, temp, bonds)
-        end
-        # runMC 立即累积标量值；字典由每个无序构型独占，可在下一步覆盖。
         measurement = Dict{String,Any}()
-        estimator = function (model, temp, bonds, extra)
-            # 到达 t0 时保存参考态，之后按相对时间差计算交叠。
-            step = updates[] - thermalization
-            if step == corr_start_time
-                copyto!(reference, vec(model.spins))
-            end
-            lag = step - corr_start_time
-            if 1 <= lag <= max_corr_time
-                correlation[lag + 1] =
-                    rbim_time_correlation(vec(model.spins), reference)
-            end
-            return rbim_response_estimator!(measurement, model, temp, bonds, extra)
-        end
-        # 热化、测量、分块与 jackknife 都交给 runMC。
+        estimator = (model, temp, bonds, extra) ->
+            rbim_response_estimator!(measurement, model, temp, bonds, extra)
+        # runMC handles SW thermalization, static measurements and jackknife.
         param = Parameter(
             "Model" => Ising, "Lattice" => "square lattice", "L" => Int(L),
 
@@ -148,12 +116,23 @@ function random_bond_observables(L::Integer, T::Real,
             "Use Indicies as Bond Types" => true,
             "T" => Float64(T), "J" => collect(Float64, Js),
 
-            "Update Method" => staged_update!, "Estimator" => estimator,
+            "Update Method" => SW_update!, "Estimator" => estimator,
             "MCS" => mcs, "Thermalization" => thermalization,
             "Binning Size" => binsize, "Seed" => seeds[a],
         )
 
-        result = runMC(param)
+        model = Ising(param)
+        SpinMonteCarlo.seed!(model, seeds[a]) # Match runMC(param)'s reseeding.
+        result = runMC(model, param)
+
+        # Start at the final SW state and continue the same RNG with heat bath.
+        reference = copy(vec(model.spins))
+        correlation = @view correlations[:, a]
+        correlation[1] = 1.0
+        for t in 1:max_corr_time
+            rbim_heatbath_update!(model, Float64(T), param["J"])
+            correlation[t + 1] = rbim_time_correlation(vec(model.spins), reference)
+        end
 
         # 内置热容和磁化率按格点归一化，乘以 L² 得到整个系统的量。
         cj = L^2 * result["Specific Heat"]
@@ -177,7 +156,7 @@ function random_bond_observables(L::Integer, T::Real,
         errors=(heat_capacity=dC, susceptibility=dchi, U4=dU4, correlation=correlation_sem),
         metadata=(L=L, T=T, seed=seed, seeds=seeds, mcs=mcs,
             thermalization=thermalization, binsize=binsize,
-            max_corr_time=max_corr_time, corr_start_time=corr_start_time,
+            max_corr_time=max_corr_time,
             boundary=:periodic, normalization=:extensive,
             version=pkgversion(SpinMonteCarlo)))
 end
@@ -197,8 +176,9 @@ No other observables or trajectories are recorded.
 Keywords: `mcs=8192`, `thermalization=1024`, `binsize=64`, `seed=1234`.
 Thermalization and measurements both use SW updates; measurements follow each
 SW update. The seed controls this single MC trajectory directly.
-This trajectory differs from the heat-bath trajectory of `random_bond_observables`,
-even with the same seed; their finite-sample susceptibility estimates need not match.
+With the same per-realization seed and MC parameters, this reproduces the SW
+trajectory of `random_bond_observables`; sum(chi_local) matches its susceptibility
+up to floating-point rounding.
 Require at least two equal complete blocks. Block means are accumulated online
 with Welford's algorithm, using O(L^2) storage and O(L^2*mcs) measurement work.
 For this linear mean, the block standard error equals delete-one-block jackknife.

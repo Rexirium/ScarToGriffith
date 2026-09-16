@@ -14,7 +14,7 @@ try
     mktempdir() do dir
         cfg = merge(config, (
             Ls=[2, 3], Ts=[1.5, 2.5], ndisorder=3, mcs=32,
-            thermalization=8, binsize=8, max_corr_time=5, corr_start_time=7,
+            thermalization=8, binsize=8, max_corr_time=40,
             output_dir=joinpath(dir, "results")))
         paths = RandomIsingScan.run_scan(cfg, pids)
         @assert length(paths) == 2
@@ -40,9 +40,9 @@ try
                     @assert read(attributes(file)["version"]) == string(data.out.metadata.version)
                     @assert read(attributes(g)["complete"])
                     @assert !haskey(attributes(file), "slurm_job_id")
-                    @assert read(attributes(file)["format_version"]) == 12
+                    @assert read(attributes(file)["format_version"]) == 13
                     for key in (:L, :mcs, :thermalization, :binsize, :max_corr_time,
-                            :corr_start_time, :boundary, :normalization)
+                            :boundary, :normalization)
                         value = getproperty(data.out.metadata, key)
                         @assert read(attributes(file)[string(key)]) ==
                             (value isa Symbol ? string(value) : value)
@@ -69,8 +69,8 @@ try
                         mcs=cfg.mcs, thermalization=cfg.thermalization, binsize=cfg.binsize,
                         seed=seeds[1])
                     @assert data.chi_local == chi_local && data.err_local == err_local
-                    # SW local response and heat-bath total response use different
-                    # trajectories, so their finite-sample sums need not match.
+                    @assert isapprox(sum(data.chi_local), data.out.susceptibility[1])
+                    @assert !haskey(attributes(file), "corr_start_time")
 
                     @assert size(read(g["U4"])) == (cfg.ndisorder,)
                     @assert size(read(g["correlation"])) == (cfg.max_corr_time + 1,)
