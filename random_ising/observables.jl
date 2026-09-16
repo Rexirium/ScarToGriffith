@@ -195,8 +195,10 @@ site responses, without division by L^2 or subtraction of sampled spin means.
 No other observables or trajectories are recorded.
 
 Keywords: `mcs=8192`, `thermalization=1024`, `binsize=64`, `seed=1234`.
-Thermalization uses SW updates; measurements follow each random-site heat-bath
-sweep. The seed controls this single MC trajectory directly.
+Thermalization and measurements both use SW updates; measurements follow each
+SW update. The seed controls this single MC trajectory directly.
+This trajectory differs from the heat-bath trajectory of `random_bond_observables`,
+even with the same seed; their finite-sample susceptibility estimates need not match.
 Require at least two equal complete blocks. Block means are accumulated online
 with Welford's algorithm, using O(L^2) storage and O(L^2*mcs) measurement work.
 For this linear mean, the block standard error equals delete-one-block jackknife.
@@ -233,7 +235,7 @@ function random_bond_local_susceptibility(L::Integer, T::Real,
     for b in 1:nblocks
         fill!(block_sum, 0.0)
         for _ in 1:binsize
-            rbim_heatbath_update!(model, temp, couplings)
+            SW_update!(model, temp, couplings)
             magnetization_over_T = sum(model.spins) / temp
             for i in eachindex(block_sum, model.spins)
                 block_sum[i] += model.spins[i] * magnetization_over_T

@@ -107,7 +107,7 @@ end
         end
         param = Parameter("Lattice" => "square lattice", "L" => L,
             "Use Indicies as Bond Types" => true, "Seed" => seed,
-            "T" => T, "J" => Js, "Update Method" => rbim_heatbath_update!,
+            "T" => T, "J" => Js, "Update Method" => SW_update!,
             "Estimator" => estimator, "MCS" => mcs, "Thermalization" => 0,
             "Binning Size" => binsize)
         model = Ising(param)

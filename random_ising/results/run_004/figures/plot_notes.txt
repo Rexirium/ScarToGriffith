@@ -1,0 +1,12 @@
+Source: random_ising/results/run_004; 6 sizes × 300 temperatures × 1000 disorder samples.
+C and chi are total (extensive) observables, not divided by L^2. chi = <M^2>/T.
+Figure 1: disorder mean ± sample std/sqrt(1000); chi axis logarithmic.
+MC noise is already present in across-realization scatter; stored MC errors are not added again.
+Figure 2: L=50, first disorder realization, T=[0.3, 0.7, 1.02, 2.0]; x is array dimension 1.
+Same disorder across T. Each panel has its own symmetric linear color scale.
+Negative finite-sampling local estimates are retained, not clipped or replaced.
+Figure 3: L=[10, 24, 40, 50], T=[0.3, 0.5, 0.7, 1.02, 1.5, 2.0]; density of log10(chi), not density per unit chi.
+Figure 4: L=[10, 24, 40, 50], T=[0.3, 0.5, 0.7, 1.02, 1.5, 2.0]; stored disorder-averaged fixed-origin spin autocorrelation ± stored SEM.
+C(t)=sum_i s_i(t0+t)*s_i(t0)/L^2; t0=4096 sweeps after thermalization. No connected subtraction or time-origin averaging.
+Selection spans low T, crossover, the L=50 heat-capacity maximum (T=1.02), and high T.
+A heat-capacity maximum is not asserted to be a critical temperature.

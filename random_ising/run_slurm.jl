@@ -73,7 +73,7 @@ function compute_case(job, cfg)
         mcs=cfg.mcs, thermalization=cfg.thermalization, binsize=cfg.binsize,
         max_corr_time=cfg.max_corr_time, corr_start_time=cfg.corr_start_time,
         seed=mc_seed, details=true)
-    # 复用第一个构型的采样种子，使局域响应与该构型的总磁化率对应。
+    # 第一个无序构型用同一种子另跑 SW 采样；与总磁化率的 heat-bath 轨迹不同。
     chi_local, err_local = random_bond_local_susceptibility(L, T, disorder[1];
         mcs=cfg.mcs, thermalization=cfg.thermalization, binsize=cfg.binsize,
         seed=out.metadata.seeds[1])

@@ -69,7 +69,8 @@ try
                         mcs=cfg.mcs, thermalization=cfg.thermalization, binsize=cfg.binsize,
                         seed=seeds[1])
                     @assert data.chi_local == chi_local && data.err_local == err_local
-                    @assert sum(chi_local) ≈ data.out.susceptibility[1]
+                    # SW local response and heat-bath total response use different
+                    # trajectories, so their finite-sample sums need not match.
 
                     @assert size(read(g["U4"])) == (cfg.ndisorder,)
                     @assert size(read(g["correlation"])) == (cfg.max_corr_time + 1,)
