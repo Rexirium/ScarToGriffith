@@ -8,9 +8,9 @@ Jweak = 0.0
 seed = 1234
 
 # MC 参数
-mcs = 8192
-thermalization = 1024
-binsize = 64
+mcs = 65536
+thermalization = 2048
+binsize = 256
 max_corr_time = 128
 # 参考态所在的热化后 sweep；与 max_corr_time 之和不得超过 mcs。
 corr_start_time = 4096
