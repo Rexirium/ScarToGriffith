@@ -10,7 +10,7 @@ seed = 1234
 # MC 参数
 mcs = 16384
 thermalization = 2048
-binsize = 256
+binsize = 128
 max_corr_time = 4096
 
 # 等待写盘的结果数量上限
