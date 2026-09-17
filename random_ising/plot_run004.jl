@@ -89,23 +89,21 @@ save_figure("02_local_susceptibility", fig)
 
 fig = Figure(size=(1220, 960))
 axes = Axis[]
-# Histogram the logarithm explicitly: density integrates to one in d(log₁₀ χ).
+# Estimate density of the logarithm explicitly: density integrates to one in d(log₁₀ χ).
 for (i, L) in enumerate(DIST_L)
     row, col = fldmod(i-1, 2) .+ 1
     ax = Axis(fig[row, col], title=L"\mathrm{(%$(Char('a'+i-1)))}\quad L=%$L",
         xlabel=L"\log_{10}\chi", ylabel=L"p(\log_{10}\chi)")
     push!(axes, ax)
     samples = [log10.(at_temperature(L, T).samples) for T in DIST_T]
-    lo, hi = extrema(reduce(vcat, samples))
-    edges = range(lo-0.015, hi+0.015; length=61)
     for (j, T) in enumerate(DIST_T)
         temperature_label = @sprintf("%.2f", T)
-        stephist!(ax, samples[j]; bins=edges, normalization=:pdf,
-            color=COLORS[j], label=L"T = %$temperature_label", linewidth=2)
+        density!(ax, samples[j]; color=(COLORS[j], 0.15),
+            strokecolor=COLORS[j], strokewidth=2, label=L"T = %$temperature_label")
     end
 end
 Legend(fig[0, 1:2], axes[1]; orientation=:horizontal, nbanks=1, labelsize=16)
-Label(fig[3, 1:2], "1,000 disorder realizations per curve · 60 shared bins per panel · unit-area densities", fontsize=16)
+Label(fig[3, 1:2], "1,000 disorder realizations per curve · kernel density estimates · unit-area densities", fontsize=16)
 save_figure("03_susceptibility_distributions", fig)
 
 fig = Figure(size=(1220, 960))

@@ -1,0 +1,243 @@
+% !TEX program = xelatex
+\documentclass[a4paper,11pt]{article}
+\usepackage[margin=2cm]{geometry}
+\usepackage{amsmath,amssymb,graphicx,caption,float,microtype}
+\usepackage[hidelinks]{hyperref}
+\graphicspath{{../../random_ising/results/run_004/figures/}}
+\captionsetup{font=small,labelfont=bf}
+\setlength{\parskip}{0.35em}
+\title{Monte Carlo Results for the Two-Dimensional\\Random-Bond Ising Model}
+\author{Zihao Xu}
+\date{September 17, 2026}
+\begin{document}
+\maketitle
+\vspace{-2em}
+\section{Model and the Griffiths region}
+We consider spins $s_i=\pm1$ on an $L\times L$ square lattice with periodic boundary conditions and
+$N=L^2$ sites. Setting $k_{\mathrm B}=1$, the zero-field Hamiltonian is
+\begin{equation}
+H=-\sum_{\langle ij\rangle}J_{ij}s_i s_j,\qquad J_{ij}=\begin{cases}1,&\text{with probability }p,\\0,&\text{with probability }1-p.\end{cases}
+\end{equation}
+Bonds are drawn independently and remain fixed during thermal sampling. This is the bond-diluted
+limit of the ferromagnetic random-bond Ising model. Dataset \texttt{run\_004} uses $p=0.5$. We
+denote thermal averages in realization $a$ by $\langle\cdot\rangle_a$ and disorder averages by
+$[\cdot]_{\rm dis}$.
+
+Disorder allows unusually well-connected, nearly pure regions inside a globally paramagnetic system.
+In the Griffiths region, $T_c(p)<T<T_G$, these rare regions can generate enhanced responses and slow
+relaxation, while the equilibrium free energy is nonanalytic in magnetic field at zero field. Here
+$T_G=2/\ln(1+\sqrt2)\simeq2.269$ is the pure square-lattice transition temperature. Classical
+Griffiths singularities can be weak: slow dynamics or broad response distributions alone do not
+establish their asymptotic form.
+
+The present concentration equals the square-lattice bond-percolation threshold, $p_c=1/2$, where the
+thermodynamic ferromagnetic transition temperature is zero. A heat-capacity maximum near $T=1$
+therefore does not imply finite-temperature ordering. Critical connectivity, rare dense regions, and
+finite observation times must all be considered in interpreting the data.
+
+\begin{figure}[H]
+\centering\includegraphics[width=0.56\linewidth]{phase_diagram.png}
+\caption{Schematic temperature--bond-concentration phase diagram. The green curve denotes $T_c(p)$,
+separating ferromagnetic order from the paramagnetic phase. The red line is the pure-system
+transition temperature, labeled $T_f$ in the image and denoted $T_G$ here. The lightly shaded region
+between these boundaries is the Griffiths region. The label $p_{\rm th.}$ corresponds to the
+percolation threshold $p_c=1/2$. Black markers illustrate a temperature scan at $p=0.6$; they are
+not the $p=0.5$ data reported below.}\label{fig:phase}
+\end{figure}
+Figure~\ref{fig:phase} emphasizes that the Griffiths region is globally paramagnetic despite its
+slowly relaxing, locally correlated rare regions. At fixed $p>p_c$, cooling crosses $T_G$ before
+reaching the ordering temperature $T_c(p)$. For the present $p=p_c$, the latter boundary reaches
+zero, leaving $0<T<T_G$ without bulk ferromagnetic order. The green curve is schematic and is not a
+fit to this dataset.
+
+\section{Monte Carlo procedure}
+The simulations used SpinMonteCarlo.jl 1.2.2. Each realization was thermalized with $2048$
+Swendsen--Wang (SW) updates: parallel neighboring spins are linked with probability
+$1-e^{-2J_{ij}/T}$, and each cluster is independently assigned either orientation. Measurements then
+used $65536$ random-site heat-bath sweeps. Each sweep selects $N$ sites with replacement and
+resamples them according to
+\begin{equation}
+P(s_i=+1\mid\{s_j\})=\frac{1+\tanh(h_i/T)}{2},\qquad h_i=\sum_{j:\langle ij\rangle}J_{ij}s_j.
+\end{equation}
+Local responses also used SW thermalization followed by heat-bath measurements. This is the
+implementation that generated this dataset, before the subsequent change to SW sampling of static
+observables.
+
+The sizes are $L=10,16,24,32,40,50$, with $T=0.01,0.02,\ldots,3.00$ and $1000$ disorder realizations
+per size. The same bond realizations are reused across temperatures. Measurements are divided into
+$256$ blocks of $256$ sweeps for block statistics and jackknife estimates. Disorder-average bands
+use the sample standard deviation divided by $\sqrt{1000}$; this scatter already includes MC noise.
+A fixed block length need not resolve low-temperature slow modes and does not guarantee converged
+errors.
+
+\clearpage
+\section{Results}
+\subsection{Disorder-averaged heat capacity and susceptibility}
+For $M=\sum_i s_i$, the observables are
+\begin{equation}
+C_a=\frac{\langle H^2\rangle_a-\langle H\rangle_a^2}{T^2},\qquad \chi_a=\frac{\langle M^2\rangle_a}{T}.
+\end{equation}
+Both are total-system quantities; division by $N$ gives per-site values. The susceptibility uses the
+exact symmetry $\langle M\rangle_a=0$ of the finite-volume zero-field ensemble, without subtracting
+$\langle|M|\rangle_a^2$.
+\begin{figure}[H]
+\centering\includegraphics[width=\linewidth]{01_mean_observables.png}
+\caption{Disorder-averaged total heat capacity (left) and total susceptibility (right) for six
+sizes. Shading denotes $\pm1$ standard error of the disorder mean (SEM). The susceptibility axis is
+logarithmic.}\label{fig:mean}
+\end{figure}
+The heat capacity has a broad maximum at $T=0.99$--$1.03$, with little systematic peak displacement
+over these sizes. For $L=50$, the maximum occurs at $T=1.02$, where $[C]_{\rm dis}/N\simeq0.420$.
+The per-site peak decreases from approximately $0.435$ at $L=10$ to $0.420$ at $L=50$. The growing
+total peak therefore mainly reflects increasing volume, rather than a growing per-site singularity.
+Its broad shape is consistent with a crossover in local bond-energy fluctuations. At low
+temperature, occupied bonds are mostly satisfied and energy fluctuations are suppressed; at high
+temperature the factor $T^{-2}$ suppresses the heat capacity.
+
+The susceptibility rises strongly upon cooling, without an isolated maximum in the displayed range.
+A useful low-temperature equilibrium picture is a set of nearly rigid disconnected clusters. A
+cluster of $n_c$ spins contributes approximately $n_c^2$ to $\langle M^2\rangle$, giving $\chi\simeq
+T^{-1}\sum_c n_c^2$ when cluster orientations are independently sampled. Large clusters have
+disproportionate weight, making magnetic response particularly sensitive to connectivity. This is a
+physical interpretation, rather than a quantitative fit to the trajectories.
+
+At high temperature, separation between sizes also contains the ordinary extensive factor:
+asymptotically $\chi\sim N/T$ for weakly correlated spins. Separation of total-susceptibility curves
+alone is consequently insufficient evidence for anomalous scaling. At low temperature, heat-bath
+trajectories may fail to average over relative cluster orientations, biasing $\langle M^2\rangle$.
+Narrow disorder error bands do not exclude such a problem. The response enhancement must therefore
+be considered together with the local maps and dynamical measurements below.
+
+\clearpage
+\subsection{Spatial structure of the local susceptibility}
+The response of an individual spin to a uniform field is
+\begin{equation}
+\chi_{i,a}=\frac{\langle s_i M\rangle_a}{T}=\frac{1}{T}\sum_j\langle s_i s_j\rangle_a,\qquad \sum_i\chi_{i,a}=\chi_a.
+\end{equation}
+Figure~\ref{fig:local} follows the first $L=50$ disorder realization across four temperatures, so
+the bond geometry remains fixed.
+\begin{figure}[H]
+\centering\includegraphics[width=0.76\linewidth]{02_local_susceptibility.png}
+\caption{Local susceptibility estimates at $T=0.30,0.70,1.02,2.00$ for the same bond realization.
+Each panel uses an independent symmetric linear color scale. Negative estimates are retained; equal
+color intensity across panels does not mean equal response.}\label{fig:local}
+\end{figure}
+At $T=0.30$, broad patches have nearly uniform estimated response, indicating coherent spin behavior
+over the measured trajectory. At $T=0.70$, these patches become more structured, while strong
+spatial variation persists. At $T=1.02$, large positive responses are more concentrated. By
+$T=2.00$, the scale has fallen from hundreds to values of order unity and finer variations dominate.
+Residual heterogeneity is expected because local coordination and connectivity remain nonuniform
+even when thermal correlations are short.
+
+The negative patches require care. Ferromagnetic equilibrium correlations satisfy $\langle s_i
+s_j\rangle_a\geq0$, implying $\chi_{i,a}\geq1/T$. Negative estimates cannot describe equilibrium
+antiferromagnetic regions. If disconnected clusters rarely reverse during a finite trajectory, their
+relative orientations do not average out; cross-cluster terms in $s_iM$ can remain spuriously
+negative. This is a natural explanation for the coherent negative patches, although the stored map
+does not identify every slow mode.
+
+At $T=0.30$, approximately $44.5\%$ of sites have negative estimates and $40.8\%$ fall below minus
+three times their estimated block SEM. These are not merely small fluctuations within the reported
+errors. They indicate unresolved sampling or error-estimation problems. Thus the maps reveal spatial
+structure in measured trajectories, but the low-temperature amplitudes cannot yet be treated as
+converged equilibrium rare-region responses.
+
+\clearpage
+\subsection{Sample-to-sample susceptibility distributions}
+Figure~\ref{fig:dist} shows kernel density estimates of $x=\log_{10}\chi$ from $1000$ realizations
+at each size and temperature. Their normalization is
+\begin{equation}
+\int p_x(x)\,\mathrm dx=1,\qquad p_\chi(\chi)=\frac{p_x(\log_{10}\chi)}{\chi\ln10}.
+\end{equation}
+The ordinate is a density per unit logarithmic susceptibility, not per unit $\chi$.
+\begin{figure}[H]
+\centering\includegraphics[width=0.73\linewidth]{03_susceptibility_distributions.png}
+\caption{Distributions of total susceptibility at six temperatures for $L=10,24,40,50$, normalized
+in $\mathrm d(\log_{10}\chi)$. Smooth curves are kernel density estimates; small shoulders require
+bandwidth and sampling checks before interpretation.}\label{fig:dist}
+\end{figure}
+Cooling moves the distributions toward larger susceptibility, consistent with Fig.~\ref{fig:mean}.
+Their shapes reveal information hidden by the mean. At $T=0.70$, the larger sizes have particularly
+broad distributions extending across several decades. Samples at identical $L$ and $T$ can therefore
+respond very differently. Variations in cluster sizes and weak connections offer a plausible origin,
+affecting both correlated magnetization and the time required to explore its orientations.
+
+The width is not monotonic in temperature. The $T=0.30$ and $0.50$ curves concentrate at larger
+responses and have appreciable tails toward smaller values, whereas the intermediate-temperature
+distribution is especially broad. This may reflect a crossover between nearly rigid clusters and
+thermally disrupted correlations. However, slow sampling can also reshape the distributions, and
+these data do not separate the two contributions.
+
+At $T=1.50$ and $2.00$, the distributions narrow as $L$ increases, consistent with averaging over
+many weakly correlated regions. Their rightward shift is partly the trivial effect of total
+susceptibility increasing with volume. Replacing $\chi$ by $\chi/N$ translates each logarithmic
+distribution by $-\log_{10}N$ without changing its width.
+
+A broad distribution can make the mean unrepresentative of typical samples, but does not establish a
+power-law tail or a lack of self-averaging. Such conclusions require converged sampling and size
+dependence of, for example, the relative variance. These densities contain both disorder variation
+and MC estimation noise; their appearance alone cannot determine a Griffiths exponent.
+
+\clearpage
+\subsection{Autocorrelation under heat-bath dynamics}
+A reference state is saved at $t_0=4096$ heat-bath sweeps after thermalization. The measured overlap
+is
+\begin{equation}
+A_a(t)=\frac{1}{N}\sum_i s_i(t_0+t)s_i(t_0),\qquad 0\leq t\leq128.
+\end{equation}
+We use $A(t)$ to distinguish it from heat capacity; the original plot labels it $C(t)$. Each sample
+contributes one fixed-origin trajectory, without time-origin averaging or subtraction of spin means.
+\begin{figure}[H]
+\centering\includegraphics[width=0.79\linewidth]{04_autocorrelation.png}
+\caption{Disorder-averaged overlap with $\pm1$ SEM. One time unit is one random-site heat-bath
+sweep. The reference state is taken $4096$ sweeps after thermalization, with $A(0)=1$. SW updates
+are excluded from the time axis.}\label{fig:corr}
+\end{figure}
+Temperature has a much larger effect than the visible size dependence. At $L=50$, $[A(128)]_{\rm
+dis}\simeq0.921,0.812,0.609,0.199$ for $T=0.30,0.50,0.70,1.02$, respectively. At $T=1.50$ and
+$2.00$, the overlap is close to zero by the end of the window, with $T=2.00$ losing memory
+substantially faster.
+
+The low-temperature curves show a rapid initial drop followed by much slower decay. A cluster
+picture suggests that weakly constrained spins relax first, while strongly correlated regions retain
+memory. Reversing such regions through local updates may require rare intermediate configurations,
+even though SW updates can flip their overall orientation efficiently. The plotted relaxation
+therefore characterizes the chosen local heat-bath dynamics, not the autocorrelation time of an SW
+sampling algorithm.
+
+Similar curves across sizes indicate modest size dependence within this window, rather than
+size-independent asymptotic relaxation. An apparent plateau over $128$ sweeps does not establish
+frozen order or a nonzero infinite-time limit. For any finite system at positive temperature,
+heat-bath dynamics can eventually sample both orientations. Longer trajectories are needed to
+resolve the tail; the linear-axis plots do not distinguish power-law, stretched-exponential, or
+other decay forms. The SEM combines disorder variation with single-trajectory noise, and adjacent
+times are correlated.
+
+\clearpage
+\section{Summary}
+The four figures provide complementary views of the $p=0.5$ bond-diluted Ising model. The heat
+capacity identifies a broad energy-fluctuation crossover near $T=1$, with an approximately
+size-independent per-site peak. Magnetic susceptibility is more sensitive to large correlated
+clusters and grows strongly upon cooling. Its distributions show that this enhancement varies
+substantially between disorder realizations, especially at intermediate temperatures.
+
+The local maps and temporal overlap connect this behavior to spatial heterogeneity and slow
+heat-bath dynamics. These observations are compatible with a cluster-based picture of the Griffiths
+region, but at the percolation threshold critical connectivity must also be considered. Neither the
+heat-capacity maximum nor finite-time memory identifies a finite-temperature ferromagnetic
+transition.
+
+A central limitation is that low-temperature local-response estimates violate equilibrium
+positivity. Their magnitude relative to the reported block errors indicates that static sampling is
+not uniformly converged. Narrow error bands on disorder averages do not remove this concern, and
+apparent distribution tails may also be affected. The results therefore document finite-size
+responses and finite-time relaxation, rather than establish a Griffiths singularity or a dynamical
+exponent.
+
+For quantitative conclusions, static observables should first be checked using efficient cluster
+sampling and independent runs, while local heat-bath updates are retained for the specified
+dynamics. Longer observation windows, multiple time origins or independent trajectories, and
+block-length checks would then resolve slow relaxation more reliably. Separating equilibrium
+sampling from the chosen stochastic dynamics is essential for identifying robust physical features.
+\end{document}
+
