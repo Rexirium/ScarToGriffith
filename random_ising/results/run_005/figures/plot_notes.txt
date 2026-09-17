@@ -2,12 +2,15 @@ Source: random_ising/results/run_005; format v13; 6 sizes × 150 temperatures ×
 C and chi are total (extensive) observables, not divided by L^2. chi = <M^2>/T.
 Figure 1: disorder mean ± sample std/sqrt(1000); chi axis logarithmic.
 MC noise is already present in across-realization scatter; stored MC errors are not added again.
-Figure 2: L=50, first disorder realization, T=[0.3, 0.7, 1.02, 2.0]; x is array dimension 1.
+Figure 2: L=50, first disorder realization, T=[0.3, 0.7, 1.02, 2.8]; x is array dimension 1.
 Same disorder across T. Each panel has its own symmetric linear color scale.
 Negative finite-sampling local estimates are retained, not clipped or replaced.
-Figure 3: L=[10, 24, 40, 50], T=[0.3, 0.5, 0.7, 1.02, 1.5, 2.0]; density of log10(chi), not density per unit chi.
-Figure 4: L=[10, 24, 40, 50], T=[0.3, 0.5, 0.7, 1.02, 1.5, 2.0]; stored disorder-averaged fixed-origin spin autocorrelation ± stored SEM.
-The time axis is logarithmic and the correlation axis is linear. Only t=0 is omitted; nonpositive means and full SEM bands are retained.
+Figure 3: L=[10, 24, 40, 50], T=[0.3, 0.5, 0.7, 1.02, 1.5, 2.0, 2.8]; density of log10(chi), not density per unit chi.
+Figure 4: L=[10, 24, 40, 50], T=[0.3, 0.5, 0.7, 1.02, 1.5, 2.0, 2.8]; absolute value of the stored disorder-averaged fixed-origin spin autocorrelation on log-log axes.
+Absolute value is taken after disorder averaging. t=0 is omitted; exactly zero means are plotted as gaps. Shading maps the original mean ± stored SEM interval through absolute value; intervals touching or crossing zero are omitted, with no artificial positive floor.
 C(t)=sum_i s_i(t0+t)*s_i(t0)/L^2; reference state is the final SW configuration, followed by 4096 heat-bath sweeps. No connected subtraction or time-origin averaging.
-Selected temperatures match the run_004 plots for comparison; T=1.02 is not assumed to be the run_005 heat-capacity maximum.
+T=2.80 is included to cover the high-temperature paramagnetic regime; the remaining selected temperatures retain run_004 comparison points. T=1.02 is not assumed to be the run_005 heat-capacity maximum.
 A heat-capacity maximum is not asserted to be a critical temperature.
+Figure 5: L=50, T=[1.2, 1.3, 1.4, 1.5, 1.6]; y=ln(C) versus x=(ln(t))^2, using the signed disorder mean without absolute value. Both transformed axes are linear. Fit: ln(C)=intercept+slope*(ln(t))^2.
+Plot and unweighted OLS fit use consecutive times from t=2, stopping before the first failure of 0<C<1 and C>3 SEM. Dashed lines: y=intercept+slope*x. Parameters, R², point counts and time windows: 05_autocorrelation_fits.csv.
+Fits are descriptive and window-dependent. Adjacent times are correlated; R² does not establish an asymptotic decay law, and independent-point parameter errors are not reported.

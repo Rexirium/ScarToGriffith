@@ -127,7 +127,7 @@ Figure~\ref{fig:local} follows the first $L=50$ disorder realization across four
 the bond geometry remains fixed.
 \begin{figure}[H]
 \centering\includegraphics[width=0.76\linewidth]{02_local_susceptibility.png}
-\caption{SW estimates of local susceptibility at $T=0.30,0.70,1.02,2.00$ for the same bond
+\caption{SW estimates of local susceptibility at $T=0.30,0.70,1.02,2.80$ for the same bond
 realization at $p=0.6$. Each panel uses an independent symmetric linear color scale. Negative
 estimates are retained; equal color intensity across panels does not mean equal response.}\label{fig:local}
 \end{figure}
@@ -135,13 +135,14 @@ At $T=0.30$, most of the map has a large, nearly uniform positive response, inte
 weak-response regions. This is consistent with a dominant connected cluster: in the rigid-cluster
 limit, a site in a cluster of size $n_c$ has $\chi_i=n_c/T$. At $T=0.70$, variations within the
 strong-response region become visible, and at $T=1.02$ the response forms a more heterogeneous
-pattern. By $T=2.00$, the overall scale is much smaller. The maximum estimated response falls from
-approximately $7845$ at $T=0.30$ to $3119$, $705$, and $7.17$ in the remaining panels. These maps
+pattern. At $T=2.80>T_G$, the map samples the high-temperature paramagnetic regime above the
+Griffiths region, and the overall response scale is much smaller. The maximum estimated response falls from
+approximately $7845$ at $T=0.30$ to $3119$, $705$, and $2.29$ in the remaining panels. These maps
 show connectivity-dependent response, but the low-temperature large cluster is not by itself a
 rare region inside a paramagnetic background.
 
 Ferromagnetic equilibrium correlations imply $\chi_{i,a}\geq1/T$, whereas a finite-sample estimator
-can be negative. In the four panels, $2.40\%$, $2.36\%$, $2.16\%$, and $0.60\%$ of sites have
+can be negative. In the four panels, $2.40\%$, $2.36\%$, $2.16\%$, and $0.64\%$ of sites have
 negative estimates, respectively; none lies below minus three times its stored block SEM. A weakly
 coupled or isolated spin can have a noisy $s_iM$ estimator because the instantaneous total
 magnetization is large, even when its own mean response is small. The small negative estimates
@@ -160,15 +161,16 @@ at each size and temperature. Their normalization is
 The ordinate is a density per unit logarithmic susceptibility, not per unit $\chi$.
 \begin{figure}[H]
 \centering\includegraphics[width=0.73\linewidth]{03_susceptibility_distributions.png}
-\caption{Distributions of total susceptibility at six temperatures for $L=10,24,40,50$, normalized
+\caption{Distributions of total susceptibility at seven temperatures,
+$T=0.30,0.50,0.70,1.02,1.50,2.00,2.80$, for $L=10,24,40,50$, normalized
 in $\mathrm d(\log_{10}\chi)$. Smooth curves are kernel density estimates; narrow peaks have larger
 density because their areas remain unity. Small shoulders require bandwidth and sampling checks
 before interpretation.}\label{fig:dist}
 \end{figure}
 Cooling shifts the distributions toward larger susceptibility, consistent with Fig.~\ref{fig:mean}.
 For the larger sizes, the low-temperature curves at $T=0.30,0.50,0.70$ are sharply concentrated,
-whereas $T=1.02$ produces the broadest distribution among the six plotted temperatures. At $L=50$,
-the standard deviations of $\log_{10}\chi$ are $0.0085,0.0096,0.0159,0.1674,0.0398,0.0177$ in
+whereas $T=1.02$ produces the broadest distribution among the seven plotted temperatures. At $L=50$,
+the standard deviations of $\log_{10}\chi$ are $0.0085,0.0096,0.0159,0.1674,0.0398,0.0177,0.0095$ in
 increasing temperature order. The broad intermediate-temperature response is compatible with
 sample-dependent thermal disruption of correlated clusters near the ordering crossover; it does
 not by itself locate $T_c$ or establish a Griffiths tail.
@@ -178,7 +180,9 @@ for $L=10$ to $0.019$ for $L=50$. At low temperature and $p=0.6$, a dominant occ
 can give a large response with relatively small sample-to-sample fluctuations. At $T=1.02$, the
 relative width instead increases from $0.281$ to $0.369$ over these sizes. This fixed-temperature
 trend motivates a finite-size study but is not an asymptotic self-averaging test at a known critical
-point. At $T=1.50$ and $2.00$, the distributions narrow with increasing size.
+point. At $T=1.50$, $2.00$, and $2.80$, the distributions narrow with increasing size.
+The added $T=2.80>T_G$ curve provides a high-temperature paramagnetic comparison outside the
+Griffiths region; its logarithmic width decreases from $0.0417$ at $L=10$ to $0.0095$ at $L=50$.
 
 The rightward displacement with size partly reflects the total-system normalization. Replacing
 $\chi$ by $\chi/N$ translates a logarithmic distribution by $-\log_{10}N$ without changing its
@@ -198,10 +202,13 @@ heat-bath sweeps from the reference, not SW updates. Each sample contributes one
 trajectory, without time-origin averaging or subtraction of spin means.
 \begin{figure}[H]
 \centering\includegraphics[width=0.79\linewidth]{04_autocorrelation.png}
-\caption{Disorder-averaged overlap with $\pm1$ SEM. One time unit is one random-site heat-bath
-sweep following the last SW measurement. The horizontal axis is logarithmic and the vertical axis
-is linear. The stored value $A(0)=1$ is omitted from the logarithmic time axis; nonpositive
-estimates and full SEM bands are retained.}\label{fig:corr}
+\caption{Absolute value of the disorder-averaged overlap, $|[A(t)]_{\rm dis}|$, for the seven
+temperatures in Fig.~\ref{fig:dist}. Both axes are logarithmic, with a vertical lower limit
+of $10^{-2.5}$. One time unit is one random-site heat-bath sweep following the last SW measurement.
+The absolute value is taken after disorder averaging. Shading is the absolute-value image of the
+original $\pm1$ SEM interval; intervals touching or crossing zero are omitted. The stored value
+$A(0)=1$ is omitted, and exactly zero means are plotted as gaps. Values below the vertical limit
+are outside the displayed range.}\label{fig:corr}
 \end{figure}
 The low-temperature curves show a rapid initial drop followed by persistent memory. At $L=50$,
 $[A(4096)]_{\rm dis}\simeq0.955,0.920,0.834$ for $T=0.30,0.50,0.70$, respectively, with
@@ -214,13 +221,18 @@ At $T=1.02$, the $L=50$ overlap decreases from $0.533$ at $128$ sweeps to $0.325
 $4096$ sweeps, resolving substantial relaxation beyond the initial window. The final value varies
 nonmonotonically with size, from $0.284$ at $L=10$ to $0.372$ at $L=24$ and $0.325$ at $L=50$.
 At $T=1.50$ and $2.00$, the $L=50$ endpoint values are $-0.00047\pm0.00139$ and
-$0.00022\pm0.00095$, respectively, consistent with zero within the reported SEM.
+$0.00022\pm0.00095$, respectively; at $T=2.80>T_G$, the endpoint is
+$0.00070\pm0.00076$. These signed values from the stored data are consistent with zero within
+the reported SEM, and their absolute values lie below the plotted lower limit
+$10^{-2.5}\simeq0.00316$. Disappearance below this limit does not imply an exactly zero overlap.
 
 These curves characterize local heat-bath dynamics, not the autocorrelation time of SW sampling.
 For a finite system at positive temperature, sufficiently long heat-bath evolution can ultimately
 reverse the magnetization; a finite-window plateau is not proof of a nonzero infinite-time limit.
-The logarithmic time axis exposes early and late relaxation, but a straight segment on this
-semi-logarithmic plot is not evidence for a power law. Longer windows and independent reference
+The log--log representation exposes early and late relaxation, but an apparently straight segment
+alone does not establish a power law. Taking the absolute value removes the sign of fluctuations
+about zero; late-time positive magnitudes therefore need not represent a resolved relaxation tail.
+The lower display limit also hides smaller magnitudes. Longer windows and independent reference
 trajectories are needed to distinguish decay forms. The SEM combines disorder variation with
 single-trajectory noise, and adjacent times remain correlated.
 
@@ -248,13 +260,16 @@ replacement for convergence tests across temperatures and observables.
 
 The susceptibility distributions add information beyond their means. Low-temperature response is
 large but relatively narrowly distributed for the larger sizes, while the selected temperature
-$T=1.02$ exhibits substantial sample-to-sample variation. At higher temperatures, the distributions
-narrow with size. The response widths are consistent with changing connectivity and thermal
+$T=1.02$ exhibits substantial sample-to-sample variation. At higher temperatures, including the
+added paramagnetic comparison at $T=2.80>T_G$, the distributions narrow with size.
+The response widths are consistent with changing connectivity and thermal
 correlation scales, but do not establish a universal tail, a lack of self-averaging, or a Griffiths
 exponent.
 
 The subsequent heat-bath trajectories retain strong low-temperature memory over $4096$ sweeps,
-show a slower decay near $T=1.02$, and approach zero at $T=1.50$ and $2.00$. Efficient SW
+show a slower decay near $T=1.02$, and have endpoint estimates consistent with zero at
+$T=1.50$, $2.00$, and $2.80$. Their absolute disorder averages are displayed on log--log axes
+with a lower limit of $10^{-2.5}$; this display does not resolve the sign or the sub-limit tail. Efficient SW
 sampling and slow local dynamics are compatible: they use different transition rules. Neither a
 finite-window plateau nor spatial heterogeneity alone identifies the rare-region contribution in
 the paramagnetic phase.

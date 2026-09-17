@@ -1,7 +1,7 @@
 # 尺寸、温度和无序构型
 Ls = [10, 16, 24, 32, 40, 50]
 Ts = { start = 0.02, stop = 3.0, length = 150 }
-ndisorder = 1000
+ndisorder = 2000
 p = 0.6
 Jstrong = 1.0
 Jweak = 0.0
@@ -11,7 +11,7 @@ seed = 1234
 mcs = 16384
 thermalization = 2048
 binsize = 128
-max_corr_time = 4096
+max_corr_time = 32768
 
 # 等待写盘的结果数量上限
 result_buffer = 4
