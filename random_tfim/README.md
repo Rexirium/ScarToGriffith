@@ -28,8 +28,8 @@ dynamic = autocorrelation(J, h, collect(0.0:0.25:10.0); boundary)
 命令行仅保留 `demo` 和 `full`，第四个参数选择边界，两种模式均默认周期边界：
 
 ```sh
-julia random_tfim/run.jl demo 20 random_tfim/results/demo_open.h5 open
-julia random_tfim/run.jl full 100 random_tfim/results/full_periodic_small.h5 periodic
+julia --threads=4 random_tfim/run.jl demo 20 random_tfim/results/demo_open.h5 open
+julia --threads=4 random_tfim/run.jl full 100 random_tfim/results/full_periodic_small.h5 periodic
 ```
 
 | 模式 | 默认样本数 | 链长 $L$ |
@@ -38,12 +38,12 @@ julia random_tfim/run.jl full 100 random_tfim/results/full_periodic_small.h5 per
 | `full` | 10000 | 16, 32, 64, 128 |
 
 两种模式的横场参数均为 `h0=(1.0,1.3,1.5,1.7,2.0,2.3,3.0)`，
-时间网格均为 `0:0.25:10`。每个模式都计算能隙、`r≤L÷2` 的空间关联和中点时间自关联，
+时间网格均为 `0:0.2:10`。每个模式都计算能隙、`r≤L÷2` 的空间关联和中点时间自关联，
 并输出各自的无序平均及标准误。第二个参数可覆盖样本数，便于在 `full` 尺寸上小批量试跑。
 
 ## 中点实时间自关联（零温）
 
-新增 `autocorrelation` 使用 Majorana 协方差矩阵与 Pfaffian 计算
+`autocorrelation` 使用 Majorana 协方差矩阵与高斯演化行列式计算
 $C_j(t)=\langle0|\sigma_j^z(t)\sigma_j^z(0)|0\rangle$，取 $\hbar=1$。
 支持开边界和周期边界，保留偶数 `L≥2` 的约定，默认 `j=L÷2`。
 开链取两个中点中的左侧；周期链的 `j` 是指定的测量格点。
@@ -67,8 +67,9 @@ ensemble = disorder_ensemble(32, 1.0; times, nsamples=20, seed=1996, boundary=:o
 average = vec(mean(ensemble.sample_Ct; dims=2))
 ```
 
-`disorder_ensemble` 在同一个无序样本循环中只抽样一次 `J,h`，依次计算能隙、
-空间关联和时间关联。返回的各个数组第 `n` 列（能隙为第 `n` 个元素）对应同一构型。
+`disorder_ensemble` 先按 seed 顺序生成各构型的 `J,h`，再通过 `Threads.@threads`
+并行计算不同构型的能隙、空间关联和时间关联。返回的各个数组第 `n` 列
+（能隙为第 `n` 个元素）对应同一构型；构型顺序与 Julia 线程数无关，并与原串行版一致。
 `sample_C`、`sample_logC` 保留空间关联；`sample_Ct[时间,样本]` 保存复数时间关联。
 `times` 默认为空，此时跳过动态计算，`sample_Ct` 大小为 `0×nsamples`；
 `rmax=0` 可跳过非平凡空间关联，两者结合即只计算能隙。
@@ -109,13 +110,18 @@ $$
 两块等时收缩相同是因为初态为平稳基态。Pfaffian 矩阵大小为
 $2(2j-1)$，中点时为 $2L-2$。计算 `Q` 时先对全部 `2L` 个模式求和，
 再截取两个端点；不能将 `R` 和 `Γ` 都提前截成 `SS` 块再相乘。
-算法使用带主元交换的反对称消元，不用 `sqrt(det)`，以保留符号与复数相位。
+该字符串公式只在靠近开链端点时使用：令 $d=\min(j,L+1-j)$，当
+$4d-2\le L/4$ 时选用 Pfaffian，右端点通过反射链并交换 SVD 的 `U,V` 处理。
+代码直接计算 $Q=M_S\operatorname{diag}(e^{-2i\epsilon t})M_S^\dagger$，其中
+$M_{2a-1,\mu}=U_{a\mu}$、$M_{2a,\mu}=iV_{a\mu}$，不构造完整传播矩阵。
+反对称消元原地交换主元并复用时间循环缓冲区；不使用 `sqrt(det)`。
+中点及其余位置使用下面的高斯演化行列式。
 
 ```sh
 julia random_tfim/run.jl demo 20 random_tfim/results/demo_small.h5
 ```
 
-该试跑计算 `L=(16,32)`、上述全部 7 个横场值、`t=0:0.25:10`，默认 20 个无序样本，
+该试跑计算 `L=(16,32)`、上述全部 7 个横场值、`t=0:0.2:10`，默认 20 个无序样本，
 同时保存这些构型的能隙及 `r≤L÷2` 的空间关联。
 任意时间网格和样本数可通过上述函数接口指定。HDF5 的各个 `L…/h…` 组保存
 `times`、`sample_C_real/imag`（时间 × 样本）、`average_real/imag`、
@@ -124,23 +130,24 @@ julia random_tfim/run.jl demo 20 random_tfim/results/demo_small.h5
 实时间关联通常是复数，因此不自动取绝对值或计算 `log C`。
 
 计算成本约为每个样本 $O(L^3+N_tL^3)$，工作内存为 $O(L^2)$，
-另需保存 $N_tN_s$ 个复数样本。当前使用双精度直接 Pfaffian；极小关联可能下溢，
+另需保存 $N_tN_s$ 个复数样本。行列式使用 `logabsdet` 保留复相位，最后恢复关联值；极小关联仍可能下溢，
 长时间的相位精度受频率误差限制，不保证极端无序下的任意小能标精度。
 
-### 周期边界的宇称切换与 Pfaffian
+### 宇称切换与高斯演化行列式
 
 周期自旋链基态在偶宇称（反周期费米子）扇区，而插入 $\sigma_j^z$ 后进入奇宇称
 （周期费米子）扇区。分别对 $K_+$、$K_-$ 做 SVD，不能只在上述开链公式中更换接缝。
-循环重排该样本的耦合和横场，使测量点成为 JW 起点，此时 $\sigma_j^z=\gamma_1$。
-令 $|\phi\rangle=\gamma_1|0,+\rangle$，则
+保留原格点编号，令 $|\phi\rangle=\sigma_j^z|0,+\rangle$，则
 
 $$
 C_j(t)=e^{iE_0t}\langle\phi|e^{-iH_-t}|\phi\rangle,
 \qquad E_0=-\sum_\mu\epsilon_\mu^+.
 $$
 
-这是逐样本重排，不假设随机链平移对称。设 $\Gamma^+$ 的奇偶块为 $U_+V_+^T$，
-对该块第一行取负即得 $\Gamma^\phi_{\mathrm{odd,even}}$。
+设 $\Gamma^+$ 的奇偶块为 $U_+V_+^T$。由于 $\sigma_j^z$ 是前 $2j-1$ 个
+Majorana 的乘积，对该块前 $j$ 行、前 $j-1$ 列分别取负，即得
+$\Gamma^\phi_{\mathrm{odd,even}}$；交集内的元素取负两次。
+这一操作不假设随机链平移对称，也无需重新编号或重新对角化。
 在 $K_-=U_-\operatorname{diag}(\epsilon^-)V_-^T$ 的模式基底中，记
 $B=U_-^T\Gamma^\phi_{\mathrm{odd,even}}V_-$，于是
 
@@ -161,6 +168,15 @@ W_{2\nu,2\mu-1}=-W_{2\mu-1,2\nu},
 $$
 
 同奇偶块为零，最终 $C_j(t)=e^{iE_0t}\operatorname{Pf}W(t)$。
+在上述交错排序下，严格有 $\operatorname{Pf}W=\det D$，其中
+
+$$
+D_{\mu\nu}(t)=\delta_{\mu\nu}\cos(\epsilon_\mu^-t)
++i\sin(\epsilon_\mu^-t)B_{\mu\nu}.
+$$
+
+因此实际只分解 $L\times L$ 的复矩阵 `D`，不再构造 $2L\times2L$ 的 `W`。
+开链也适用同一公式，此时初态和演化使用同一个开链 SVD，无需补接缝或增加分解。
 此处使用 $\epsilon^-t$ 是多体演化算符的展开；Majorana 向量演化的频率仍是 $2\epsilon^-$。
 公式保留奇宇称态和真空能量相位，不需要假设周期费米子真空本身为奇宇称，
 也不使用平方根或按时间步追踪符号。负时间、乱序时间和零单粒子模式均可直接计算。
@@ -264,13 +280,14 @@ $r\le L/2$ 的短路径行列式。自关联严格取 1。
 输入参数不再重复返回；距离、平均值、典型值和标准误在分析或保存时计算。
 `C` 保留行列式的符号，`logC` 保留微小关联的对数精度，因此两者均保留。
 
-HDF5 按 `L16/h1.0` 等分组；包含原始 gap、log gap、有效标记和距离数组。
+HDF5 按 `L16/h1.0` 等分组；包含原始 gap、log gap、有效标记及关联数据。
 能隙新增 `gap_average`、`gap_sem`；对数能隙新增 `loggap_average`、`loggap_sem`。
 能隙均值保留所有原始样本；若任一样本的 gap 未分辨，其 log gap 为 `NaN`，
 对数能隙统计随之为 `NaN`，不通过删去样本改变平均的定义。
-空间关联组的 `pair_counts` 记录每个距离的有效起点数：周期为 `L`，开边界为 `L-r`。
+不单独保存 `r` 和 `pair_counts`：空间关联第 `r+1` 行对应距离 `r`，
+有效起点数可由链长和边界恢复，周期为 `L`，开边界为 `L-r`。
 根属性 `boundary` 记录实际使用的边界。下表的论文对照采用周期边界。
-`run.jl` 从逐样本数据计算派生统计量，保留原有 HDF5 数据集名称。
+`run.jl` 从逐样本数据计算派生统计量，不保存逐起点的 `pair_logC`。
 `sample_C`、`sample_logC` 的列为无序样本，行对应 `r+1`。
 动态数据在函数返回中名为 `sample_Ct`；HDF5 沿用 `sample_C_real/imag`、
 `average_real/imag`、`sem_real/imag`，与空间数据集 `sample_C` 区分。
@@ -278,7 +295,8 @@ HDF5 按 `L16/h1.0` 等分组；包含原始 gap、log gap、有效标记和距�
 `typical=exp(mean_log)`。`sem`、`log_sem` 按独立无序样本计算，
 不会把同一样本内不同起点当作独立样本。无效对数会传播，避免静默选择偏差。
 `typical_lower/upper=exp(mean_log∓log_sem)` 表示对数均值上下一个标准误经指数映射后的范围，
-并非指定置信水平的置信区间。两种模式均保留 `pair_logC[起点,r+1,样本]`，用于关联分布。
+并非指定置信水平的置信区间。两种模式均仅保留起点平均后的逐样本空间关联，
+不生成或写入 `pair_logC[起点,r+1,样本]`；因此输出不能重建逐格点对的关联分布。
 所有 SEM 都使用无序样本间的无偏样本方差，形式为 `std(samples)/sqrt(nsamples)`；
 单样本的 SEM 及由其构造的范围为 `NaN`。时间关联的实部和虚部分别统计。
 
@@ -286,9 +304,9 @@ HDF5 按 `L16/h1.0` 等分组；包含原始 gap、log gap、有效标记和距�
 |---|---|
 | 1–4 | $\ln\Delta E$ 分布；临界 $\ln\Delta E/\sqrt L$；$h_0=3$ 用 $\ln\Delta E+z\ln L$，$z\approx1.4$ |
 | 8–9 | `average` 对 $r$ 双对数图，`mean_log` 对 $\sqrt r$；排除 $r=0$ |
-| 10–12 | 固定距离的 `pair_logC` 分布及除以 $\sqrt r$ 后的分布 |
+| 10–12 | 需要逐格点对关联分布；当前 HDF5 输出不包含所需数据 |
 | 13–16 | 非临界 `average` 除以临界值；`mean_log` 减去临界值；横轴分别为 $r\delta^2$、$2r\delta$ |
-| 17–19 | $h_0=3$ 的 `pair_logC` 分布、均值及方差随距离的变化 |
+| 17–19 | `mean_log` 可用于均值；逐格点对的分布与方差需要额外数据 |
 
 Histogram 密度须按实际 bin 宽归一化；对 gap 报告删失比例，避免把过滤后的
 尾部当作完整分布。跨样本的关联分布误差应按样本分块，而非对起点独立 bootstrap。
@@ -297,11 +315,27 @@ Histogram 密度须按实际 bin 宽归一化；对 gap 报告删失比例，避
 ## 数值与性能
 
 核心函数无全局可变状态、不修改输入；局部矩阵原位分解以减少分配。
-采用 Float64/LAPACK，单样本 SVD 为 $O(L^3)$。
-所有起点、所有距离的独立 LU 为 $O(L r_{max}^4)$，它是完整关联扫描的主要成本；
-可减少 `rmax`，或只做 gap（`rmax=0`，不计算特征向量）。
-保留全部 pair 对数需要 $8L(r_{max}+1)N_s$ 字节，$L=128,N_s=10000$ 约 666 MB；
-交互调用默认不保留。运行脚本固定单 BLAS 线程，顺序使用显式种子。
+采用 Float64/LAPACK，周期链单次稠密 SVD 为 $O(L^3)$；开链保留 `Bidiagonal`
+结构并使用专用 SVD，不通过 $K^TK$ 求谱。联合计算中，开链共享一次 SVD，
+周期链共享两个宇称扇区的 SVD；仅求能隙时仍使用 `svdvals!`。
+
+空间关联按起点提取一次最大子矩阵，通过 Givens 正交旋转逐步扩展 QR，
+每个前缀从三角矩阵对角线得到行列式符号和对数。旋转只混合当前前缀内部的列，
+不会把后面的格点换入较小子矩阵；算法无需除以小主元，允许奇异前缀后出现非奇异前缀。
+一般成本从独立 LU 的 $O(Lr_{max}^4)$ 降为 $O(Lr_{max}^3)$。
+若某个前缀的三角对角元不超过 `sqrt(eps(Float64))*maximum(abs, minor)`，
+则该前缀回退到原始矩阵的带主元 LU，
+保留近奇异情况下的零值和符号诊断；大量回退时仍可能达到原来的复杂度。
+可减少 `rmax`，或只做 gap（`rmax=0` 且 `times` 为空，不计算特征向量）。
+运行脚本和交互调用默认均不保留全部 pair 对数；单独研究逐格点对分布时，
+仍可在函数接口中显式指定 `keep_pairs=true`。
+默认 `full` 的 HDF5 数组数据约 372 MB（355 MiB，51 个时间点），另有少量元数据开销，
+随样本数近似线性增长。运行脚本固定单 BLAS 线程，样本计算使用 Julia 工作线程；
+以 `julia --threads=4 ...` 启用四线程，`--threads=1` 则按单线程执行。
+直接调用函数时建议先执行 `BLAS.set_num_threads(1)`，避免两层并行争抢 CPU。
+随机数在并行循环前顺序生成，额外占用约 $16LN_s$ 字节的构型数组
+（$L=128,N_s=10000$ 时约 20.5 MB，另有少量数组对象开销）；
+每个工作线程独立分配数值计算缓冲区，HDF5 写入仍在计算完成后顺序进行。
 
 周期边界下两个总能量的差在临界大系统会遭受消减，论文 Fig. 1 也指出此截断。
 `resolution=64eps(Float64)*max(abs(E0),abs(E1),1)` 是保守诊断尺度，非严格误差界。
@@ -319,6 +353,17 @@ Histogram 密度须按实际 bin 宽归一化；对 gap 报告删失比例，避
 运行产物中的 `complete` 仅在所有参数完成后置 true；输出路径已存在时请另选文件。
 
 已在 Julia 1.13.0 / local 环境中通过小系统 ED 验证及 HDF5 写入回读验证。
-单 BLAS 线程的 $L=128$ 全起点、$r\le64$ 关联试跑约 0.14 秒/样本
-（编译后，本机测量；不包括文件写入）。这里只实际运行了小批量验证，
+优化后的单 BLAS 线程试跑，$L=128$、周期边界、$r\le64$ 的空间关联约 11 ms/样本，
+41 个时间点的中点自关联约 12 ms/样本（包含自关联所需 SVD）。对应优化前约
+114 ms 和 814 ms；这是固定随机样本、预热后三次计时的中位数，受机器和样本影响。
+空间关联与原版的最大绝对差约 $7\times10^{-15}$，自关联约 $9\times10^{-14}$。
+这里只实际运行了小批量验证，
 未运行 `full` 默认 10000 样本的完整扫描。
+
+可复现的计时脚本（标准库依赖、固定种子、单 BLAS 线程）：
+
+```sh
+julia --startup-file=no random_tfim/test/benchmark.jl
+# 可选：传入另存的旧版源码，同时检查新旧结果并比较计时。
+julia --startup-file=no random_tfim/test/benchmark.jl /path/to/old/RandomTFIM.jl
+```

@@ -50,7 +50,7 @@ function main(args)
 
     sizes = mode == "demo" ? (16, 32) : (16, 32, 64, 128)
     fields = (1.0, 1.3, 1.5, 1.7, 2.0, 2.3, 3.0)
-    times = collect(0.0:0.25:10.0)
+    times = collect(0.0:0.2:10.0)
     BLAS.set_num_threads(1)
     mkpath(dirname(output))
 
@@ -71,14 +71,12 @@ function main(args)
             rmax = L ÷ 2
             seed = 1996 + 1000k + L
             seconds = @elapsed result = disorder_ensemble(L, h0; nsamples, seed,
-                rmax, keep_pairs=true, boundary, times)
+                rmax, boundary, times)
             group = create_group(file, "L$(L)/h$(h0)")
             for name in (:gaps, :resolved, :sample_C, :sample_logC)
                 group[string(name)] = getproperty(result, name)
             end
             # Derived quantities belong to the output/analysis layer.
-            group["r"] = collect(0:rmax)
-            group["pair_counts"] = boundary == :open ? collect(L:-1:L-rmax) : fill(L, rmax+1)
             loggaps = map((gap, ok) -> ok ? log(gap) : NaN,
                 result.gaps, result.resolved)
             group["loggaps"] = loggaps
@@ -96,7 +94,6 @@ function main(args)
             # Transform the log-mean ± one SEM; these are not confidence bounds.
             group["typical_lower"] = exp.(log_spatial.average .- log_spatial.sem)
             group["typical_upper"] = exp.(log_spatial.average .+ log_spatial.sem)
-            group["pair_logC"] = result.pair_logC
             write_autocorrelation(group, result.sample_Ct, times)
             attributes(group)["j"] = L ÷ 2
             attributes(group)["seed"] = seed

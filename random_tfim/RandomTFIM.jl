@@ -15,6 +15,7 @@ end
 function check_chain(J, h, boundary=:periodic)
     check_boundary(boundary)
     L = length(h)
+
     L >= 2 && iseven(L) || throw(ArgumentError("require even L >= 2"))
     length(J) == (boundary == :open ? L-1 : L) ||
         throw(DimensionMismatch("J must have L-1 bonds for :open, L bonds for :periodic"))
@@ -28,21 +29,37 @@ end
 function pfaffian!(A::Matrix{ComplexF64})
     n = size(A, 1)
     value = one(ComplexF64)
-    for k in 1:2:n-1
-        p = k + argmax(abs.(@view A[k, k+1:n]))
+
+    @inbounds for k in 1:2:n-1
+        _, offset = findmax(abs, @view A[k, k+1:n])
+        p = k + offset
         iszero(A[k, p]) && return zero(ComplexF64)
+
         if p != k+1
-            A[[k+1, p], :] = A[[p, k+1], :]
-            A[:, [k+1, p]] = A[:, [p, k+1]]
+            for q in 1:n
+                A[k+1, q], A[p, q] = A[p, q], A[k+1, q]
+            end
+            for q in 1:n
+                A[q, k+1], A[q, p] = A[q, p], A[q, k+1]
+            end
             value = -value
         end
+
         pivot = A[k, k+1]
         value *= pivot
-        for b in k+2:n, a in k+2:b-1
-            A[a, b] -= (A[k, a]*A[k+1, b] - A[k, b]*A[k+1, a]) / pivot
-            A[b, a] = -A[a, b]
+        # Pivoting bounds these ratios by one, even for subnormal pivots.
+        for a in k+2:n
+            A[k, a] /= pivot
+        end
+        for b in k+2:n
+            x, y = A[k, b], A[k+1, b]
+            for a in k+2:b-1
+                A[a, b] -= A[k, a]*y - x*A[k+1, a]
+                A[b, a] = -A[a, b]
+            end
         end
     end
+
     return value
 end
 
@@ -52,9 +69,10 @@ Returns `(C,)`, with C[n] = <sigma_z(j,times[n]) sigma_z(j,0)> (complex).
 This also equals the connected correlation: the finite-chain parity ground
 state has <sigma_z(j)> = 0. Thermal and nonstationary initial states are not supported.
 J has L-1 (:open) or L (:periodic) bonds, h has L fields; require even L >= 2.
-Default j=L/2 is the left midpoint. Open chains use the full JW string;
-periodic chains switch parity sectors and evaluate the Gaussian evolution
-operator by a Pfaffian, retaining its complex phase without square roots.
+Default j=L/2 is the left midpoint. Gaussian evolution is evaluated by an
+L-dimensional determinant, retaining its complex phase without square roots.
+Periodic chains switch fermion parity sectors. Open chains near an endpoint
+use a shorter JW-string Pfaffian instead.
 """
 function autocorrelation(J::AbstractVector{<:Real}, h::AbstractVector{<:Real},
         times::AbstractVector{<:Real}; j::Int=length(h) ÷ 2, boundary::Symbol=:open)
@@ -62,69 +80,113 @@ function autocorrelation(J::AbstractVector{<:Real}, h::AbstractVector{<:Real},
     check_chain(J, h, boundary)
     1 <= j <= L || throw(ArgumentError("require 1 <= j <= L"))
     all(isfinite, times) || throw(ArgumentError("times must be finite"))
-    return autocorrelation(J, h, times, j, Val(boundary))
+    isempty(times) && return (C=ComplexF64[],)
+
+    initial = svd!(fermion_matrix(J, h, Val(boundary)))
+    evolution = boundary == :open ? initial : svd!(fermion_matrix(J, h, 1))
+    return autocorrelation(initial, evolution, times, j, Val(boundary))
 end
 
-# Boundary-specific kernels receive validated inputs from the public method.
-function autocorrelation(J, h, times, j, boundary::Val{:open})
-    L = length(h)
-    # In (all odd, all even) order, A = [0 -2K; 2K' 0]. The SVD of K
-    # diagonalizes this Majorana generator, whose frequencies are ±2F.S.
-    F = svd!(fermion_matrix(J, h, boundary))
-    U, V = F.U, F.V
-    odd, even = 1:2:2L, 2:2:2L
-    Gamma = zeros(2L, 2L)
-    Gamma[odd, even] = U * V'
-    Gamma[even, odd] = -transpose(Gamma[odd, even])
-    contractions = I - 1im * Gamma
+# At the right endpoint, reflecting the chain makes the JW string short too.
+function autocorrelation(initial, evolution, times, j, ::Val{:open})
+    L = length(initial.S)
+    depth = min(j, L+1-j)
+
+    # Keep the scalar Pfaffian path only for genuinely short strings.
+    if 4depth-2 <= L ÷ 4
+        return string_autocorrelation(initial, times, depth, j > L ÷ 2)
+    end
+    return determinant_autocorrelation(initial, evolution, times, j)
+end
+
+autocorrelation(initial, evolution, times, j, ::Val{:periodic}) =
+    determinant_autocorrelation(initial, evolution, times, j)
+
+function string_autocorrelation(F, times, j, reflected)
+    L = length(F.S)
     N = 2j-1
-    S = 1:N
-    equal_time = -1im * Gamma[S, S]
-    R = zeros(2L, 2L)
+    U, V = F.U, F.V
+    M = Matrix{ComplexF64}(undef, N, L)
+
+    # K of the reflected chain is reverse(K', dims=(1,2)), so U and V swap.
+    @inbounds for mu in 1:L
+        for a in 1:j
+            M[2a-1, mu] = reflected ? V[L+1-a, mu] : U[a, mu]
+        end
+        for a in 1:j-1
+            M[2a, mu] = 1im * (reflected ? U[L+1-a, mu] : V[a, mu])
+        end
+    end
+
+    equal_time = M * M'
+    # Same-sublattice contractions vanish exactly; avoid SVD roundoff there.
+    for b in 1:N, a in 1:N
+        iseven(a-b) && (equal_time[a, b] = 0)
+    end
+
+    phased = similar(M)
+    Q = Matrix{ComplexF64}(undef, N, N)
+    W = Matrix{ComplexF64}(undef, 2N, 2N)
     C = Vector{ComplexF64}(undef, length(times))
+
     for (n, t) in enumerate(times)
-        angles = 2 .* F.S .* t
-        all(isfinite, angles) || throw(ArgumentError("time-frequency product overflows Float64"))
-        c, s = Diagonal(cos.(angles)), Diagonal(sin.(angles))
-        R[odd, odd] = U * c * U'
-        R[odd, even] = -U * s * V'
-        R[even, odd] = V * s * U'
-        R[even, even] = V * c * V'
-        # Multiply over ALL Majorana modes before restricting both endpoints.
-        Q = R[S, :] * contractions[:, S]
-        W = [equal_time Q; -transpose(Q) equal_time]
+        for mu in 1:L
+            angle = 2 * F.S[mu] * t
+            isfinite(angle) || throw(ArgumentError("time-frequency product overflows Float64"))
+            phase = cis(-angle)
+            @inbounds for a in 1:N
+                phased[a, mu] = M[a, mu] * phase
+            end
+        end
+
+        mul!(Q, phased, M')
+        @inbounds for b in 1:N, a in 1:N
+            W[a, b] = W[N+a, N+b] = equal_time[a, b]
+            W[a, N+b] = Q[a, b]
+            W[N+b, a] = -Q[a, b]
+        end
         C[n] = (-1)^(j-1) * pfaffian!(W)
     end
+
     return (; C)
 end
 
-# After cyclic relabeling sigma_z(j)=gamma_1. The state gamma_1|GS,+>
-# is Gaussian with odd parity and evolves under the periodic fermion Hamiltonian.
-function autocorrelation(J, h, times, j, boundary::Val{:periodic})
-    L = length(h)
-    order = mod1.(j:j+L-1, L)
-    bonds, fields = J[order], h[order]
-    initial = svd!(fermion_matrix(bonds, fields, boundary))
-    evolution = svd!(fermion_matrix(bonds, fields, 1))
+# sigma_z(j) is a product of the first 2j-1 Majoranas. Conjugation changes
+# the odd/even covariance to D_odd * Gamma_oe * D_even. Its state is Gaussian
+# with odd parity; no cyclic relabeling or extra SVD is needed.
+function determinant_autocorrelation(initial, evolution, times, j)
+    L = length(initial.S)
     Gamma_oe = initial.U * initial.V'
-    Gamma_oe[1, :] .*= -1 # conjugation by gamma_1
+    @views Gamma_oe[1:j, :] .*= -1
+    @views Gamma_oe[:, 1:j-1] .*= -1
     B = evolution.U' * Gamma_oe * evolution.V
-    odd, even = 1:2:2L, 2:2:2L
+
+    block = Matrix{ComplexF64}(undef, L, L)
+    sines, cosines = zeros(L), zeros(L)
     C = Vector{ComplexF64}(undef, length(times))
     E0 = -sum(initial.S)
+
     for (n, t) in enumerate(times)
-        angles = evolution.S .* t
-        all(isfinite, angles) && isfinite(E0*t) ||
-            throw(ArgumentError("time-energy product overflows Float64"))
+        isfinite(E0*t) || throw(ArgumentError("time-energy product overflows Float64"))
+        for a in 1:L
+            angle = evolution.S[a] * t
+            isfinite(angle) || throw(ArgumentError("time-frequency product overflows Float64"))
+            sines[a], cosines[a] = sincos(angle)
+        end
+
         # exp(-i H_- t) = product_mu (cos(eps_mu*t) - sin(eps_mu*t)*alpha_mu*beta_mu).
-        # Wick expansion: Pf(D_cos + T*(-i Gamma_modes)*T^T),
-        # T_(alpha, beta)=(-sin, 1). Here Gamma_modes has only odd/even blocks.
-        block = Diagonal(cos.(angles)) + 1im * Diagonal(sin.(angles)) * B
-        W = zeros(ComplexF64, 2L, 2L)
-        W[odd, even] = block
-        W[even, odd] = -transpose(block)
-        C[n] = cis(E0*t) * pfaffian!(W)
+        # Only odd/even blocks occur. In interleaved order Pf(W)=det(block),
+        # with no sign factor and no square-root phase ambiguity.
+        @inbounds for b in 1:L, a in 1:L
+            block[a, b] = 1im * sines[a] * B[a, b]
+        end
+        @inbounds for a in 1:L
+            block[a, a] += cosines[a]
+        end
+        logabs, phase = logabsdet(lu!(block; check=false))
+        C[n] = cis(E0*t) * phase * exp(logabs)
     end
+
     return (; C)
 end
 
@@ -156,7 +218,7 @@ end
 
 # Ground-state fermion sector for each spin boundary; the integer method also
 # supports the opposite (periodic fermion) sector needed by spin dynamics/gaps.
-fermion_matrix(J, h, ::Val{:open}) = fermion_matrix(J, h, 0)
+fermion_matrix(J, h, ::Val{:open}) = Bidiagonal(Float64.(h), -Float64.(J), :L)
 fermion_matrix(J, h, ::Val{:periodic}) = fermion_matrix(J, h, -1)
 
 function gap_result(gap, energy_scale)
@@ -169,7 +231,10 @@ gap_result(J, h, epsilon, ::Val{:open}) = gap_result(2minimum(epsilon), sum(epsi
 
 function gap_result(J, h, epsilon_ap, ::Val{:periodic})
     epsilon_p = svdvals!(fermion_matrix(J, h, 1))
+    return gap_result(J, h, epsilon_ap, epsilon_p)
+end
 
+function gap_result(J, h, epsilon_ap, epsilon_p::AbstractVector)
     # For even L, det(G_p) has sign prod(h)-prod(J). Logs avoid overflow.
     # At equality a zero mode makes either occupancy have the same energy.
     vacuum_even = sum(log, h) >= sum(log, J)
@@ -218,8 +283,9 @@ boundary=:periodic (default) allows rmax<=L/2; :open allows rmax<=L-1.
 For :open, only origins 1:L-r exist; other entries are NaN, not wrapped pairs.
 Rows label origins, columns label distance r+1. AP fermions acquire a minus
 sign on crossing the seam, while the spin correlations remain periodic.
-Use logabsdet to avoid determinant underflow; a nonpositive determinant is
-flagged by NaN in logC (zero gives -Inf). Signed C is retained for diagnosis.
+Use incremental orthogonal QR updates and log determinants to evaluate all
+distances per origin in O(rmax^3). Near-singular prefixes use pivoted LU.
+Negative determinants give NaN in logC; zero gives -Inf. Signed C is retained.
 """
 function correlations(G::AbstractMatrix{Float64}; boundary::Symbol=:periodic,
         rmax::Int=size(G, 1) ÷ 2)
@@ -227,26 +293,81 @@ function correlations(G::AbstractMatrix{Float64}; boundary::Symbol=:periodic,
     L = size(G, 1)
     size(G, 2) == L || throw(DimensionMismatch("G must be square"))
     0 <= rmax <= (boundary == :open ? L-1 : L ÷ 2) || throw(ArgumentError("invalid rmax for boundary"))
-    C, logC = ones(L, rmax+1), zeros(L, rmax+1)
 
-    for r in 1:rmax
-        minor = Matrix{Float64}(undef, r, r)
-        for i in 1:L
-            if boundary == :open && i+r > L
-                C[i, r+1] = logC[i, r+1] = NaN
-                continue
-            end
-            for b in 1:r, a in 1:r
-                row, col = i+a-1, i+b
-                seam = xor(row > L, col > L) ? -1.0 : 1.0
-                minor[a, b] = seam * G[mod1(row, L), mod1(col, L)]
-            end
-            logabs, sign = logabsdet(lu!(minor; check=false))
-            C[i, r+1] = sign * exp(logabs)
-            logC[i, r+1] = sign > 0 ? logabs : sign == 0 ? -Inf : NaN
+    C, logC = ones(L, rmax+1), zeros(L, rmax+1)
+    rmax == 0 && return (; C, logC)
+
+    minor = Matrix{Float64}(undef, rmax, rmax)
+    work = similar(minor)
+    luwork = similar(minor)
+
+    for i in 1:L
+        count = boundary == :open ? min(rmax, L-i) : rmax
+        for r in count+1:rmax
+            C[i, r+1] = logC[i, r+1] = NaN
         end
+        count == 0 && continue
+
+        # Store the transpose. Only periodic pairs crossing the seam need signs.
+        if i+count <= L
+            @inbounds for b in 1:count, a in 1:count
+                minor[a, b] = G[i+b-1, i+a]
+            end
+        else
+            @inbounds for b in 1:count, a in 1:count
+                row, col = i+b-1, i+a
+                seam = xor(row > L, col > L) ? -1.0 : 1.0
+                minor[a, b] = seam * G[row > L ? row-L : row, col > L ? col-L : col]
+            end
+        end
+
+        copyto!(work, minor)
+        leading_correlations!(C, logC, i, minor, work, luwork, count)
     end
+
     return (; C, logC)
+end
+
+# Store the transpose so rotations touch contiguous columns. At step r,
+# rotations only mix columns 1:r and have determinant +1; thus the product
+# of the first r diagonals is the original r-th leading principal minor.
+# Unlike a Schur-complement update this also survives a singular earlier prefix.
+function leading_correlations!(C, logC, i, original, A, luwork, n)
+    tolerance = sqrt(eps(Float64)) * maximum(abs, @view original[1:n, 1:n])
+
+    @inbounds for r in 1:n
+        for k in 1:r-1
+            iszero(A[k, r]) && continue
+            rotation, diagonal = givens(A[k, k], A[k, r], k, r)
+            A[k, k], A[k, r] = diagonal, 0.0
+            for b in k+1:n
+                x, y = A[b, k], A[b, r]
+                A[b, k] = rotation.c*x + rotation.s*y
+                A[b, r] = -rotation.s*x + rotation.c*y
+            end
+        end
+
+        logabs, phase, small = 0.0, 1.0, false
+        for k in 1:r
+            diagonal = A[k, k]
+            logabs += log(abs(diagonal))
+            phase *= sign(diagonal)
+            small |= abs(diagonal) <= tolerance
+        end
+
+        if small
+            # Retain the original pivoted-LU diagnosis near rank loss; never
+            # propagate a tiny-pivot division into subsequent distances.
+            prefix = @view luwork[1:r, 1:r]
+            copyto!(prefix, transpose(@view original[1:r, 1:r]))
+            logabs, phase = logabsdet(lu!(prefix; check=false))
+        end
+
+        C[i, r+1] = phase * exp(logabs)
+        logC[i, r+1] = phase > 0 ? logabs : phase == 0 ? -Inf : NaN
+    end
+
+    return nothing
 end
 
 """Seeded disorder ensemble; columns of per-sample means label realizations.
@@ -254,6 +375,9 @@ end
 Returns `(gaps, resolved, sample_C, sample_logC, pair_logC, sample_Ct)`.
 Each realization is drawn once; gaps, spatial pairs and time correlations
 are evaluated in the same sample loop. sample_Ct[time, realization] is complex.
+Realizations are drawn serially, then evaluated with Threads.@threads;
+the seed and sample order are independent of the number of Julia threads.
+Use julia --threads=N and a single BLAS thread for parallel sample evaluation.
 Set times to a real-time grid to compute dynamics at j (default L/2).
 Empty times (default) skips dynamics; rmax=0 skips nontrivial spatial pairs.
 Use both for gap-only runs. `pair_logC` is empty unless keep_pairs=true.
@@ -270,31 +394,55 @@ function disorder_ensemble(L::Int, h0::Real; nsamples::Int=100, seed::Int=1996,
     1 <= j <= L || throw(ArgumentError("require 1 <= j <= L"))
     all(isfinite, times) || throw(ArgumentError("times must be finite"))
     0 <= rmax <= (boundary == :open ? L-1 : L ÷ 2) || throw(ArgumentError("invalid rmax"))
+
+    bc = Val(boundary)
+    dynamics = !isempty(times)
     rng = Xoshiro(seed)
+    # Preserve the serial RNG stream; worker threads never share a mutable RNG.
+    samples = [sample_disorder(rng, L, h0; boundary) for _ in 1:nsamples]
+
     gaps = zeros(nsamples)
     resolved = fill(false, nsamples)
     sample_C, sample_logC = zeros(rmax+1, nsamples), zeros(rmax+1, nsamples)
     sample_Ct = Matrix{ComplexF64}(undef, length(times), nsamples)
     pair_logC = Array{Float64}(undef, keep_pairs ? (L, rmax+1, nsamples) : (0, 0, 0))
 
-    for n in 1:nsamples
-        J, h = sample_disorder(rng, L, h0; boundary)
-        if rmax == 0
+    # Equal-site spatial correlations are known without a factorization.
+    sample_C[1, :] .= 1.0
+    keep_pairs && (pair_logC[:, 1, :] .= 0.0)
+
+    # Each iteration owns its workspaces and writes only sample n's output.
+    Threads.@threads for n in 1:nsamples
+        J, h = samples[n]
+        if rmax == 0 && !dynamics
             result = energy_gap(J, h; boundary)
-            sample_C[1, n] = 1.0
-            keep_pairs && (pair_logC[:, :, n] .= 0.0)
+            gaps[n], resolved[n] = result.gap, result.resolved
+            continue
+        end
+
+        # Share the SVDs across the gap, spatial correlations and dynamics.
+        initial = svd!(fermion_matrix(J, h, bc))
+        if boundary == :periodic && dynamics
+            evolution = svd!(fermion_matrix(J, h, 1))
+            result = gap_result(J, h, initial.S, evolution.S)
         else
-            result = ground_state(J, h; boundary)
-            pair = correlations(result.G; rmax, boundary)
-            for r in 0:rmax
+            evolution = initial
+            result = gap_result(J, h, initial.S, bc)
+        end
+        gaps[n], resolved[n] = result.gap, result.resolved
+
+        if rmax > 0
+            G = -(initial.V * initial.U')
+            pair = correlations(G; rmax, boundary)
+            for r in 1:rmax
                 origins = 1:(boundary == :open ? L-r : L)
                 sample_C[r+1, n] = mean(@view pair.C[origins, r+1])
                 sample_logC[r+1, n] = mean(@view pair.logC[origins, r+1])
             end
             keep_pairs && (pair_logC[:, :, n] = pair.logC)
         end
-        gaps[n], resolved[n] = result.gap, result.resolved
-        isempty(times) || (sample_Ct[:, n] = autocorrelation(J, h, times; j, boundary).C)
+
+        dynamics && (sample_Ct[:, n] = autocorrelation(initial, evolution, times, j, bc).C)
     end
 
     return (; gaps, resolved, sample_C, sample_logC, pair_logC, sample_Ct)

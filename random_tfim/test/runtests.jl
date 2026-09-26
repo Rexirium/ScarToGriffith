@@ -23,6 +23,94 @@ function spin_oracle(J, h; periodic=true)
     return (; E0=F.values[1], E1=F.values[2], C, energies=F.values, vectors=F.vectors)
 end
 
+@testset "Optimized kernels: phases, singular prefixes and short strings" begin
+    rng = Xoshiro(3209)
+    # Independent Pfaffian oracle: expansion along the first row.
+    function pfaffian_expansion(A)
+        n = size(A, 1)
+        n == 0 && return 1.0 + 0im
+        return sum(2:n) do j
+            keep = [k for k in 2:n if k != j]
+            (-1)^j * A[1, j] * pfaffian_expansion(A[keep, keep])
+        end
+    end
+    for n in (2, 4, 6, 8)
+        X = randn(rng, ComplexF64, n, n)
+        A = X - transpose(X)
+        @test RandomTFIM.pfaffian!(copy(A)) ≈ pfaffian_expansion(A) rtol=1e-12
+        D = randn(rng, ComplexF64, n, n)
+        W = zeros(ComplexF64, 2n, 2n)
+        W[1:2:2n, 2:2:2n] = D
+        W[2:2:2n, 1:2:2n] = -transpose(D)
+        @test RandomTFIM.pfaffian!(W) ≈ det(D) rtol=1e-12
+    end
+    tiny = zeros(ComplexF64, 4, 4)
+    tiny[1, 2], tiny[2, 1] = 1e-310, -1e-310
+    tiny[3, 4], tiny[4, 3] = 1e300, -1e300
+    @test RandomTFIM.pfaffian!(tiny) ≈ 1e-10 rtol=1e-12
+
+    # Test all prefixes against fresh pivoted LU, including a singular first
+    # prefix followed by a nonsingular second one, and determinant underflow.
+    singular_prefix = zeros(8, 8)
+    singular_prefix[1, 3] = singular_prefix[2, 2] = 1
+    small = zeros(32, 32)
+    for i in 1:31
+        small[i, i+1] = 1e-20
+    end
+    for G in (randn(rng, 16, 16), singular_prefix, small), boundary in (:open, :periodic)
+        L = size(G, 1)
+        rmax = boundary == :open ? L-1 : L÷2
+        saved = copy(G)
+        actual = correlations(G; boundary, rmax)
+        @test G == saved
+        for i in 1:L, r in 1:rmax
+            if boundary == :open && i+r > L
+                @test isnan(actual.C[i, r+1]) && isnan(actual.logC[i, r+1])
+                continue
+            end
+            A = [((xor(i+a-1 > L, i+b > L)) ? -1 : 1) *
+                G[mod1(i+a-1, L), mod1(i+b, L)] for a in 1:r, b in 1:r]
+            logabs, phase = logabsdet(A)
+            @test actual.C[i, r+1] ≈ phase * exp(logabs) rtol=1e-10 atol=1e-12
+            expected_log = phase > 0 ? logabs : phase == 0 ? -Inf : NaN
+            @test isequal(actual.logC[i, r+1], expected_log) ||
+                isapprox(actual.logC[i, r+1], expected_log; atol=1e-10)
+        end
+    end
+    @test correlations(small; boundary=:open, rmax=31).logC[1, end] ≈ 31log(1e-20)
+
+    # Long, strongly disordered chains exercise the near-singular LU fallback.
+    for h0 in (1.5, 10.0), boundary in (:open, :periodic)
+        J, h = sample_disorder(rng, 128, h0; boundary)
+        G = ground_state(J, h; boundary).G
+        pair = correlations(G; boundary)
+        for i in (1, 33, 64), r in (16, 32, 64)
+            logabs, phase = logabsdet(G[i:i+r-1, i+1:i+r])
+            expected = phase > 0 ? logabs : phase == 0 ? -Inf : NaN
+            @test isequal(pair.logC[i, r+1], expected) ||
+                isapprox(pair.logC[i, r+1], expected; atol=1e-10)
+        end
+    end
+
+    times = [13.2, 0.0, -0.7, 13.2]
+    for h0 in (0.4, 1.0, 3.0)
+        J, h = sample_disorder(rng, 32, h0; boundary=:open)
+        Jcopy, hcopy = copy(J), copy(h)
+        F = svd!(RandomTFIM.fermion_matrix(J, h, Val(:open)))
+        for j in (1, 2, 3, 8, 16, 25, 30, 31, 32)
+            actual = autocorrelation(J, h, times; j).C
+            # The determinant and JW-string algorithms contract different
+            # matrices, including reflection at the right end of the chain.
+            reference = RandomTFIM.string_autocorrelation(F, times, j, false).C
+            @test actual ≈ reference atol=2e-10
+            @test actual[2] ≈ 1 atol=1e-11
+        end
+        @test J == Jcopy && h == hcopy
+    end
+    @test_throws ArgumentError autocorrelation(ones(7), ones(8), [floatmax(Float64)])
+    @test_throws ArgumentError autocorrelation(ones(8), ones(8), [floatmax(Float64)]; boundary=:periodic)
+end
+
 @testset "Both boundaries: Majorana/Pfaffian dynamics vs spin ED" begin
     rng = Xoshiro(942)
     times = [0.0, 0.13, 0.8, 3.1, -0.8, 12.0]
@@ -131,11 +219,12 @@ end
 
 @testset "Unified ensemble uses the same realization for all observables" begin
     times = [0.0, 0.3, -0.7]
+    nsamples = 17 # More samples than test threads; check serial RNG ordering.
     for boundary in (:open, :periodic)
         result = @inferred disorder_ensemble(6, 1.0; times, boundary,
-            nsamples=3, seed=83, j=4, rmax=2, keep_pairs=true)
+            nsamples, seed=83, j=4, rmax=2, keep_pairs=true)
         rng = Xoshiro(83)
-        for n in 1:3
+        for n in 1:nsamples
             J, h = sample_disorder(rng, 6, 1.0; boundary)
             state = ground_state(J, h; boundary)
             pair = correlations(state.G; boundary, rmax=2)
@@ -149,12 +238,22 @@ end
             end
             @test result.sample_Ct[:, n] ≈ autocorrelation(J, h, times; boundary, j=4).C
         end
-        without_space = disorder_ensemble(6, 1.0; times, boundary, nsamples=3, seed=83, j=4, rmax=0)
+        without_space = disorder_ensemble(6, 1.0; times, boundary, nsamples, seed=83, j=4, rmax=0)
         @test without_space.gaps ≈ result.gaps
         @test without_space.sample_Ct ≈ result.sample_Ct
-        without_time = disorder_ensemble(6, 1.0; boundary, nsamples=3, seed=83, rmax=2)
+        without_time = disorder_ensemble(6, 1.0; boundary, nsamples, seed=83, rmax=2)
         @test without_time.sample_C ≈ result.sample_C
-        @test size(without_time.sample_Ct) == (0, 3)
+        @test size(without_time.sample_Ct) == (0, nsamples)
+
+        # Gap-only results also retain serial order, including resolution flags.
+        gap_only = disorder_ensemble(32, 0.4; boundary, nsamples=129, seed=84, rmax=0)
+        rng = Xoshiro(84)
+        for n in 1:129
+            J, h = sample_disorder(rng, 32, 0.4; boundary)
+            expected = energy_gap(J, h; boundary)
+            @test gap_only.gaps[n] == expected.gap
+            @test gap_only.resolved[n] == expected.resolved
+        end
     end
     @test_throws ArgumentError disorder_ensemble(6, 1.0; times=[NaN])
     @test_throws ArgumentError disorder_ensemble(6, 1.0; times, j=0)
