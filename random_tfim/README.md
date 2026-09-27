@@ -1,5 +1,28 @@
 # Random transverse-field Ising chain
 
+## 绘制已有数据
+
+使用共享 Julia `@v1.13` 环境中的 CairoMakie 与 HDF5：
+
+```sh
+julia --project=@v1.13 random_tfim/plot_results.jl
+# 可选：指定输入文件和输出目录
+julia --project=@v1.13 random_tfim/plot_results.jl random_tfim/results/full_sample1000.h5 random_tfim/results/figures
+```
+
+默认读取 `results/full_sample1000.h5`，在 `results/figures/` 输出三组 PNG / PDF：
+`gap_distribution`、`average_correlation`、`log_correlation_sqrt_r`。
+每组按 h0 分面，显示全部链长，对应论文图 1/3、8、9 的观测量。
+关联函数的阴影为独立无序样本间的 ±1 SEM；对数关联先取对数再平均。
+能隙按自然对数分箱，箱宽为 1，概率密度以全部样本数归一化，未分辨能隙的概率质量不重新分配。
+对数关联中任何样本非有限的距离均不作图，提前截断的末端标 ×，不对剩余样本重新求平均。
+`plot_audit.md` 记录每组无效值数量、有效距离及所用环境。脚本仅读取已有数据，不重新采样。
+
+`run.jl` 将参数数组保存到 `parameters/sizes` 和 `parameters/fields`。
+各 `L…/h…` 结果组保留 `j`、`seed`、`seconds` 属性，不再重复保存
+`L`、`h0`、`nsamples`、`unresolved_gaps`；后两者可从样本数组列数及 `resolved` 推导。
+绘图脚本按参数数组读取结果，同时兼容没有 `parameters` 组的旧文件。
+
 ## 边界条件选择
 
 能隙、空间关联、自关联和无序采样均支持 `boundary=:open` 或 `:periodic`。

@@ -49,8 +49,8 @@ function main(args)
     nsamples > 0 || throw(ArgumentError("samples must be positive"))
 
     sizes = mode == "demo" ? (16, 32) : (16, 32, 64, 128)
-    fields = (1.0, 1.3, 1.5, 1.7, 2.0, 2.3, 3.0)
-    times = collect(0.0:0.2:10.0)
+    fields = 10 .^ range(-1, 1, 101)
+    times = collect(0.0:0.1:20.0)
     BLAS.set_num_threads(1)
     mkpath(dirname(output))
 
@@ -66,6 +66,10 @@ function main(args)
         attributes(file)["uncertainty"] = "SEM across independent disorder samples; corrected sample variance; NaN for one sample"
         attributes(file)["blas"] = string(BLAS.get_config())
         attributes(file)["blas_threads"] = BLAS.get_num_threads()
+
+        parameters = create_group(file, "parameters")
+        parameters["sizes"] = collect(sizes)
+        parameters["fields"] = collect(fields)
 
         for (k, h0) in enumerate(fields), L in sizes
             rmax = L ÷ 2
@@ -97,11 +101,7 @@ function main(args)
             write_autocorrelation(group, result.sample_Ct, times)
             attributes(group)["j"] = L ÷ 2
             attributes(group)["seed"] = seed
-            attributes(group)["L"] = L
-            attributes(group)["h0"] = h0
-            attributes(group)["nsamples"] = nsamples
             attributes(group)["seconds"] = seconds
-            attributes(group)["unresolved_gaps"] = count(!, result.resolved)
             println("L=$L h0=$h0 samples=$nsamples time=$(round(seconds; digits=3))s",
                 " unresolved=$(count(!, result.resolved))")
             flush(file)

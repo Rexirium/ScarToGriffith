@@ -11,11 +11,17 @@ include(joinpath(@__DIR__, "..", "run.jl"))
                 @test read(attributes(file)["mode"]) == mode
                 @test startswith(read(attributes(file)["boundary"]), string(boundary))
                 sizes = mode == "demo" ? (16, 32) : (16, 32, 64, 128)
-                @test Set(keys(file)) == Set("L$L" for L in sizes)
+                fields = [1.0, 1.3, 1.5, 1.7, 2.0, 2.3, 3.0]
+                @test Set(keys(file)) == Set(["parameters"; ["L$L" for L in sizes]])
+                @test read(file["parameters/sizes"]) == collect(sizes)
+                @test read(file["parameters/fields"]) == fields
                 for L in sizes
                     @test Set(keys(file["L$L"])) == Set("h$h" for h in (1.0, 1.3, 1.5, 1.7, 2.0, 2.3, 3.0))
                     for h in keys(file["L$L"]), name in ("pair_logC", "r", "pair_counts")
                         @test !haskey(file["L$L/$h"], name)
+                    end
+                    for h in keys(file["L$L"]), name in ("L", "h0", "nsamples", "unresolved_gaps")
+                        @test !haskey(attributes(file["L$L/$h"]), name)
                     end
                 end
                 group = file["L16/h1.0"]
