@@ -23,7 +23,7 @@ function spin_oracle(J, h; periodic=true)
     return (; E0=F.values[1], E1=F.values[2], C, energies=F.values, vectors=F.vectors)
 end
 
-@testset "Optimized kernels: phases, singular prefixes and short strings" begin
+@testset "Optimized kernels: decay, singular prefixes and short strings" begin
     rng = Xoshiro(3209)
     # Independent Pfaffian oracle: expansion along the first row.
     function pfaffian_expansion(A)
@@ -92,13 +92,14 @@ end
         end
     end
 
-    times = [13.2, 0.0, -0.7, 13.2]
+    times = [13.2, 0.0, 0.7, 13.2]
     for h0 in (0.4, 1.0, 3.0)
         J, h = sample_disorder(rng, 32, h0; boundary=:open)
         Jcopy, hcopy = copy(J), copy(h)
         F = svd!(RandomTFIM.fermion_matrix(J, h, Val(:open)))
         for j in (1, 2, 3, 8, 16, 25, 30, 31, 32)
             actual = autocorrelation(J, h, times; j).C
+            @test actual isa Vector{Float64}
             # The determinant and JW-string algorithms contract different
             # matrices, including reflection at the right end of the chain.
             reference = RandomTFIM.string_autocorrelation(F, times, j, false).C
@@ -113,7 +114,7 @@ end
 
 @testset "Both boundaries: Majorana/Pfaffian dynamics vs spin ED" begin
     rng = Xoshiro(942)
-    times = [0.0, 0.13, 0.8, 3.1, -0.8, 12.0]
+    times = [0.0, 0.13, 0.8, 3.1, 12.0, 40.0]
     for boundary in (:open, :periodic), L in (2, 4, 6), h0 in (0.4, 1.0, 3.0), random in (false, true)
         J, h = random ? sample_disorder(rng, L, h0) : (ones(L), fill(h0, L))
         bonds = boundary == :open ? J[1:end-1] : J
@@ -123,33 +124,53 @@ end
             magnetization = sum(z .* abs2.(exact.vectors[:, 1]))
             @test abs(magnetization) < 1e-10
             weights = abs2.(exact.vectors' * (z .* exact.vectors[:, 1]))
-            expected = [sum(weights .* exp.(-1im .* (exact.energies .- exact.E0) .* t)) for t in times]
+            expected = [sum(weights .* exp.(-(exact.energies .- exact.E0) .* t)) for t in times]
             actual = @inferred autocorrelation(bonds, h, times; j, boundary)
             @test actual.C ≈ expected .- magnetization^2 atol=2e-10
             @test actual.C[1] ≈ 1 atol=1e-12
-            @test actual.C[5] ≈ conj(actual.C[3]) atol=1e-12
-            @test all(abs.(actual.C) .<= 1+1e-12)
+            @test actual.C isa Vector{Float64}
+            @test all(-1e-12 .<= actual.C .<= 1+1e-12)
+            @test all(diff(actual.C) .<= 1e-12)
+            # Relative accuracy is only asserted above the roundoff floor.
+            resolved = expected .> 1e-8
+            @test all(isapprox.(actual.C[resolved], expected[resolved]; rtol=1e-6, atol=0))
         end
     end
     h = collect(0.5:0.5:3.0)
     for j in 1:6
-        @test autocorrelation(zeros(5), h, times; j).C ≈ exp.(-2im .* h[j] .* times) atol=1e-12
+        @test autocorrelation(zeros(5), h, times; j).C ≈ exp.(-2 .* h[j] .* times) rtol=1e-12 atol=0
     end
     a = @inferred disorder_ensemble(6, 1.0; times, nsamples=3, boundary=:open)
     b = disorder_ensemble(6, 1.0; times, nsamples=3, boundary=:open)
     @test a.sample_C == b.sample_C
     @test a.sample_Ct == b.sample_Ct
     @test size(a.sample_Ct) == (length(times), 3)
-    @test isempty(autocorrelation(ones(3), ones(4), Float64[]).C)
+    empty_C = @inferred autocorrelation(ones(3), ones(4), Float64[])
+    @test empty_C.C isa Vector{Float64}
+    @test isempty(empty_C.C)
     @test_throws DimensionMismatch autocorrelation(ones(4), ones(4), times)
     @test_throws ArgumentError autocorrelation(ones(3), ones(4), times; j=0)
     @test_throws ArgumentError autocorrelation(ones(3), ones(4), [NaN])
+    @test_throws ArgumentError autocorrelation(ones(3), ones(4), [-0.1])
+    @test_throws ArgumentError autocorrelation(ones(3), ones(4), [Inf])
     @test_throws ArgumentError autocorrelation(ones(3), zeros(4), times)
     @test_throws ArgumentError disorder_ensemble(4, 1.0; times, nsamples=0)
     @test RandomTFIM.pfaffian!(zeros(ComplexF64, 4, 4)) == 0
     # Requires a pivot swap; Pf(A)=a12*a34-a13*a24+a14*a23=-6.
     A = ComplexF64[0 0 2 0; 0 0 0 3; -2 0 0 0; 0 -3 0 0]
     @test RandomTFIM.pfaffian!(A) == -6
+end
+
+@testset "Imaginary-time tails: decoupled spins without cancellation" begin
+    # L=8,j=1 exercises the short-string branch; j=4 uses the determinant.
+    # Pointwise relative checks detect loss of tiny tails hidden by array norms.
+    times = [20.0, 100.0, 400.0]
+    for boundary in (:open, :periodic), j in (1, 4)
+        J = zeros(boundary == :open ? 7 : 8)
+        actual = autocorrelation(J, ones(8), times; boundary, j).C
+        @test all(isapprox.(actual, exp.(-2 .* times); rtol=1e-12, atol=0))
+        @test all(isfinite, actual)
+    end
 end
 
 @testset "Free fermions vs spin ED" begin
@@ -190,7 +211,7 @@ end
         # Cutting the periodic seam must recover OBC, including time evolution.
         periodic_J = vcat(J, 0.0)
         @test energy_gap(periodic_J, h).gap ≈ state.gap atol=1e-11
-        times = [17.3, 0.0, -2.1, 17.3, 0.14]
+        times = [17.3, 0.0, 2.1, 17.3, 0.14]
         @test autocorrelation(periodic_J, h, times; boundary=:periodic).C ≈
             autocorrelation(J, h, times; boundary=:open).C atol=2e-10
     end
@@ -199,7 +220,7 @@ end
         b = disorder_ensemble(6, 1.0; times=[0.0, 0.3], nsamples=2, boundary)
         @test a.sample_C == b.sample_C
         @test a.sample_Ct == b.sample_Ct
-        @test autocorrelation(zeros(boundary == :open ? 5 : 6), ones(6), [0.0, 1.2]; boundary).C ≈ exp.(-2im .* [0.0, 1.2])
+        @test autocorrelation(zeros(boundary == :open ? 5 : 6), ones(6), [0.0, 1.2]; boundary).C ≈ exp.(-2 .* [0.0, 1.2])
     end
     a = disorder_ensemble(6, 1.0; nsamples=3, boundary=:open, rmax=5, keep_pairs=true)
     for r in 0:5
@@ -218,11 +239,12 @@ end
 end
 
 @testset "Unified ensemble uses the same realization for all observables" begin
-    times = [0.0, 0.3, -0.7]
+    times = [0.0, 0.3, 0.7]
     nsamples = 17 # More samples than test threads; check serial RNG ordering.
     for boundary in (:open, :periodic)
         result = @inferred disorder_ensemble(6, 1.0; times, boundary,
             nsamples, seed=83, j=4, rmax=2, keep_pairs=true)
+        @test result.sample_Ct isa Matrix{Float64}
         rng = Xoshiro(83)
         for n in 1:nsamples
             J, h = sample_disorder(rng, 6, 1.0; boundary)
@@ -244,6 +266,7 @@ end
         without_time = disorder_ensemble(6, 1.0; boundary, nsamples, seed=83, rmax=2)
         @test without_time.sample_C ≈ result.sample_C
         @test size(without_time.sample_Ct) == (0, nsamples)
+        @test without_time.sample_Ct isa Matrix{Float64}
 
         # Gap-only results also retain serial order, including resolution flags.
         gap_only = disorder_ensemble(32, 0.4; boundary, nsamples=129, seed=84, rmax=0)
@@ -256,6 +279,8 @@ end
         end
     end
     @test_throws ArgumentError disorder_ensemble(6, 1.0; times=[NaN])
+    @test_throws ArgumentError disorder_ensemble(6, 1.0; times=[-0.1])
+    @test_throws ArgumentError disorder_ensemble(6, 1.0; times=[Inf])
     @test_throws ArgumentError disorder_ensemble(6, 1.0; times, j=0)
 end
 

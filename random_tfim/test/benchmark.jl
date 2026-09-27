@@ -1,4 +1,5 @@
 # Optional argument: path to a saved, pre-optimization RandomTFIM.jl.
+# The reference must implement the same imaginary-time observable (not real time).
 # No new dependencies; run from any directory after the correctness tests.
 using LinearAlgebra, Random, Statistics
 include(joinpath(@__DIR__, "..", "RandomTFIM.jl"))

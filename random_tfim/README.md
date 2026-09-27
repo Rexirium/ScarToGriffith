@@ -10,7 +10,7 @@ julia --project=@v1.13 random_tfim/plot_results.jl
 julia --project=@v1.13 random_tfim/plot_results.jl random_tfim/results/full_sample1000.h5 random_tfim/results/figures
 ```
 
-默认读取 `results/full_sample1000.h5`，在 `results/figures/` 输出三组 PNG / PDF：
+默认读取 `results/full_sample1000.h5`，在 `results/figures/` 输出三组 PNG：
 `gap_distribution`、`average_correlation`、`log_correlation_sqrt_r`。
 每组按 h0 分面，显示全部链长，对应论文图 1/3、8、9 的观测量。
 关联函数的阴影为独立无序样本间的 ±1 SEM；对数关联先取对数再平均。
@@ -18,10 +18,10 @@ julia --project=@v1.13 random_tfim/plot_results.jl random_tfim/results/full_samp
 对数关联中任何样本非有限的距离均不作图，提前截断的末端标 ×，不对剩余样本重新求平均。
 `plot_audit.md` 记录每组无效值数量、有效距离及所用环境。脚本仅读取已有数据，不重新采样。
 
-`run.jl` 将参数数组保存到 `parameters/sizes` 和 `parameters/fields`。
+`run.jl` 将参数数组保存到 `parameters/sizes` 和 `parameters/fields`（横场分布上限 h0）。
 各 `L…/h…` 结果组保留 `j`、`seed`、`seconds` 属性，不再重复保存
-`L`、`h0`、`nsamples`、`unresolved_gaps`；后两者可从样本数组列数及 `resolved` 推导。
-绘图脚本按参数数组读取结果，同时兼容没有 `parameters` 组的旧文件。
+`L`、`h0`、`nsamples`、`unresolved_gaps`；后两者可从 `gap_samples` 长度及 `gap_resolved` 推导。
+绘图脚本按参数数组读取结果，同时兼容旧数据集名称及没有 `parameters` 组的旧文件。
 
 ## 边界条件选择
 
@@ -60,19 +60,22 @@ julia --threads=4 random_tfim/run.jl full 100 random_tfim/results/full_periodic_
 | `demo` | 20 | 16, 32 |
 | `full` | 10000 | 16, 32, 64, 128 |
 
-两种模式的横场参数均为 `h0=(1.0,1.3,1.5,1.7,2.0,2.3,3.0)`，
-时间网格均为 `0:0.2:10`。每个模式都计算能隙、`r≤L÷2` 的空间关联和中点时间自关联，
+两种模式的横场参数均为 `10 .^ range(-1, 1, 101)`，
+虚时间网格均为 `tau=0:0.1:20`。每个模式都计算能隙、`r≤L÷2` 的空间关联和中点虚时间自关联，
 并输出各自的无序平均及标准误。第二个参数可覆盖样本数，便于在 `full` 尺寸上小批量试跑。
 
-## 中点实时间自关联（零温）
+## 中点虚时间自关联（零温）
 
 `autocorrelation` 使用 Majorana 协方差矩阵与高斯演化行列式计算
-$C_j(t)=\langle0|\sigma_j^z(t)\sigma_j^z(0)|0\rangle$，取 $\hbar=1$。
+$C_j(\tau)=\langle0|\sigma_j^z(\tau)\sigma_j^z(0)|0\rangle$，取 $\hbar=1$，
+其中 $\sigma_j^z(\tau)=e^{\tau H}\sigma_j^z e^{-\tau H}$，$\tau\ge0$。
+谱表示为 $\sum_n|\langle n|\sigma_j^z|0\rangle|^2e^{-(E_n-E_0)\tau}$，
+精确算术下为实数，满足 $C_j(0)=1$、$0\le C_j(\tau)\le1$ 且单调不增。
 支持开边界和周期边界，保留偶数 `L≥2` 的约定，默认 `j=L÷2`。
 开链取两个中点中的左侧；周期链的 `j` 是指定的测量格点。
 
 这里的 `C` 同时就是 connected correlation
-$A_j(t)=C_j(t)-\langle\sigma_j^z(t)\rangle\langle\sigma_j^z(0)\rangle$：
+$A_j(\tau)=C_j(\tau)-\langle\sigma_j^z(\tau)\rangle\langle\sigma_j^z(0)\rangle$：
 有限链、严格正横场下取确定宇称的基态，$\mathbb Z_2$ 对称性给出
 $\langle\sigma_j^z\rangle=0$，无需另减磁化项。
 当前接口只实现已确认的零温平稳基态，不接受热态、quench 初态或破缺对称态。
@@ -83,9 +86,9 @@ include("random_tfim/RandomTFIM.jl")
 using .RandomTFIM, Random, Statistics
 
 J, h = sample_disorder(Xoshiro(1996), 32, 1.0)
-times = collect(0.0:0.25:10.0)
+times = collect(0.0:0.25:10.0)                # 虚时间 tau
 result = autocorrelation(J[1:end-1], h, times) # 明确去掉周期接缝键
-C = result.C                                # ComplexF64，含完整相位
+C = result.C                                # Vector{Float64}
 ensemble = disorder_ensemble(32, 1.0; times, nsamples=20, seed=1996, boundary=:open)
 average = vec(mean(ensemble.sample_Ct; dims=2))
 ```
@@ -93,7 +96,9 @@ average = vec(mean(ensemble.sample_Ct; dims=2))
 `disorder_ensemble` 先按 seed 顺序生成各构型的 `J,h`，再通过 `Threads.@threads`
 并行计算不同构型的能隙、空间关联和时间关联。返回的各个数组第 `n` 列
 （能隙为第 `n` 个元素）对应同一构型；构型顺序与 Julia 线程数无关，并与原串行版一致。
-`sample_C`、`sample_logC` 保留空间关联；`sample_Ct[时间,样本]` 保存复数时间关联。
+`sample_C`、`sample_logC` 保留空间关联；`sample_Ct[tau索引,样本]` 为 `Matrix{Float64}`，保存虚时间关联。
+`C`（包括空结果）统一为 `Vector{Float64}`。短字符串 Pfaffian 内部仍使用复数矩阵，输出取实部。
+`times` 必须有限且非负，允许乱序、重复点；负值、NaN、Inf 会报错。
 `times` 默认为空，此时跳过动态计算，`sample_Ct` 大小为 `0×nsamples`；
 `rmax=0` 可跳过非平凡空间关联，两者结合即只计算能隙。
 测量位置通过 `j` 指定，默认 `L÷2`。原独立的时间关联 ensemble 入口已移除。
@@ -118,15 +123,15 @@ $$
 后者的特征值为 $\pm2\epsilon_\mu$。文中若以 $\epsilon_\mu$ 表示 `iA`
 的正特征值，则它是代码中奇异值的两倍。
 这仍是 Majorana 协方差方法，满足 $\Gamma=i\operatorname{sgn}(iA)$，
-且每个时间点只更新三角函数，不重复对角化。
-由 $R(t)=e^{At}$ 与 $S=1:2j-1$ 构造
+且每个时间点只更新衰减指数，不重复对角化。
+由 $R(\tau)=e^{-iA\tau}$ 与 $S=1:2j-1$ 构造
 
 $$
-Q(t)=[R(t)(I-i\Gamma)]_{SS},\qquad
-C_j(t)=(-1)^{j-1}\operatorname{Pf}
+Q(\tau)=[R(\tau)(I-i\Gamma)]_{SS},\qquad
+C_j(\tau)=(-1)^{j-1}\operatorname{Pf}
 \begin{pmatrix}
--i\Gamma_{SS}&Q(t)\\
--Q(t)^T&-i\Gamma_{SS}
+-i\Gamma_{SS}&Q(\tau)\\
+-Q(\tau)^T&-i\Gamma_{SS}
 \end{pmatrix}.
 $$
 
@@ -135,7 +140,7 @@ $2(2j-1)$，中点时为 $2L-2$。计算 `Q` 时先对全部 `2L` 个模式求�
 再截取两个端点；不能将 `R` 和 `Γ` 都提前截成 `SS` 块再相乘。
 该字符串公式只在靠近开链端点时使用：令 $d=\min(j,L+1-j)$，当
 $4d-2\le L/4$ 时选用 Pfaffian，右端点通过反射链并交换 SVD 的 `U,V` 处理。
-代码直接计算 $Q=M_S\operatorname{diag}(e^{-2i\epsilon t})M_S^\dagger$，其中
+代码直接计算 $Q=M_S\operatorname{diag}(e^{-2\epsilon\tau})M_S^\dagger$，其中
 $M_{2a-1,\mu}=U_{a\mu}$、$M_{2a,\mu}=iV_{a\mu}$，不构造完整传播矩阵。
 反对称消元原地交换主元并复用时间循环缓冲区；不使用 `sqrt(det)`。
 中点及其余位置使用下面的高斯演化行列式。
@@ -144,17 +149,20 @@ $M_{2a-1,\mu}=U_{a\mu}$、$M_{2a,\mu}=iV_{a\mu}$，不构造完整传播矩阵�
 julia random_tfim/run.jl demo 20 random_tfim/results/demo_small.h5
 ```
 
-该试跑计算 `L=(16,32)`、上述全部 7 个横场值、`t=0:0.2:10`，默认 20 个无序样本，
+该试跑计算 `L=(16,32)`、101 个对数均匀横场值（0.1 至 10）、`tau=0:0.1:20`，默认 20 个无序样本，
 同时保存这些构型的能隙及 `r≤L÷2` 的空间关联。
 任意时间网格和样本数可通过上述函数接口指定。HDF5 的各个 `L…/h…` 组保存
-`times`、`sample_C_real/imag`（时间 × 样本）、`average_real/imag`、
-`sem_real/imag`；误差分别对实部、虚部按独立无序样本计算，单样本时为 `NaN`。
-文件元数据记录所选边界、零温实时间定义及中点位置。
-实时间关联通常是复数，因此不自动取绝对值或计算 `log C`。
+`imaginary_time`、`autocorrelation_mean`、`autocorrelation_sem`；
+均值和标准误均为 `Float64`，按独立无序样本计算，单样本的标准误为 `NaN`。
+文件属性 `time_domain="imaginary"`、`time_definition` 和 `observable` 明确记录虚时间定义。
+不再输出 `average_real/imag` 或 `sem_real/imag`，读取程序需使用上述新字段。
+旧实时间文件不能作为虚时间数据使用。
+不自动取绝对值、截断负值或计算 `log C`，以免掩盖数值误差。
 
 计算成本约为每个样本 $O(L^3+N_tL^3)$，工作内存为 $O(L^2)$，
-另需保存 $N_tN_s$ 个复数样本。行列式使用 `logabsdet` 保留复相位，最后恢复关联值；极小关联仍可能下溢，
-长时间的相位精度受频率误差限制，不保证极端无序下的任意小能标精度。
+另需保存 $N_tN_s$ 个 `Float64` 样本。缩放行列式使用 `logabsdet` 保留符号，最后恢复关联值。
+缩放避免显式增长指数溢出，但不消除近奇异矩阵的舍入误差：极小关联可能达到浮点噪声底、
+出现微小负值或下溢。长虚时间尾部不保证任意相对精度，提取尾部前需另做精度或算法收敛验证。
 
 ### 宇称切换与高斯演化行列式
 
@@ -163,7 +171,7 @@ julia random_tfim/run.jl demo 20 random_tfim/results/demo_small.h5
 保留原格点编号，令 $|\phi\rangle=\sigma_j^z|0,+\rangle$，则
 
 $$
-C_j(t)=e^{iE_0t}\langle\phi|e^{-iH_-t}|\phi\rangle,
+C_j(\tau)=e^{E_0\tau}\langle\phi|e^{-H_-\tau}|\phi\rangle,
 \qquad E_0=-\sum_\mu\epsilon_\mu^+.
 $$
 
@@ -176,8 +184,8 @@ $B=U_-^T\Gamma^\phi_{\mathrm{odd,even}}V_-$，于是
 
 $$
 H_-=-i\sum_\mu\epsilon_\mu^-\alpha_\mu\beta_\mu,\qquad
-e^{-iH_-t}=\prod_\mu
-\left[\cos(\epsilon_\mu^-t)-\sin(\epsilon_\mu^-t)\alpha_\mu\beta_\mu\right].
+e^{-H_-\tau}=\prod_\mu
+\left[\cosh(\epsilon_\mu^-\tau)+i\sinh(\epsilon_\mu^-\tau)\alpha_\mu\beta_\mu\right].
 $$
 
 对乘积逐项使用 Wick 定理，可将期望写成一个 $2L\times2L$ Pfaffian。
@@ -185,29 +193,39 @@ $$
 
 $$
 W_{2\mu-1,2\nu}
-=\delta_{\mu\nu}\cos(\epsilon_\mu^-t)
-+i\sin(\epsilon_\mu^-t)B_{\mu\nu},\qquad
+=\delta_{\mu\nu}\cosh(\epsilon_\mu^-\tau)
++\sinh(\epsilon_\mu^-\tau)B_{\mu\nu},\qquad
 W_{2\nu,2\mu-1}=-W_{2\mu-1,2\nu},
 $$
 
-同奇偶块为零，最终 $C_j(t)=e^{iE_0t}\operatorname{Pf}W(t)$。
+同奇偶块为零，最终 $C_j(\tau)=e^{E_0\tau}\operatorname{Pf}W(\tau)$。
 在上述交错排序下，严格有 $\operatorname{Pf}W=\det D$，其中
 
 $$
-D_{\mu\nu}(t)=\delta_{\mu\nu}\cos(\epsilon_\mu^-t)
-+i\sin(\epsilon_\mu^-t)B_{\mu\nu}.
+D_{\mu\nu}(\tau)=\delta_{\mu\nu}\cosh(\epsilon_\mu^-\tau)
++\sinh(\epsilon_\mu^-\tau)B_{\mu\nu}.
 $$
 
-因此实际只分解 $L\times L$ 的复矩阵 `D`，不再构造 $2L\times2L$ 的 `W`。
+实际从 `D` 的每行提出 $e^{\epsilon_\mu^-\tau}$，只分解 $L\times L$ 的实矩阵 `R`：
+
+$$
+R_{\mu\nu}=\frac{\delta_{\mu\nu}+B_{\mu\nu}}2+
+e^{-2\epsilon_\mu^-\tau}\frac{\delta_{\mu\nu}-B_{\mu\nu}}2,\qquad
+C_j(\tau)=e^{\tau\sum_\mu(\epsilon_\mu^--\epsilon_\mu^+)}\det R.
+$$
+
+两项分别计算，避免在 $B_{\mu\mu}=-1$ 时丢失衰减项。
+外部指数与 `logabsdet` 的对数合并后再取指数，不生成增长的双曲函数。
 开链也适用同一公式，此时初态和演化使用同一个开链 SVD，无需补接缝或增加分解。
-此处使用 $\epsilon^-t$ 是多体演化算符的展开；Majorana 向量演化的频率仍是 $2\epsilon^-$。
-公式保留奇宇称态和真空能量相位，不需要假设周期费米子真空本身为奇宇称，
-也不使用平方根或按时间步追踪符号。负时间、乱序时间和零单粒子模式均可直接计算。
+开链的外部指数系数直接设为零。此处双曲函数中的 $\epsilon^-\tau$ 来自多体演化算符展开，
+单准粒子能量仍为 $2\epsilon^-$。公式保留奇宇称态和真空能量因子，无需假设周期费米子真空本身为奇宇称，
+也不使用平方根或按时间步追踪符号。乱序非负时间和零单粒子模式均可直接计算。
 
 `test/runtests.jl` 对 `L=2,4,6` 的全部格点，用独立自旋哈密顿量的谱表示
 检查纯净/随机及有序/临界/无序参数，并验证 `C(0)=1`、
-`C(-t)=conj(C(t))`、`|C(t)|≤1` 和 `J=0` 时的 `exp(-2im*h[j]*t)`。
-`test/smoke_io.jl` 检查驱动程序、数据回读、无序平均和标准误。
+实数性、非负性、单调性和 `J=0` 时的 `exp(-2*h[j]*tau)`。ED 对照至 `tau=40`，
+高于噪声底的结果另检查逐点相对精度；解耦链额外检查端点/中点的极小衰减和下溢。
+`test/smoke_io.jl` 检查驱动程序、虚时间元数据、数据回读、无序平均和标准误。
 
 复现 Young & Rieger (1996) 第 III–V 节的零温能隙与纵向关联计算。
 采用仓库已有 `julia-env/local` 环境，无独立环境、无新增依赖。
@@ -297,39 +315,56 @@ $r\le L/2$ 的短路径行列式。自关联严格取 1。
 | `ground_state` | `gap, resolved, G` |
 | `correlations` | `C, logC` |
 | `disorder_ensemble` | `gaps, resolved, sample_C, sample_logC, pair_logC, sample_Ct` |
-| `autocorrelation` | `C`（复数时间序列） |
+| `autocorrelation` | `C`（虚时间序列，Vector{Float64}） |
 
 以上均为命名元组。`pair_logC` 默认是空数组，仅在 `keep_pairs=true` 时保留。
 输入参数不再重复返回；距离、平均值、典型值和标准误在分析或保存时计算。
 `C` 保留行列式的符号，`logC` 保留微小关联的对数精度，因此两者均保留。
 
-HDF5 按 `L16/h1.0` 等分组；包含原始 gap、log gap、有效标记及关联数据。
-能隙新增 `gap_average`、`gap_sem`；对数能隙新增 `loggap_average`、`loggap_sem`。
+HDF5 按 `L16/h1.0` 等分组。数据集统一采用小写下划线命名，
+`_samples` 表示逐样本值，`_mean` 表示无序均值，`_sem` 表示均值标准误；`log_` 均为自然对数。
+
+| 数据集 | 含义 / 形状 |
+|---|---|
+| `gap_samples` | 各无序样本能隙，长度 nsamples |
+| `gap_resolved` | 各样本能隙是否数值可分辨，长度 nsamples |
+| `log_gap_samples` | 各样本能隙的自然对数，长度 nsamples |
+| `gap_mean`, `gap_sem` | 能隙均值及标准误，标量 |
+| `log_gap_mean`, `log_gap_sem` | 对数能隙均值及标准误，标量 |
+| `correlation_mean`, `correlation_sem` | 空间关联均值及标准误，长度 rmax+1 |
+| `log_correlation_mean`, `log_correlation_sem` | 空间关联对数的均值及标准误，长度 rmax+1 |
+| `imaginary_time` | 虚时间 tau 网格 |
+| `autocorrelation_mean`, `autocorrelation_sem` | 虚时间自关联均值及标准误，与虚时间网格等长 |
+
+分组名称、属性及核心 Julia 函数的返回字段保持原约定；已有 HDF5 文件不会自动改写。
+绘图读取器兼容原来的 `loggaps`、`resolved`、`average`、`sem`、`mean_log`、`log_sem` 等名称。
 能隙均值保留所有原始样本；若任一样本的 gap 未分辨，其 log gap 为 `NaN`，
 对数能隙统计随之为 `NaN`，不通过删去样本改变平均的定义。
 不单独保存 `r` 和 `pair_counts`：空间关联第 `r+1` 行对应距离 `r`，
 有效起点数可由链长和边界恢复，周期为 `L`，开边界为 `L-r`。
 根属性 `boundary` 记录实际使用的边界。下表的论文对照采用周期边界。
-`run.jl` 从逐样本数据计算派生统计量，不保存逐起点的 `pair_logC`。
-`sample_C`、`sample_logC` 的列为无序样本，行对应 `r+1`。
-动态数据在函数返回中名为 `sample_Ct`；HDF5 沿用 `sample_C_real/imag`、
-`average_real/imag`、`sem_real/imag`，与空间数据集 `sample_C` 区分。
-`average` 是所有样本和起点的 $[C]_{av}$；`mean_log` 是 $[\ln C]_{av}$，
-`typical=exp(mean_log)`。`sem`、`log_sem` 按独立无序样本计算，
+`run.jl` 从内存中的逐样本结果计算统计量。HDF5 仅保存空间关联的
+`correlation_mean`、`correlation_sem`、`log_correlation_mean`、`log_correlation_sem`，以及时间关联的
+`autocorrelation_mean`、`autocorrelation_sem` 和时间网格 `imaginary_time`。
+不写入 `sample_C`、`sample_logC`、`sample_C_real/imag` 或 `pair_logC`。
+核心函数仍返回逐样本数组，供计算平均值与标准误使用。
+`correlation_mean` 是所有样本和起点的 $[C]_{av}$；`log_correlation_mean` 是 $[\ln C]_{av}$，
+不是均值的对数。对应 `_sem` 按独立无序样本计算，
 不会把同一样本内不同起点当作独立样本。无效对数会传播，避免静默选择偏差。
-`typical_lower/upper=exp(mean_log∓log_sem)` 表示对数均值上下一个标准误经指数映射后的范围，
-并非指定置信水平的置信区间。两种模式均仅保留起点平均后的逐样本空间关联，
-不生成或写入 `pair_logC[起点,r+1,样本]`；因此输出不能重建逐格点对的关联分布。
+需要典型关联时，可在分析阶段计算 `exp(log_correlation_mean)` 和
+`exp(log_correlation_mean ∓ log_correlation_sem)`；后者为对数均值上下一个标准误经指数映射后的范围，
+并非指定置信水平的置信区间。这些派生量不再重复写入文件。
+输出不能重建逐样本或逐格点对的关联分布。
 所有 SEM 都使用无序样本间的无偏样本方差，形式为 `std(samples)/sqrt(nsamples)`；
-单样本的 SEM 及由其构造的范围为 `NaN`。时间关联的实部和虚部分别统计。
+单样本的 SEM 及由其构造的范围为 `NaN`。时间关联直接按实数样本统计。
 
 | 论文图 | 从输出构造 |
 |---|---|
 | 1–4 | $\ln\Delta E$ 分布；临界 $\ln\Delta E/\sqrt L$；$h_0=3$ 用 $\ln\Delta E+z\ln L$，$z\approx1.4$ |
-| 8–9 | `average` 对 $r$ 双对数图，`mean_log` 对 $\sqrt r$；排除 $r=0$ |
+| 8–9 | `correlation_mean` 对 $r$ 双对数图，`log_correlation_mean` 对 $\sqrt r$；排除 $r=0$ |
 | 10–12 | 需要逐格点对关联分布；当前 HDF5 输出不包含所需数据 |
-| 13–16 | 非临界 `average` 除以临界值；`mean_log` 减去临界值；横轴分别为 $r\delta^2$、$2r\delta$ |
-| 17–19 | `mean_log` 可用于均值；逐格点对的分布与方差需要额外数据 |
+| 13–16 | 非临界 `correlation_mean` 除以临界值；`log_correlation_mean` 减去临界值；横轴分别为 $r\delta^2$、$2r\delta$ |
+| 17–19 | `log_correlation_mean` 可用于均值；逐格点对的分布与方差需要额外数据 |
 
 Histogram 密度须按实际 bin 宽归一化；对 gap 报告删失比例，避免把过滤后的
 尾部当作完整分布。跨样本的关联分布误差应按样本分块，而非对起点独立 bootstrap。
@@ -352,8 +387,9 @@ Histogram 密度须按实际 bin 宽归一化；对 gap 报告删失比例，避
 可减少 `rmax`，或只做 gap（`rmax=0` 且 `times` 为空，不计算特征向量）。
 运行脚本和交互调用默认均不保留全部 pair 对数；单独研究逐格点对分布时，
 仍可在函数接口中显式指定 `keep_pairs=true`。
-默认 `full` 的 HDF5 数组数据约 372 MB（355 MiB，51 个时间点），另有少量元数据开销，
-随样本数近似线性增长。运行脚本固定单 BLAS 线程，样本计算使用 Julia 工作线程；
+HDF5 中的关联统计量大小随距离数、时间点数及参数组数增长，不随样本数增长；
+能隙仍保留逐样本数据，大小随样本数线性增长。内存中的关联样本数组仍随样本数增长。
+运行脚本固定单 BLAS 线程，样本计算使用 Julia 工作线程；
 以 `julia --threads=4 ...` 启用四线程，`--threads=1` 则按单线程执行。
 直接调用函数时建议先执行 `BLAS.set_num_threads(1)`，避免两层并行争抢 CPU。
 随机数在并行循环前顺序生成，额外占用约 $16LN_s$ 字节的构型数组
@@ -365,7 +401,7 @@ Histogram 密度须按实际 bin 宽归一化；对 gap 报告删失比例，避
 不超过此值标记 `resolved=false`，保留未经裁剪的原始 gap。
 开链直接使用最小奇异值计算 gap，诊断阈值取 `64eps(Float64)*max(sum(ε),1)`；
 该阈值同样是保守尺度，并非严格误差界。
-能量、阈值和宇称仅作为内部变量；保存时计算 `loggaps`，未分辨样本记为 `NaN`。
+能量、阈值和宇称仅作为内部变量；保存时计算 `log_gap_samples`，未分辨样本记为 `NaN`。
 这不支持可信的任意小 gap 尾部；如需突破双精度截断，应另行使用高精度算法。
 关联的 log determinant 防止下溢，但不能恢复收缩矩阵已经损失的相对精度。
 
@@ -388,5 +424,6 @@ Histogram 密度须按实际 bin 宽归一化；对 gap 报告删失比例，避
 ```sh
 julia --startup-file=no random_tfim/test/benchmark.jl
 # 可选：传入另存的旧版源码，同时检查新旧结果并比较计时。
+# 对照版本必须同样计算虚时间关联，不能使用旧实时间版本
 julia --startup-file=no random_tfim/test/benchmark.jl /path/to/old/RandomTFIM.jl
 ```

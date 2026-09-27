@@ -9,15 +9,30 @@ include(joinpath(@__DIR__, "..", "run.jl"))
             h5open(output, "r") do file
                 @test read(attributes(file)["complete"])
                 @test read(attributes(file)["mode"]) == mode
+                @test read(attributes(file)["time_domain"]) == "imaginary"
+                @test occursin("exp(tau*H)", read(attributes(file)["time_definition"]))
+                @test occursin("sigma_z(j,tau)", read(attributes(file)["observable"]))
                 @test startswith(read(attributes(file)["boundary"]), string(boundary))
                 sizes = mode == "demo" ? (16, 32) : (16, 32, 64, 128)
-                fields = [1.0, 1.3, 1.5, 1.7, 2.0, 2.3, 3.0]
+                fields = 10 .^ range(-1, 1, 101)
                 @test Set(keys(file)) == Set(["parameters"; ["L$L" for L in sizes]])
+                @test Set(keys(file["parameters"])) == Set(["sizes", "fields"])
                 @test read(file["parameters/sizes"]) == collect(sizes)
                 @test read(file["parameters/fields"]) == fields
                 for L in sizes
-                    @test Set(keys(file["L$L"])) == Set("h$h" for h in (1.0, 1.3, 1.5, 1.7, 2.0, 2.3, 3.0))
-                    for h in keys(file["L$L"]), name in ("pair_logC", "r", "pair_counts")
+                    @test Set(keys(file["L$L"])) == Set("h$h" for h in fields)
+                    for h in keys(file["L$L"])
+                        @test Set(keys(file["L$L/$h"])) == Set([
+                            "gap_samples", "gap_resolved", "log_gap_samples",
+                            "gap_mean", "gap_sem", "log_gap_mean", "log_gap_sem",
+                            "correlation_mean", "correlation_sem",
+                            "log_correlation_mean", "log_correlation_sem",
+                            "imaginary_time", "autocorrelation_mean", "autocorrelation_sem"])
+                    end
+                    for h in keys(file["L$L"]), name in ("pair_logC", "r", "pair_counts",
+                        "sample_C", "sample_logC", "sample_C_real", "sample_C_imag",
+                        "typical", "typical_lower", "typical_upper",
+                        "average_real", "average_imag", "sem_real", "sem_imag")
                         @test !haskey(file["L$L/$h"], name)
                     end
                     for h in keys(file["L$L"]), name in ("L", "h0", "nsamples", "unresolved_gaps")
@@ -26,38 +41,34 @@ include(joinpath(@__DIR__, "..", "run.jl"))
                 end
                 group = file["L16/h1.0"]
                 @test read(attributes(group)["j"]) == 8
-                gaps, resolved = read(group["gaps"]), read(group["resolved"])
-                logs = read(group["loggaps"])
+                gaps, resolved = read(group["gap_samples"]), read(group["gap_resolved"])
+                logs = read(group["log_gap_samples"])
                 @test isequal(logs, map((gap, ok) -> ok ? log(gap) : NaN, gaps, resolved))
-                for (prefix, samples) in (("gap", gaps), ("loggap", logs))
-                    @test read(group["$(prefix)_average"]) ≈ mean(samples)
+                for (prefix, samples) in (("gap", gaps), ("log_gap", logs))
+                    @test read(group["$(prefix)_mean"]) ≈ mean(samples)
                     @test read(group["$(prefix)_sem"]) ≈ std(samples) / sqrt(2)
                 end
-                spatial, log_spatial = read(group["sample_C"]), read(group["sample_logC"])
-                @test read(group["average"]) ≈ vec(mean(spatial; dims=2))
-                @test read(group["sem"]) ≈ vec(std(spatial; dims=2)) / sqrt(2)
-                @test read(group["mean_log"]) ≈ vec(mean(log_spatial; dims=2))
-                @test read(group["log_sem"]) ≈ vec(std(log_spatial; dims=2)) / sqrt(2)
-                @test read(group["typical"]) ≈ exp.(read(group["mean_log"]))
-                @test read(group["typical_lower"]) ≈ exp.(read(group["mean_log"]) .- read(group["log_sem"]))
-                @test read(group["typical_upper"]) ≈ exp.(read(group["mean_log"]) .+ read(group["log_sem"]))
-                times = read(group["times"])
-                @test times == collect(0.0:0.2:10.0)
-                for suffix in ("real", "imag")
-                    samples = read(group["sample_C_$suffix"])
-                    @test size(samples) == (length(times), 2)
-                    @test all(isfinite, samples)
-                    @test read(group["average_$suffix"]) ≈ vec(mean(samples; dims=2))
-                    @test read(group["sem_$suffix"]) ≈ vec(std(samples; dims=2)) / sqrt(2)
-                end
-                samples = read(group["sample_C_real"]) + 1im * read(group["sample_C_imag"])
+                times = read(group["imaginary_time"])
+                @test times == collect(0.0:0.1:20.0)
                 expected = disorder_ensemble(16, 1.0; times, nsamples=2,
                     seed=read(attributes(group)["seed"]), boundary)
-                @test samples ≈ expected.sample_Ct
+                spatial, log_spatial = expected.sample_C, expected.sample_logC
+                @test read(group["correlation_mean"]) ≈ vec(mean(spatial; dims=2))
+                @test read(group["correlation_sem"]) ≈ vec(std(spatial; dims=2)) / sqrt(2)
+                @test read(group["log_correlation_mean"]) ≈ vec(mean(log_spatial; dims=2))
+                @test read(group["log_correlation_sem"]) ≈ vec(std(log_spatial; dims=2)) / sqrt(2)
+                samples = expected.sample_Ct
+                @test samples isa Matrix{Float64}
+                @test size(samples) == (length(times), 2)
+                @test all(isfinite, samples)
+                average = read(group["autocorrelation_mean"])
+                sem = read(group["autocorrelation_sem"])
+                @test average isa Vector{Float64}
+                @test sem isa Vector{Float64}
+                @test average ≈ vec(mean(samples; dims=2))
+                @test sem ≈ vec(std(samples; dims=2)) / sqrt(2)
                 @test gaps ≈ expected.gaps
-                @test spatial ≈ expected.sample_C
-                @test log_spatial ≈ expected.sample_logC
-                @test samples[1, :] ≈ ones(2) atol=1e-12
+                @test average[1] ≈ 1 atol=1e-12
             end
             @test_throws ArgumentError main([mode, "2", output])
         end
@@ -65,10 +76,10 @@ include(joinpath(@__DIR__, "..", "run.jl"))
         main(["demo", "1", single])
         h5open(single, "r") do file
             group = file["L16/h1.0"]
-            for name in ("gap_sem", "loggap_sem")
+            for name in ("gap_sem", "log_gap_sem")
                 @test isnan(read(group[name]))
             end
-            for name in ("sem", "log_sem", "sem_real", "sem_imag", "typical_lower", "typical_upper")
+            for name in ("correlation_sem", "log_correlation_sem", "autocorrelation_sem")
                 @test all(isnan, read(group[name]))
             end
         end

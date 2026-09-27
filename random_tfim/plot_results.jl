@@ -1,7 +1,10 @@
 using CairoMakie, HDF5, Statistics
 
+# Prefer descriptive dataset names, retaining support for existing ensembles.
+read_plot_dataset(group, name, legacy) = read(group[haskey(group, name) ? name : legacy])
+
 # Run: julia --project=@v1.13 random_tfim/plot_results.jl [input.h5] [output_dir]
-# Sample columns already contain the spatial average over all starting sites.
+# Stored statistics include the spatial average over all starting sites.
 function read_plot_data(input)
     h5open(input, "r") do f
         @assert read(HDF5.attributes(f)["complete"]) "Input ensemble is incomplete"
@@ -16,19 +19,19 @@ function read_plot_data(input)
         records = []
         for L in sizes, h0 in fields
             g = f["L$(L)/h$(h0)"]
-            C, logC = read(g["sample_C"]), read(g["sample_logC"])
-            n = size(C, 2)
-            gaps, resolved = read(g["loggaps"]), Bool.(read(g["resolved"]))
-            @assert size(C) == size(logC) == (L ÷ 2 + 1, n)
-            @assert length(gaps) == length(resolved) == n
-            @assert all(isfinite, C) && all(C[1, :] .== 1) && all(logC[1, :] .== 0)
+            gaps = read_plot_dataset(g, "log_gap_samples", "loggaps")
+            resolved = Bool.(read_plot_dataset(g, "gap_resolved", "resolved"))
+            n = length(gaps)
+            avg = read_plot_dataset(g, "correlation_mean", "average")
+            sem = read_plot_dataset(g, "correlation_sem", "sem")
+            logavg = read_plot_dataset(g, "log_correlation_mean", "mean_log")
+            logsem = read_plot_dataset(g, "log_correlation_sem", "log_sem")
+            @assert length(avg) == length(sem) == length(logavg) == length(logsem) == L ÷ 2 + 1
+            @assert length(resolved) == n
+            @assert all(isfinite, avg) && avg[1] == 1 && logavg[1] == 0
             @assert resolved == isfinite.(gaps)
-            avg, sem = vec(mean(C; dims=2)), vec(std(C; dims=2)) ./ sqrt(n)
-            logavg, logsem = vec(mean(logC; dims=2)), vec(std(logC; dims=2)) ./ sqrt(n)
-            @assert isapprox(avg, read(g["average"]))
-            @assert all(isequal.(logavg, read(g["mean_log"])))
             push!(records, (; L, h0, n, gaps, resolved, avg, sem, logavg, logsem,
-                invalid_log=count(!isfinite, logC), negative_C=count(<(0), C)))
+                invalid_log=count(!isfinite, logavg), negative_C=count(<(0), avg)))
         end
         (; records, sizes, fields, boundary=read(HDF5.attributes(f)["boundary"]))
     end
@@ -63,8 +66,8 @@ function main(args)
         "Natural logarithms. Error bands are ±1 SEM across independent disorder samples.",
         "Gap densities use counts / (total samples × bin width), so missing probability is not renormalized away.",
         "Log correlations use mean(sample_logC), not log(mean(sample_C)). Distances with any nonfinite log sample are omitted.",
-        "The average-C plot retains the supplied arithmetic averages; tiny negative individual correlations are counted below as numerical artifacts.", "",
-        "| h0 | L | samples | unresolved gaps | nonfinite log entries | negative C entries | last complete log r |",
+        "Correlation means and SEM are read directly from HDF5. Counts below refer to distances, not individual samples.", "",
+        "| h0 | L | samples | unresolved gaps | nonfinite mean_log distances | negative average distances | last complete log r |",
         "|---|---|---|---|---|---|---|"]
     for (k, h0) in enumerate(fields)
         row, col = (k-1) ÷ 4 + 1, (k-1) % 4 + 1
@@ -130,7 +133,7 @@ function main(args)
         println("Saved ", joinpath(out, name))
     end
     write(joinpath(out, "plot_audit.md"), join(report, "\n") * "\n")
-    println("Verified dimensions, r=0 normalization, stored averages, and histogram probability mass.")
+    println("Verified summary dimensions, r=0 normalization, and histogram probability mass.")
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__

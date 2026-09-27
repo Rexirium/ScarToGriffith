@@ -63,14 +63,17 @@ function pfaffian!(A::Matrix{ComplexF64})
     return value
 end
 
-"""Zero-temperature longitudinal real-time autocorrelation; boundary=:open or :periodic.
+"""Zero-temperature longitudinal imaginary-time autocorrelation; boundary=:open or :periodic.
 
-Returns `(C,)`, with C[n] = <sigma_z(j,times[n]) sigma_z(j,0)> (complex).
+Returns `(C,)`, with C[n] = <sigma_z(j,tau) sigma_z(j,0)>, tau=times[n] >= 0.
+Here sigma_z(j,tau)=exp(tau*H)*sigma_z(j)*exp(-tau*H). C is a Vector{Float64}.
 This also equals the connected correlation: the finite-chain parity ground
 state has <sigma_z(j)> = 0. Thermal and nonstationary initial states are not supported.
 J has L-1 (:open) or L (:periodic) bonds, h has L fields; require even L >= 2.
 Default j=L/2 is the left midpoint. Gaussian evolution is evaluated by an
-L-dimensional determinant, retaining its complex phase without square roots.
+L-dimensional scaled determinant without square roots or growing exponentials.
+Scaling avoids overflow but does not remove long-time loss of relative precision
+near singularity; tiny tails can reach the floating-point noise floor.
 Periodic chains switch fermion parity sectors. Open chains near an endpoint
 use a shorter JW-string Pfaffian instead.
 """
@@ -79,8 +82,8 @@ function autocorrelation(J::AbstractVector{<:Real}, h::AbstractVector{<:Real},
     L = length(h)
     check_chain(J, h, boundary)
     1 <= j <= L || throw(ArgumentError("require 1 <= j <= L"))
-    all(isfinite, times) || throw(ArgumentError("times must be finite"))
-    isempty(times) && return (C=ComplexF64[],)
+    all(t -> isfinite(t) && t >= 0, times) || throw(ArgumentError("imaginary times must be finite and nonnegative"))
+    isempty(times) && return (C=Float64[],)
 
     initial = svd!(fermion_matrix(J, h, Val(boundary)))
     evolution = boundary == :open ? initial : svd!(fermion_matrix(J, h, 1))
@@ -127,13 +130,13 @@ function string_autocorrelation(F, times, j, reflected)
     phased = similar(M)
     Q = Matrix{ComplexF64}(undef, N, N)
     W = Matrix{ComplexF64}(undef, 2N, 2N)
-    C = Vector{ComplexF64}(undef, length(times))
+    C = Vector{Float64}(undef, length(times))
 
     for (n, t) in enumerate(times)
         for mu in 1:L
             angle = 2 * F.S[mu] * t
             isfinite(angle) || throw(ArgumentError("time-frequency product overflows Float64"))
-            phase = cis(-angle)
+            phase = exp(-angle)
             @inbounds for a in 1:N
                 phased[a, mu] = M[a, mu] * phase
             end
@@ -145,7 +148,8 @@ function string_autocorrelation(F, times, j, reflected)
             W[a, N+b] = Q[a, b]
             W[N+b, a] = -Q[a, b]
         end
-        C[n] = (-1)^(j-1) * pfaffian!(W)
+        # The spectral representation is real; discard imaginary roundoff only.
+        C[n] = (-1)^(j-1) * real(pfaffian!(W))
     end
 
     return (; C)
@@ -161,30 +165,30 @@ function determinant_autocorrelation(initial, evolution, times, j)
     @views Gamma_oe[:, 1:j-1] .*= -1
     B = evolution.U' * Gamma_oe * evolution.V
 
-    block = Matrix{ComplexF64}(undef, L, L)
-    sines, cosines = zeros(L), zeros(L)
-    C = Vector{ComplexF64}(undef, length(times))
-    E0 = -sum(initial.S)
+    block = Matrix{Float64}(undef, L, L)
+    decays = zeros(L)
+    C = Vector{Float64}(undef, length(times))
+    # E0 + sum(evolution.S); exactly zero for OBC. Sum differences for PBC.
+    energy_shift = initial === evolution ? 0.0 : sum(evolution.S .- initial.S)
 
     for (n, t) in enumerate(times)
-        isfinite(E0*t) || throw(ArgumentError("time-energy product overflows Float64"))
+        isfinite(energy_shift*t) || throw(ArgumentError("time-energy product overflows Float64"))
         for a in 1:L
-            angle = evolution.S[a] * t
+            angle = 2 * evolution.S[a] * t
             isfinite(angle) || throw(ArgumentError("time-frequency product overflows Float64"))
-            sines[a], cosines[a] = sincos(angle)
+            decays[a] = exp(-angle)
         end
 
-        # exp(-i H_- t) = product_mu (cos(eps_mu*t) - sin(eps_mu*t)*alpha_mu*beta_mu).
-        # Only odd/even blocks occur. In interleaved order Pf(W)=det(block),
-        # with no sign factor and no square-root phase ambiguity.
+        # Factor exp(eps_a*tau) out of each row of cosh + sinh*B:
+        # R = (I+B)/2 + diag(exp(-2eps*tau))*(I-B)/2.
+        # Keep the two terms separate, including on the diagonal, to retain
+        # the decaying term when B[a,a] == -1 (e.g. the decoupled-spin limit).
         @inbounds for b in 1:L, a in 1:L
-            block[a, b] = 1im * sines[a] * B[a, b]
-        end
-        @inbounds for a in 1:L
-            block[a, a] += cosines[a]
+            delta = a == b ? 1.0 : 0.0
+            block[a, b] = (delta + B[a, b])/2 + decays[a]*(delta - B[a, b])/2
         end
         logabs, phase = logabsdet(lu!(block; check=false))
-        C[n] = cis(E0*t) * phase * exp(logabs)
+        C[n] = phase * exp(logabs + energy_shift*t)
     end
 
     return (; C)
@@ -374,11 +378,12 @@ end
 
 Returns `(gaps, resolved, sample_C, sample_logC, pair_logC, sample_Ct)`.
 Each realization is drawn once; gaps, spatial pairs and time correlations
-are evaluated in the same sample loop. sample_Ct[time, realization] is complex.
+are evaluated in the same sample loop. sample_Ct[tau, realization] is a
+Matrix{Float64} of real imaginary-time correlations.
 Realizations are drawn serially, then evaluated with Threads.@threads;
 the seed and sample order are independent of the number of Julia threads.
 Use julia --threads=N and a single BLAS thread for parallel sample evaluation.
-Set times to a real-time grid to compute dynamics at j (default L/2).
+Set times to a finite, nonnegative imaginary-time grid at j (default L/2).
 Empty times (default) skips dynamics; rmax=0 skips nontrivial spatial pairs.
 Use both for gap-only runs. `pair_logC` is empty unless keep_pairs=true.
 Compute means and SEM across sample columns; sites within a sample are correlated.
@@ -392,7 +397,7 @@ function disorder_ensemble(L::Int, h0::Real; nsamples::Int=100, seed::Int=1996,
     check_boundary(boundary)
     nsamples > 0 || throw(ArgumentError("nsamples must be positive"))
     1 <= j <= L || throw(ArgumentError("require 1 <= j <= L"))
-    all(isfinite, times) || throw(ArgumentError("times must be finite"))
+    all(t -> isfinite(t) && t >= 0, times) || throw(ArgumentError("imaginary times must be finite and nonnegative"))
     0 <= rmax <= (boundary == :open ? L-1 : L ÷ 2) || throw(ArgumentError("invalid rmax"))
 
     bc = Val(boundary)
@@ -404,7 +409,7 @@ function disorder_ensemble(L::Int, h0::Real; nsamples::Int=100, seed::Int=1996,
     gaps = zeros(nsamples)
     resolved = fill(false, nsamples)
     sample_C, sample_logC = zeros(rmax+1, nsamples), zeros(rmax+1, nsamples)
-    sample_Ct = Matrix{ComplexF64}(undef, length(times), nsamples)
+    sample_Ct = Matrix{Float64}(undef, length(times), nsamples)
     pair_logC = Array{Float64}(undef, keep_pairs ? (L, rmax+1, nsamples) : (0, 0, 0))
 
     # Equal-site spatial correlations are known without a factorization.

@@ -18,21 +18,16 @@ function mean_sem(samples::AbstractMatrix)
         sem=n > 1 ? vec(std(samples; dims=2)) / sqrt(n) : fill(NaN, size(samples, 1)))
 end
 
-function write_autocorrelation(group, sample_Ct, times)
-    group["times"] = times
-    # Separate real/imaginary datasets are portable across HDF5 readers.
-    for (suffix, part) in (("real", real), ("imag", imag))
-        samples = part.(sample_Ct)
-        stats = mean_sem(samples)
-        group["sample_C_$suffix"] = samples
-        group["average_$suffix"] = stats.average
-        group["sem_$suffix"] = stats.sem
-    end
+function write_autocorrelation(group, sample_Ct::AbstractMatrix{<:Real}, times)
+    group["imaginary_time"] = times
+    stats = mean_sem(sample_Ct)
+    group["autocorrelation_mean"] = stats.average
+    group["autocorrelation_sem"] = stats.sem
 end
 
 """Run a small demonstration or a paper-sized ensemble; save portable HDF5 data.
 
-Both modes compute gaps, spatial correlations and time autocorrelations with SEM.
+Both modes compute gaps, spatial correlations and imaginary-time autocorrelations with SEM.
 Usage: julia random_tfim/run.jl [demo|full] [samples] [output.h5] [open|periodic]
 """
 function main(args)
@@ -61,8 +56,10 @@ function main(args)
         attributes(file)["mode"] = mode
         attributes(file)["distribution"] = "box"
         attributes(file)["boundary"] = "$boundary spins; even L; Pauli normalization"
-        attributes(file)["precision"] = "Float64/ComplexF64; unresolved log gaps are NaN"
-        attributes(file)["observable"] = "gap; <sigma_z(i) sigma_z(i+r)>; <sigma_z(j,t) sigma_z(j,0)>; j=L/2; ground state"
+        attributes(file)["precision"] = "Float64 outputs; ComplexF64 internal Pfaffian; unresolved log gaps are NaN"
+        attributes(file)["observable"] = "gap; <sigma_z(i) sigma_z(i+r)>; <sigma_z(j,tau) sigma_z(j,0)>; j=L/2; ground state"
+        attributes(file)["time_domain"] = "imaginary"
+        attributes(file)["time_definition"] = "tau >= 0; sigma_z(tau) = exp(tau*H) sigma_z exp(-tau*H); hbar=1"
         attributes(file)["uncertainty"] = "SEM across independent disorder samples; corrected sample variance; NaN for one sample"
         attributes(file)["blas"] = string(BLAS.get_config())
         attributes(file)["blas_threads"] = BLAS.get_num_threads()
@@ -77,27 +74,22 @@ function main(args)
             seconds = @elapsed result = disorder_ensemble(L, h0; nsamples, seed,
                 rmax, boundary, times)
             group = create_group(file, "L$(L)/h$(h0)")
-            for name in (:gaps, :resolved, :sample_C, :sample_logC)
-                group[string(name)] = getproperty(result, name)
-            end
+            group["gap_samples"] = result.gaps
+            group["gap_resolved"] = result.resolved
             # Derived quantities belong to the output/analysis layer.
             loggaps = map((gap, ok) -> ok ? log(gap) : NaN,
                 result.gaps, result.resolved)
-            group["loggaps"] = loggaps
-            for (prefix, samples) in (("gap", result.gaps), ("loggap", loggaps))
+            group["log_gap_samples"] = loggaps
+            for (prefix, samples) in (("gap", result.gaps), ("log_gap", loggaps))
                 stats = mean_sem(samples)
-                group["$(prefix)_average"] = stats.average
+                group["$(prefix)_mean"] = stats.average
                 group["$(prefix)_sem"] = stats.sem
             end
             spatial, log_spatial = mean_sem(result.sample_C), mean_sem(result.sample_logC)
-            group["average"] = spatial.average
-            group["sem"] = spatial.sem
-            group["mean_log"] = log_spatial.average
-            group["log_sem"] = log_spatial.sem
-            group["typical"] = exp.(log_spatial.average)
-            # Transform the log-mean ± one SEM; these are not confidence bounds.
-            group["typical_lower"] = exp.(log_spatial.average .- log_spatial.sem)
-            group["typical_upper"] = exp.(log_spatial.average .+ log_spatial.sem)
+            group["correlation_mean"] = spatial.average
+            group["correlation_sem"] = spatial.sem
+            group["log_correlation_mean"] = log_spatial.average
+            group["log_correlation_sem"] = log_spatial.sem
             write_autocorrelation(group, result.sample_Ct, times)
             attributes(group)["j"] = L ÷ 2
             attributes(group)["seed"] = seed
