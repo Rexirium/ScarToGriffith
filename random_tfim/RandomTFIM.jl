@@ -63,10 +63,22 @@ function pfaffian!(A::Matrix{ComplexF64})
     return value
 end
 
-"""Zero-temperature longitudinal imaginary-time autocorrelation; boundary=:open or :periodic.
+@inline function time_scale(times, time_domain)
+    time_domain in (:imaginary, :real) ||
+        throw(ArgumentError("time_domain must be :imaginary or :real"))
+    all(isfinite, times) || throw(ArgumentError("times must be finite"))
+    time_domain == :imaginary && any(t -> t < 0, times) &&
+        throw(ArgumentError("imaginary times must be nonnegative"))
+    return time_domain == :imaginary ? 1.0 : 1.0im
+end
 
-Returns `(C,)`, with C[n] = <sigma_z(j,tau) sigma_z(j,0)>, tau=times[n] >= 0.
-Here sigma_z(j,tau)=exp(tau*H)*sigma_z(j)*exp(-tau*H). C is a Vector{Float64}.
+"""Zero-temperature longitudinal autocorrelation; boundary=:open or :periodic.
+
+Returns `(C,)`, with C[n] = <sigma_z(j,times[n]) sigma_z(j,0)>.
+Default time_domain=:imaginary uses sigma_z(j,tau)=exp(tau*H)*sigma_z(j)*exp(-tau*H)
+and returns Vector{Float64}, with tau >= 0. time_domain=:real uses
+sigma_z(j,t)=exp(im*t*H)*sigma_z(j)*exp(-im*t*H) and returns Vector{ComplexF64}.
+Real times may be negative; this is the unsymmetrized correlation, retaining its phase.
 This also equals the connected correlation: the finite-chain parity ground
 state has <sigma_z(j)> = 0. Thermal and nonstationary initial states are not supported.
 J has L-1 (:open) or L (:periodic) bonds, h has L fields; require even L >= 2.
@@ -77,35 +89,36 @@ near singularity; tiny tails can reach the floating-point noise floor.
 Periodic chains switch fermion parity sectors. Open chains near an endpoint
 use a shorter JW-string Pfaffian instead.
 """
-function autocorrelation(J::AbstractVector{<:Real}, h::AbstractVector{<:Real},
-        times::AbstractVector{<:Real}; j::Int=length(h) ÷ 2, boundary::Symbol=:open)
+Base.@constprop :aggressive function autocorrelation(J::AbstractVector{<:Real}, h::AbstractVector{<:Real},
+        times::AbstractVector{<:Real}; j::Int=length(h) ÷ 2, boundary::Symbol=:open,
+        time_domain::Symbol=:imaginary)
     L = length(h)
     check_chain(J, h, boundary)
     1 <= j <= L || throw(ArgumentError("require 1 <= j <= L"))
-    all(t -> isfinite(t) && t >= 0, times) || throw(ArgumentError("imaginary times must be finite and nonnegative"))
-    isempty(times) && return (C=Float64[],)
+    scale = time_scale(times, time_domain)
+    isempty(times) && return (C=typeof(scale)[],)
 
     initial = svd!(fermion_matrix(J, h, Val(boundary)))
     evolution = boundary == :open ? initial : svd!(fermion_matrix(J, h, 1))
-    return autocorrelation(initial, evolution, times, j, Val(boundary))
+    return autocorrelation(initial, evolution, times, j, Val(boundary), scale)
 end
 
 # At the right endpoint, reflecting the chain makes the JW string short too.
-function autocorrelation(initial, evolution, times, j, ::Val{:open})
+function autocorrelation(initial, evolution, times, j, ::Val{:open}, scale=1.0)
     L = length(initial.S)
     depth = min(j, L+1-j)
 
     # Keep the scalar Pfaffian path only for genuinely short strings.
     if 4depth-2 <= L ÷ 4
-        return string_autocorrelation(initial, times, depth, j > L ÷ 2)
+        return string_autocorrelation(initial, times, depth, j > L ÷ 2, scale)
     end
-    return determinant_autocorrelation(initial, evolution, times, j)
+    return determinant_autocorrelation(initial, evolution, times, j, scale)
 end
 
-autocorrelation(initial, evolution, times, j, ::Val{:periodic}) =
-    determinant_autocorrelation(initial, evolution, times, j)
+autocorrelation(initial, evolution, times, j, ::Val{:periodic}, scale=1.0) =
+    determinant_autocorrelation(initial, evolution, times, j, scale)
 
-function string_autocorrelation(F, times, j, reflected)
+function string_autocorrelation(F, times, j, reflected, scale=1.0)
     L = length(F.S)
     N = 2j-1
     U, V = F.U, F.V
@@ -130,13 +143,13 @@ function string_autocorrelation(F, times, j, reflected)
     phased = similar(M)
     Q = Matrix{ComplexF64}(undef, N, N)
     W = Matrix{ComplexF64}(undef, 2N, 2N)
-    C = Vector{Float64}(undef, length(times))
+    C = Vector{typeof(scale)}(undef, length(times))
 
     for (n, t) in enumerate(times)
         for mu in 1:L
             angle = 2 * F.S[mu] * t
             isfinite(angle) || throw(ArgumentError("time-frequency product overflows Float64"))
-            phase = exp(-angle)
+            phase = scale isa Real ? exp(-angle) : cis(-angle)
             @inbounds for a in 1:N
                 phased[a, mu] = M[a, mu] * phase
             end
@@ -148,8 +161,9 @@ function string_autocorrelation(F, times, j, reflected)
             W[a, N+b] = Q[a, b]
             W[N+b, a] = -Q[a, b]
         end
-        # The spectral representation is real; discard imaginary roundoff only.
-        C[n] = (-1)^(j-1) * real(pfaffian!(W))
+        value = (-1)^(j-1) * pfaffian!(W)
+        # Only imaginary-time correlations are real.
+        C[n] = scale isa Real ? real(value) : value
     end
 
     return (; C)
@@ -158,16 +172,20 @@ end
 # sigma_z(j) is a product of the first 2j-1 Majoranas. Conjugation changes
 # the odd/even covariance to D_odd * Gamma_oe * D_even. Its state is Gaussian
 # with odd parity; no cyclic relabeling or extra SVD is needed.
-function determinant_autocorrelation(initial, evolution, times, j)
+function determinant_autocorrelation(initial, evolution, times, j, scale=1.0)
     L = length(initial.S)
     Gamma_oe = initial.U * initial.V'
     @views Gamma_oe[1:j, :] .*= -1
     @views Gamma_oe[:, 1:j-1] .*= -1
     B = evolution.U' * Gamma_oe * evolution.V
 
-    block = Matrix{Float64}(undef, L, L)
-    decays = zeros(L)
-    C = Vector{Float64}(undef, length(times))
+    diagonal = diag(B)
+    B ./= 2
+
+    block = Matrix{typeof(scale)}(undef, L, L)
+    decays = Vector{typeof(scale)}(undef, L)
+    row_factors = similar(decays)
+    C = Vector{typeof(scale)}(undef, length(times))
     # E0 + sum(evolution.S); exactly zero for OBC. Sum differences for PBC.
     energy_shift = initial === evolution ? 0.0 : sum(evolution.S .- initial.S)
 
@@ -176,19 +194,20 @@ function determinant_autocorrelation(initial, evolution, times, j)
         for a in 1:L
             angle = 2 * evolution.S[a] * t
             isfinite(angle) || throw(ArgumentError("time-frequency product overflows Float64"))
-            decays[a] = exp(-angle)
+            decays[a] = scale isa Real ? exp(-angle) : cis(-angle)
+            row_factors[a] = 1 - decays[a]
         end
 
-        # Factor exp(eps_a*tau) out of each row of cosh + sinh*B:
-        # R = (I+B)/2 + diag(exp(-2eps*tau))*(I-B)/2.
-        # Keep the two terms separate, including on the diagonal, to retain
-        # the decaying term when B[a,a] == -1 (e.g. the decoupled-spin limit).
-        @inbounds for b in 1:L, a in 1:L
-            delta = a == b ? 1.0 : 0.0
-            block[a, b] = (delta + B[a, b])/2 + decays[a]*(delta - B[a, b])/2
+        # R = (I+B_original)/2 + diag(decays)*(I-B_original)/2.
+        # Keep diagonal terms separate to retain tiny decays when B_original[b,b] == -1.
+        @inbounds for b in 1:L
+            @simd for a in 1:L
+                block[a, b] = row_factors[a]*B[a, b]
+            end
+            block[b, b] = (1 + diagonal[b])/2 + decays[b]*((1 - diagonal[b])/2)
         end
         logabs, phase = logabsdet(lu!(block; check=false))
-        C[n] = phase * exp(logabs + energy_shift*t)
+        C[n] = phase * exp(logabs + scale*(energy_shift*t))
     end
 
     return (; C)
@@ -288,56 +307,62 @@ For :open, only origins 1:L-r exist; other entries are NaN, not wrapped pairs.
 Rows label origins, columns label distance r+1. AP fermions acquire a minus
 sign on crossing the seam, while the spin correlations remain periodic.
 Use incremental orthogonal QR updates and log determinants to evaluate all
-distances per origin in O(rmax^3). Near-singular prefixes use pivoted LU.
-Negative determinants give NaN in logC; zero gives -Inf. Signed C is retained.
+distances per origin in O(rmax^3). Suspect prefixes use a triangular condition
+estimate, without refactorization. Returns `(C, logC, resolved)`; signed C is
+retained, while unresolved or nonpositive determinants give NaN in logC.
+logtol (default 1e-6) is the target absolute error in log|C|. The diagnostic
+uses relative roundoff scale 64*r*eps and r*scale/rcond, not a rigorous bound
+or certification of the upstream G. Unscreened prefixes are provisionally resolved.
 """
 function correlations(G::AbstractMatrix{Float64}; boundary::Symbol=:periodic,
-        rmax::Int=size(G, 1) ÷ 2)
+        rmax::Int=size(G, 1) ÷ 2, logtol::Real=1e-6)
     check_boundary(boundary)
     L = size(G, 1)
     size(G, 2) == L || throw(DimensionMismatch("G must be square"))
     0 <= rmax <= (boundary == :open ? L-1 : L ÷ 2) || throw(ArgumentError("invalid rmax for boundary"))
+    isfinite(logtol) && logtol > 0 || throw(ArgumentError("logtol must be finite and positive"))
+    all(isfinite, G) || throw(ArgumentError("G must be finite"))
 
-    C, logC = ones(L, rmax+1), zeros(L, rmax+1)
-    rmax == 0 && return (; C, logC)
+    C, logC = fill(NaN, L, rmax+1), fill(NaN, L, rmax+1)
+    resolved = fill(false, L, rmax+1)
+    C[:, 1] .= 1
+    logC[:, 1] .= 0
+    resolved[:, 1] .= true
+    rmax == 0 && return (; C, logC, resolved)
 
-    minor = Matrix{Float64}(undef, rmax, rmax)
-    work = similar(minor)
-    luwork = similar(minor)
+    work = Matrix{Float64}(undef, rmax, rmax)
+    scales = Vector{Float64}(undef, rmax)
 
     for i in 1:L
         count = boundary == :open ? min(rmax, L-i) : rmax
-        for r in count+1:rmax
-            C[i, r+1] = logC[i, r+1] = NaN
-        end
         count == 0 && continue
 
-        # Store the transpose. Only periodic pairs crossing the seam need signs.
-        if i+count <= L
-            @inbounds for b in 1:count, a in 1:count
-                minor[a, b] = G[i+b-1, i+a]
-            end
-        else
-            @inbounds for b in 1:count, a in 1:count
-                row, col = i+b-1, i+a
-                seam = xor(row > L, col > L) ? -1.0 : 1.0
-                minor[a, b] = seam * G[row > L ? row-L : row, col > L ? col-L : col]
-            end
+        # Transposed prefix; only periodic pairs can cross the AP seam.
+        @inbounds for b in 1:count, a in 1:count
+            row, col = i+b-1, i+a
+            seam = xor(row > L, col > L) ? -1.0 : 1.0
+            work[a, b] = seam * G[row > L ? row-L : row, col > L ? col-L : col]
         end
 
-        copyto!(work, minor)
-        leading_correlations!(C, logC, i, minor, work, luwork, count)
+        leading_correlations!(C, logC, resolved, i, work, scales, count, logtol)
     end
 
-    return (; C, logC)
+    return (; C, logC, resolved)
 end
 
 # Store the transpose so rotations touch contiguous columns. At step r,
 # rotations only mix columns 1:r and have determinant +1; thus the product
 # of the first r diagonals is the original r-th leading principal minor.
 # Unlike a Schur-complement update this also survives a singular earlier prefix.
-function leading_correlations!(C, logC, i, original, A, luwork, n)
-    tolerance = sqrt(eps(Float64)) * maximum(abs, @view original[1:n, 1:n])
+function leading_correlations!(C, logC, resolved, i, A, scales, n, logtol)
+    # Save each original prefix's scale before rotations overwrite A.
+    magnitude = 0.0
+    @inbounds for r in 1:n
+        for k in 1:r
+            magnitude = max(magnitude, abs(A[k, r]), abs(A[r, k]))
+        end
+        scales[r] = magnitude
+    end
 
     @inbounds for r in 1:n
         for k in 1:r-1
@@ -351,6 +376,8 @@ function leading_correlations!(C, logC, i, original, A, luwork, n)
             end
         end
 
+        error_scale = r * (64r * eps(Float64))
+        tolerance = max(sqrt(eps(Float64)), error_scale/logtol) * scales[r]
         logabs, phase, small = 0.0, 1.0, false
         for k in 1:r
             diagonal = A[k, k]
@@ -359,45 +386,65 @@ function leading_correlations!(C, logC, i, original, A, luwork, n)
             small |= abs(diagonal) <= tolerance
         end
 
-        if small
-            # Retain the original pivoted-LU diagnosis near rank loss; never
-            # propagate a tiny-pivot division into subsequent distances.
-            prefix = @view luwork[1:r, 1:r]
-            copyto!(prefix, transpose(@view original[1:r, 1:r]))
-            logabs, phase = logabsdet(lu!(prefix; check=false))
+        ok = isfinite(logabs)
+        if small && ok
+            # Column rotations leave a LOWER triangular factor. TRCON reads
+            # it without modifying the QR state needed by later distances.
+            rcond = LAPACK.trcon!('I', 'L', 'N', @view A[1:r, 1:r])
+            ok = rcond > 0 && error_scale <= logtol*rcond
         end
 
         C[i, r+1] = phase * exp(logabs)
-        logC[i, r+1] = phase > 0 ? logabs : phase == 0 ? -Inf : NaN
+        resolved[i, r+1] = ok
+        logC[i, r+1] = ok && phase > 0 ? logabs : NaN
     end
 
     return nothing
 end
 
+function mean_sem(samples::AbstractMatrix)
+    n = size(samples, 2)
+    average = vec(mean(samples; dims=2))
+    sem = n > 1 ? vec(std(samples; dims=2, mean=reshape(average, :, 1))) / sqrt(n) :
+        fill(NaN, size(samples, 1))
+    return (; average, sem)
+end
+
 """Seeded disorder ensemble; columns of per-sample means label realizations.
 
-Returns `(gaps, resolved, sample_C, sample_logC, pair_logC, sample_Ct)`.
+Returns `(gaps, resolved, C_mean, C_sem, logC_mean, logC_sem, Ct_mean, Ct_sem, pair_logC)`.
+Means and SEM are vectors over distance or time, computed across independent
+realizations (corrected sample variance); SEM is NaN for one realization.
+For complex real-time correlations, Ct_mean is complex and Ct_sem is real,
+using squared absolute deviations. Empty times yields empty Ct_mean/Ct_sem.
+Set keep_samples=true to also return sample_C, sample_logC and sample_Ct;
+these per-realization matrices are omitted by default.
 Each realization is drawn once; gaps, spatial pairs and time correlations
 are evaluated in the same sample loop. sample_Ct[tau, realization] is a
-Matrix{Float64} of real imaginary-time correlations.
+Matrix{Float64} for time_domain=:imaginary (default), or Matrix{ComplexF64}
+for time_domain=:real, retaining the unsymmetrized correlation's phase.
 Realizations are drawn serially, then evaluated with Threads.@threads;
 the seed and sample order are independent of the number of Julia threads.
 Use julia --threads=N and a single BLAS thread for parallel sample evaluation.
-Set times to a finite, nonnegative imaginary-time grid at j (default L/2).
+Set times to a finite grid at j (default L/2); imaginary times must be nonnegative.
 Empty times (default) skips dynamics; rmax=0 skips nontrivial spatial pairs.
 Use both for gap-only runs. `pair_logC` is empty unless keep_pairs=true.
-Compute means and SEM across sample columns; sites within a sample are correlated.
+Sites within a sample are correlated, so SEM uses sample columns, not sites.
 Average pair logarithms before exponentiating to get the typical correlation.
 Select boundary=:periodic (default) or :open. Open-chain sample means use
 only the L-r valid origins; invalid entries of pair_logC are NaN.
+logtol is passed to correlations; unresolved spatial logs propagate as NaN
+through sample and ensemble means, without dropping sites or realizations.
 """
-function disorder_ensemble(L::Int, h0::Real; nsamples::Int=100, seed::Int=1996,
-        rmax::Int=L ÷ 2, keep_pairs::Bool=false, boundary::Symbol=:periodic,
-        times::AbstractVector{<:Real}=Float64[], j::Int=L ÷ 2)
+Base.@constprop :aggressive function disorder_ensemble(L::Int, h0::Real; nsamples::Int=100, seed::Int=1996,
+        rmax::Int=L ÷ 2, keep_pairs::Bool=false, keep_samples::Bool=false, boundary::Symbol=:periodic,
+        times::AbstractVector{<:Real}=Float64[], j::Int=L ÷ 2,
+        time_domain::Symbol=:imaginary, logtol::Real=1e-6)
     check_boundary(boundary)
     nsamples > 0 || throw(ArgumentError("nsamples must be positive"))
+    isfinite(logtol) && logtol > 0 || throw(ArgumentError("logtol must be finite and positive"))
     1 <= j <= L || throw(ArgumentError("require 1 <= j <= L"))
-    all(t -> isfinite(t) && t >= 0, times) || throw(ArgumentError("imaginary times must be finite and nonnegative"))
+    scale = time_scale(times, time_domain)
     0 <= rmax <= (boundary == :open ? L-1 : L ÷ 2) || throw(ArgumentError("invalid rmax"))
 
     bc = Val(boundary)
@@ -409,7 +456,7 @@ function disorder_ensemble(L::Int, h0::Real; nsamples::Int=100, seed::Int=1996,
     gaps = zeros(nsamples)
     resolved = fill(false, nsamples)
     sample_C, sample_logC = zeros(rmax+1, nsamples), zeros(rmax+1, nsamples)
-    sample_Ct = Matrix{Float64}(undef, length(times), nsamples)
+    sample_Ct = Matrix{typeof(scale)}(undef, length(times), nsamples)
     pair_logC = Array{Float64}(undef, keep_pairs ? (L, rmax+1, nsamples) : (0, 0, 0))
 
     # Equal-site spatial correlations are known without a factorization.
@@ -438,7 +485,7 @@ function disorder_ensemble(L::Int, h0::Real; nsamples::Int=100, seed::Int=1996,
 
         if rmax > 0
             G = -(initial.V * initial.U')
-            pair = correlations(G; rmax, boundary)
+            pair = correlations(G; rmax, boundary, logtol)
             for r in 1:rmax
                 origins = 1:(boundary == :open ? L-r : L)
                 sample_C[r+1, n] = mean(@view pair.C[origins, r+1])
@@ -447,10 +494,14 @@ function disorder_ensemble(L::Int, h0::Real; nsamples::Int=100, seed::Int=1996,
             keep_pairs && (pair_logC[:, :, n] = pair.logC)
         end
 
-        dynamics && (sample_Ct[:, n] = autocorrelation(initial, evolution, times, j, bc).C)
+        dynamics && (sample_Ct[:, n] = autocorrelation(initial, evolution, times, j, bc, scale).C)
     end
 
-    return (; gaps, resolved, sample_C, sample_logC, pair_logC, sample_Ct)
+    spatial, log_spatial, temporal = mean_sem(sample_C), mean_sem(sample_logC), mean_sem(sample_Ct)
+    summary = (; gaps, resolved, C_mean=spatial.average, C_sem=spatial.sem,
+        logC_mean=log_spatial.average, logC_sem=log_spatial.sem,
+        Ct_mean=temporal.average, Ct_sem=temporal.sem, pair_logC)
+    return keep_samples ? (; summary..., sample_C, sample_logC, sample_Ct) : summary
 end
 
 end

@@ -1,11 +1,13 @@
-using Test, HDF5, LinearAlgebra
 include(joinpath(@__DIR__, "..", "run.jl"))
+using Test
 
 @testset "Demo/full: all observables and disorder SEM" begin
     mktempdir() do directory
         for mode in ("demo", "full"), boundary in (:periodic, :open)
             output = joinpath(directory, "$(mode)_$(boundary).h5")
-            main([mode, "2", output, string(boundary)])
+            redirect_stdout(devnull) do
+                main([mode, "2", output, string(boundary)])
+            end
             h5open(output, "r") do file
                 @test read(attributes(file)["complete"])
                 @test read(attributes(file)["mode"]) == mode
@@ -22,21 +24,14 @@ include(joinpath(@__DIR__, "..", "run.jl"))
                 for L in sizes
                     @test Set(keys(file["L$L"])) == Set("h$h" for h in fields)
                     for h in keys(file["L$L"])
-                        @test Set(keys(file["L$L/$h"])) == Set([
+                        group = file["L$L/$h"]
+                        @test Set(keys(group)) == Set([
                             "gap_samples", "gap_resolved", "log_gap_samples",
                             "gap_mean", "gap_sem", "log_gap_mean", "log_gap_sem",
                             "correlation_mean", "correlation_sem",
                             "log_correlation_mean", "log_correlation_sem",
                             "imaginary_time", "autocorrelation_mean", "autocorrelation_sem"])
-                    end
-                    for h in keys(file["L$L"]), name in ("pair_logC", "r", "pair_counts",
-                        "sample_C", "sample_logC", "sample_C_real", "sample_C_imag",
-                        "typical", "typical_lower", "typical_upper",
-                        "average_real", "average_imag", "sem_real", "sem_imag")
-                        @test !haskey(file["L$L/$h"], name)
-                    end
-                    for h in keys(file["L$L"]), name in ("L", "h0", "nsamples", "unresolved_gaps")
-                        @test !haskey(attributes(file["L$L/$h"]), name)
+                        @test Set(keys(attributes(group))) == Set(["j", "seed", "seconds"])
                     end
                 end
                 group = file["L16/h1.0"]
@@ -49,31 +44,27 @@ include(joinpath(@__DIR__, "..", "run.jl"))
                     @test read(group["$(prefix)_sem"]) ≈ std(samples) / sqrt(2)
                 end
                 times = read(group["imaginary_time"])
-                @test times == collect(0.0:0.1:20.0)
-                expected = disorder_ensemble(16, 1.0; times, nsamples=2,
+                @test times == collect(0.0:0.2:20.0)
+                expected = disorder_ensemble(16, 1.0; keep_samples=true, times, nsamples=2,
                     seed=read(attributes(group)["seed"]), boundary)
-                spatial, log_spatial = expected.sample_C, expected.sample_logC
-                @test read(group["correlation_mean"]) ≈ vec(mean(spatial; dims=2))
-                @test read(group["correlation_sem"]) ≈ vec(std(spatial; dims=2)) / sqrt(2)
-                @test read(group["log_correlation_mean"]) ≈ vec(mean(log_spatial; dims=2))
-                @test read(group["log_correlation_sem"]) ≈ vec(std(log_spatial; dims=2)) / sqrt(2)
-                samples = expected.sample_Ct
-                @test samples isa Matrix{Float64}
-                @test size(samples) == (length(times), 2)
-                @test all(isfinite, samples)
-                average = read(group["autocorrelation_mean"])
-                sem = read(group["autocorrelation_sem"])
-                @test average isa Vector{Float64}
-                @test sem isa Vector{Float64}
-                @test average ≈ vec(mean(samples; dims=2))
-                @test sem ≈ vec(std(samples; dims=2)) / sqrt(2)
+                for (prefix, samples) in (("correlation", expected.sample_C),
+                        ("log_correlation", expected.sample_logC), ("autocorrelation", expected.sample_Ct))
+                    average, sem = read(group["$(prefix)_mean"]), read(group["$(prefix)_sem"])
+                    @test average isa Vector{Float64} && sem isa Vector{Float64}
+                    @test average ≈ vec(mean(samples; dims=2)) nans=true
+                    @test sem ≈ vec(std(samples; dims=2)) / sqrt(2) nans=true
+                end
+                @test size(expected.sample_Ct) == (length(times), 2)
+                @test all(isfinite, expected.sample_Ct)
                 @test gaps ≈ expected.gaps
-                @test average[1] ≈ 1 atol=1e-12
+                @test read(group["autocorrelation_mean"])[1] ≈ 1 atol=1e-12
             end
             @test_throws ArgumentError main([mode, "2", output])
         end
         single = joinpath(directory, "single.h5")
-        main(["demo", "1", single])
+        redirect_stdout(devnull) do
+            main(["demo", "1", single])
+        end
         h5open(single, "r") do file
             group = file["L16/h1.0"]
             for name in ("gap_sem", "log_gap_sem")

@@ -10,12 +10,12 @@ include(joinpath(@__DIR__, "..", "plot_results.jl"))
             HDF5.attributes(f)["boundary"] = "periodic"
             for L in sizes, h0 in fields
                 g = create_group(f, "L$L/h$h0")
-                C = repeat(exp.(-h0 .* collect(0:L÷2)), 1, 2)
-                g["sample_C"], g["sample_logC"] = C, log.(C)
-                g["average"] = vec(mean(C; dims=2))
-                g["sem"] = vec(std(C; dims=2)) / sqrt(2)
-                g["mean_log"] = vec(mean(log.(C); dims=2))
-                g["log_sem"] = vec(std(log.(C); dims=2)) / sqrt(2)
+                average = exp.(-h0 .* (0:L÷2))
+                logaverage = log.(average)
+                # Two identical samples: known means and exactly zero SEM.
+                g["sample_C"], g["sample_logC"] = repeat(average, 1, 2), repeat(logaverage, 1, 2)
+                g["average"], g["mean_log"] = average, logaverage
+                g["sem"], g["log_sem"] = zeros(length(average)), zeros(length(average))
                 g["loggaps"], g["resolved"] = [-1.0, -2.0], [true, true]
             end
         end

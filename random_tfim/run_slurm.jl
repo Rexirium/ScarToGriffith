@@ -6,10 +6,7 @@ end
 
 module RandomTFIMSlurm
 
-using Distributed
-using HDF5
-using LinearAlgebra
-using Statistics
+using Distributed, HDF5, LinearAlgebra, Statistics
 
 include("RandomTFIM.jl")
 using .RandomTFIM
@@ -19,17 +16,14 @@ function mean_sem(samples::AbstractVector)
     return (average=mean(samples), sem=n > 1 ? std(samples) / sqrt(n) : NaN)
 end
 
-function mean_sem(samples::AbstractMatrix)
-    n = size(samples, 2)
-    return (average=vec(mean(samples; dims=2)),
-        sem=n > 1 ? vec(std(samples; dims=2)) / sqrt(n) : fill(NaN, size(samples, 1)))
-end
-
-function write_autocorrelation(group, sample_Ct::AbstractMatrix{<:Real}, times)
+function write_correlations(group, result, times)
+    group["correlation_mean"] = result.C_mean
+    group["correlation_sem"] = result.C_sem
+    group["log_correlation_mean"] = result.logC_mean
+    group["log_correlation_sem"] = result.logC_sem
     group["imaginary_time"] = times
-    stats = mean_sem(sample_Ct)
-    group["autocorrelation_mean"] = stats.average
-    group["autocorrelation_sem"] = stats.sem
+    group["autocorrelation_mean"] = result.Ct_mean
+    group["autocorrelation_sem"] = result.Ct_sem
 end
 
 function parse_config(args)
@@ -53,12 +47,11 @@ end
 
 function compute_case(job, cfg)
     BLAS.set_num_threads(1)
-    started = time_ns()
-    result = RandomTFIM.disorder_ensemble(job.L, job.h0;
+    seconds = @elapsed result = disorder_ensemble(job.L, job.h0;
         nsamples=cfg.nsamples, seed=job.seed, rmax=job.L ÷ 2,
         boundary=cfg.boundary, times=cfg.times)
     return (; L=job.L, h0=job.h0, seed=job.seed, result,
-        worker_id=myid(), seconds=(time_ns() - started) / 1e9)
+        worker_id=myid(), seconds)
 end
 
 function write_case(file, data, cfg)
@@ -75,12 +68,7 @@ function write_case(file, data, cfg)
         group["$(prefix)_sem"] = stats.sem
     end
 
-    spatial, log_spatial = mean_sem(result.sample_C), mean_sem(result.sample_logC)
-    group["correlation_mean"] = spatial.average
-    group["correlation_sem"] = spatial.sem
-    group["log_correlation_mean"] = log_spatial.average
-    group["log_correlation_sem"] = log_spatial.sem
-    write_autocorrelation(group, result.sample_Ct, cfg.times)
+    write_correlations(group, result, cfg.times)
     attributes(group)["j"] = data.L ÷ 2
     attributes(group)["seed"] = data.seed
     attributes(group)["seconds"] = data.seconds
@@ -166,11 +154,6 @@ function run_scan(cfg, pids)
     return cfg.output
 end
 
-function initialize_worker()
-    BLAS.set_num_threads(1)
-    return Threads.nthreads()
-end
-
 end # module
 
 if abspath(PROGRAM_FILE) == @__FILE__
@@ -182,12 +165,6 @@ if abspath(PROGRAM_FILE) == @__FILE__
     pids = addprocs(SlurmManager(); exeflags=flags)
 
     try
-        isempty(pids) && error("SlurmClusterManager did not start any workers")
-        for pid in pids
-            threads = remotecall_fetch(RandomTFIMSlurm.initialize_worker, pid)
-            threads == 8 || error("Worker $pid started with $threads threads, expected 8")
-            @info "Worker ready" pid threads
-        end
         RandomTFIMSlurm.run_scan(config, pids)
     finally
         rmprocs(pids)

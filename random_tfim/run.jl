@@ -12,17 +12,14 @@ function mean_sem(samples::AbstractVector)
     return (average=mean(samples), sem=n > 1 ? std(samples) / sqrt(n) : NaN)
 end
 
-function mean_sem(samples::AbstractMatrix)
-    n = size(samples, 2)
-    return (average=vec(mean(samples; dims=2)),
-        sem=n > 1 ? vec(std(samples; dims=2)) / sqrt(n) : fill(NaN, size(samples, 1)))
-end
-
-function write_autocorrelation(group, sample_Ct::AbstractMatrix{<:Real}, times)
+function write_correlations(group, result, times)
+    group["correlation_mean"] = result.C_mean
+    group["correlation_sem"] = result.C_sem
+    group["log_correlation_mean"] = result.logC_mean
+    group["log_correlation_sem"] = result.logC_sem
     group["imaginary_time"] = times
-    stats = mean_sem(sample_Ct)
-    group["autocorrelation_mean"] = stats.average
-    group["autocorrelation_sem"] = stats.sem
+    group["autocorrelation_mean"] = result.Ct_mean
+    group["autocorrelation_sem"] = result.Ct_sem
 end
 
 """Run a small demonstration or a paper-sized ensemble; save portable HDF5 data.
@@ -85,12 +82,7 @@ function main(args)
                 group["$(prefix)_mean"] = stats.average
                 group["$(prefix)_sem"] = stats.sem
             end
-            spatial, log_spatial = mean_sem(result.sample_C), mean_sem(result.sample_logC)
-            group["correlation_mean"] = spatial.average
-            group["correlation_sem"] = spatial.sem
-            group["log_correlation_mean"] = log_spatial.average
-            group["log_correlation_sem"] = log_spatial.sem
-            write_autocorrelation(group, result.sample_Ct, times)
+            write_correlations(group, result, times)
             attributes(group)["j"] = L ÷ 2
             attributes(group)["seed"] = seed
             attributes(group)["seconds"] = seconds
