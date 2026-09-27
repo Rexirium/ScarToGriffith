@@ -251,6 +251,15 @@ julia random_tfim/run.jl full
 `run.jl` 自动激活 local 环境；直接 include 核心模块时由调用者选环境。
 Windows 的 juliaup 执行别名若无法访问，可用实际安装目录的 `bin/julia.exe`。
 
+Slurm 多进程扫描使用 `run_slurm.jl`：每个 worker 计算一个 `(L,h0)`，worker 固定启动 8 个 Julia 线程，主进程独占 HDF5 写入。提交脚本默认运行完整扫描；参数与 `run.jl` 一致：
+
+```sh
+sbatch random_tfim/submit.sh
+sbatch random_tfim/submit.sh demo 4 random_tfim/results/demo_slurm.h5 open
+```
+
+脚本自动激活 `julia-env/server`，需确保该环境已安装 HDF5 和 SlurmClusterManager。提交脚本中的账户、分区、工作目录和资源数按集群配置调整。
+
 ```julia
 include("random_tfim/RandomTFIM.jl")
 using .RandomTFIM, Random, Statistics
