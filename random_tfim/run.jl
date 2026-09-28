@@ -7,29 +7,7 @@ if !isdefined(Main, :RandomTFIM)
     using .RandomTFIM
 end
 
-function mean_sem(samples::AbstractVector)
-    n = length(samples)
-    return (average=mean(samples), sem=n > 1 ? std(samples) / sqrt(n) : NaN)
-end
-
-function write_correlations(group, result, times)
-    RandomTFIM.time_scale(times, :imaginary)
-    group["correlation_mean"] = result.C_mean
-    group["correlation_sem"] = result.C_sem
-    group["log_correlation_mean"] = result.logC_mean
-    group["log_correlation_sem"] = result.logC_sem
-    group["imaginary_time"] = times
-    group["real_time"] = times
-    # Both time domains provide real-valued sample means and SEM upstream.
-    group["autocorrelation_mean"] = result.Ct_mean
-    group["autocorrelation_sem"] = result.Ct_sem
-    group["log_autocorrelation_mean"] = result.logCt_mean
-    group["log_autocorrelation_sem"] = result.logCt_sem
-    group["real_autocorrelation_mean"] = result.real_Ct_mean
-    group["real_autocorrelation_sem"] = result.real_Ct_sem
-    group["real_log_autocorrelation_mean"] = result.real_logCt_mean
-    group["real_log_autocorrelation_sem"] = result.real_logCt_sem
-end
+include("results_io.jl")
 
 """Run a small demonstration or a paper-sized ensemble; save portable HDF5 data.
 
@@ -51,52 +29,32 @@ function main(args)
 
     sizes = mode == "demo" ? (16, 32) : (16, 32, 64, 128)
     fields = 10 .^ range(-1, 1, 101)
+    sample_fields = select_sample_fields(fields)
     times = collect(0.0:0.2:20.0)
     BLAS.set_num_threads(1)
     mkpath(dirname(output))
 
     h5open(output, "w") do file
         attributes(file)["complete"] = false
-        attributes(file)["julia_version"] = string(VERSION)
-        attributes(file)["active_project"] = Base.active_project()
-        attributes(file)["mode"] = mode
+        attributes(file)["nsamples"] = nsamples
         attributes(file)["distribution"] = "box"
-        attributes(file)["boundary"] = "$boundary spins; even L; Pauli normalization"
-        attributes(file)["precision"] = "Float64 outputs; ComplexF64 internal Pfaffian; unresolved log gaps are NaN"
-        attributes(file)["observable"] = "gap; <sigma_z(i) sigma_z(i+r)>; <sigma_z(j,tau) sigma_z(j,0)>; real(<sigma_z(j,t) sigma_z(j,0)>); j=L/2; ground state"
-        attributes(file)["time_domain"] = "imaginary and real"
-        attributes(file)["time_definition"] = "tau >= 0; sigma_z(tau) = exp(tau*H) sigma_z exp(-tau*H); t >= 0; sigma_z(t) = exp(im*t*H) sigma_z exp(-im*t*H); real part only; hbar=1"
-        attributes(file)["uncertainty"] = "SEM across independent disorder samples; corrected sample variance; NaN for one sample"
-        attributes(file)["blas"] = string(BLAS.get_config())
-        attributes(file)["blas_threads"] = BLAS.get_num_threads()
+        attributes(file)["boundary"] = string(boundary)
 
         parameters = create_group(file, "parameters")
         parameters["sizes"] = collect(sizes)
         parameters["fields"] = collect(fields)
+        parameters["sample_fields"] = sample_fields
 
         for (k, h0) in enumerate(fields), L in sizes
             rmax = L ÷ 2
             seed = 1996 + 1000k + L
             seconds = @elapsed result = disorder_ensemble(L, h0, times; nsamples, seed,
-                rmax, boundary)
+                rmax, boundary, keep_samples=h0 in sample_fields)
             group = create_group(file, "L$(L)/h$(h0)")
-            group["gap_samples"] = result.gaps
-            group["gap_resolved"] = result.resolved
-            # Derived quantities belong to the output/analysis layer.
-            loggaps = map((gap, ok) -> ok ? log(gap) : NaN,
-                result.gaps, result.resolved)
-            group["log_gap_samples"] = loggaps
-            for (prefix, samples) in (("gap", result.gaps), ("log_gap", loggaps))
-                stats = mean_sem(samples)
-                group["$(prefix)_mean"] = stats.average
-                group["$(prefix)_sem"] = stats.sem
-            end
-            write_correlations(group, result, times)
+            write_observables(group, result, times)
             attributes(group)["j"] = L ÷ 2
             attributes(group)["seed"] = seed
-            attributes(group)["seconds"] = seconds
-            println("L=$L h0=$h0 samples=$nsamples time=$(round(seconds; digits=3))s",
-                " unresolved=$(count(!, result.resolved))")
+            println("L=$L h0=$h0 samples=$nsamples time=$(round(seconds; digits=3))s")
             flush(file)
         end
         complete = attributes(file)["complete"]

@@ -374,6 +374,11 @@ end
 # Preserve invalid samples in log statistics; never take abs or drop samples.
 correlation_log(x::Real) = isfinite(x) && x > 0 ? log(x) : NaN
 
+function mean_sem(samples::AbstractVector)
+    n = length(samples)
+    return (average=mean(samples), sem=n > 1 ? std(samples) / sqrt(n) : NaN)
+end
+
 function mean_sem(samples::AbstractMatrix)
     n = size(samples, 2)
     average = vec(mean(samples; dims=2))
@@ -384,16 +389,17 @@ end
 
 """Seeded disorder ensemble; columns of per-sample means label realizations.
 
-Returns gaps, resolved, spatial statistics C_mean/C_sem and logC_mean/logC_sem,
+Returns scalar gap_mean/gap_sem and log_gap_mean/log_gap_sem,
+spatial statistics C_mean/C_sem and logC_mean/logC_sem,
 imaginary-time statistics Ct_mean/Ct_sem and logCt_mean/logCt_sem, and
 real-time statistics real_Ct_mean/real_Ct_sem and real_logCt_mean/real_logCt_sem.
-Resolved refers only to gaps.
-Means and SEM are vectors over distance or time, computed across independent
-realizations (corrected sample variance); SEM is NaN for one realization.
+Unresolved gaps give NaN logarithms, which propagate through log-gap statistics.
+Correlation means and SEM are vectors over distance or time. All statistics use
+independent realizations (corrected sample variance); SEM is NaN for one realization.
 All correlation samples and statistics are real; real-time statistics describe
 only the real part. Nonpositive real-time values give NaN logarithms.
-Set keep_samples=true to also return sample_C, sample_logC, sample_Ct,
-sample_logCt, sample_real_Ct and sample_real_logCt matrices (columns are samples).
+Set keep_samples=true to also return gaps and resolved vectors, and sample_C,
+sample_Ct and sample_real_Ct matrices (columns are samples). Log samples are not returned.
 Each realization is drawn once; gaps, spatial pairs and both time domains share
 SVDs in the same sample loop. Both time domains use the required positional times:
 a finite, nonnegative grid at j (default L/2). Empty times yields empty temporal
@@ -467,14 +473,17 @@ Base.@constprop :aggressive function disorder_ensemble(L::Int, h0::Real,
     spatial, log_spatial = mean_sem(sample_C), mean_sem(sample_logC)
     temporal, log_temporal = mean_sem(sample_Ct), mean_sem(sample_logCt)
     real_temporal, real_log_temporal = mean_sem(sample_real_Ct), mean_sem(sample_real_logCt)
-    summary = (; gaps, resolved, C_mean=spatial.average, C_sem=spatial.sem,
+    gap_stats = mean_sem(gaps)
+    log_gap_stats = mean_sem(map((gap, ok) -> ok ? log(gap) : NaN, gaps, resolved))
+    summary = (; gap_mean=gap_stats.average, gap_sem=gap_stats.sem,
+        log_gap_mean=log_gap_stats.average, log_gap_sem=log_gap_stats.sem,
+        C_mean=spatial.average, C_sem=spatial.sem,
         logC_mean=log_spatial.average, logC_sem=log_spatial.sem,
         Ct_mean=temporal.average, Ct_sem=temporal.sem,
         logCt_mean=log_temporal.average, logCt_sem=log_temporal.sem,
         real_Ct_mean=real_temporal.average, real_Ct_sem=real_temporal.sem,
         real_logCt_mean=real_log_temporal.average, real_logCt_sem=real_log_temporal.sem)
-    return keep_samples ? (; summary..., sample_C, sample_logC, sample_Ct, sample_logCt,
-        sample_real_Ct, sample_real_logCt) : summary
+    return keep_samples ? (; summary..., gaps, resolved, sample_C, sample_Ct, sample_real_Ct) : summary
 end
 
 end

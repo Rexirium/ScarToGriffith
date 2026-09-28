@@ -9,24 +9,23 @@ using Test
                 main([mode, "2", output, string(boundary)])
             end
             h5open(output, "r") do file
+                @test Set(keys(attributes(file))) == Set(["complete", "nsamples", "distribution", "boundary"])
                 @test read(attributes(file)["complete"])
-                @test read(attributes(file)["mode"]) == mode
-                @test read(attributes(file)["time_domain"]) == "imaginary and real"
-                @test occursin("exp(tau*H)", read(attributes(file)["time_definition"]))
-                @test occursin("sigma_z(j,tau)", read(attributes(file)["observable"]))
-                @test startswith(read(attributes(file)["boundary"]), string(boundary))
+                @test read(attributes(file)["boundary"]) == string(boundary)
                 sizes = mode == "demo" ? (16, 32) : (16, 32, 64, 128)
                 fields = 10 .^ range(-1, 1, 101)
                 @test Set(keys(file)) == Set(["parameters"; ["L$L" for L in sizes]])
-                @test Set(keys(file["parameters"])) == Set(["sizes", "fields"])
+                @test Set(keys(file["parameters"])) == Set(["sizes", "fields", "sample_fields"])
                 @test read(file["parameters/sizes"]) == collect(sizes)
                 @test read(file["parameters/fields"]) == fields
+                selected = select_sample_fields(fields)
+                @test read(file["parameters/sample_fields"]) == selected
+                @test read(attributes(file)["nsamples"]) == 2
                 for L in sizes
                     @test Set(keys(file["L$L"])) == Set("h$h" for h in fields)
                     for h in keys(file["L$L"])
                         group = file["L$L/$h"]
-                        @test Set(keys(group)) == Set([
-                            "gap_samples", "gap_resolved", "log_gap_samples",
+                        expected_keys = Set([
                             "gap_mean", "gap_sem", "log_gap_mean", "log_gap_sem",
                             "correlation_mean", "correlation_sem",
                             "log_correlation_mean", "log_correlation_sem",
@@ -34,14 +33,19 @@ using Test
                             "log_autocorrelation_mean", "log_autocorrelation_sem",
                             "real_time", "real_autocorrelation_mean", "real_autocorrelation_sem",
                             "real_log_autocorrelation_mean", "real_log_autocorrelation_sem"])
-                        @test Set(keys(attributes(group))) == Set(["j", "seed", "seconds"])
+                        if parse(Float64, h[2:end]) in selected
+                            union!(expected_keys, ("gap_samples", "gap_resolved",
+                                "sample_C", "sample_Ct", "sample_real_Ct"))
+                        end
+                        @test Set(keys(group)) == expected_keys
+                        @test Set(keys(attributes(group))) == Set(["j", "seed"])
                     end
                 end
                 group = file["L16/h1.0"]
                 @test read(attributes(group)["j"]) == 8
                 gaps, resolved = read(group["gap_samples"]), read(group["gap_resolved"])
-                logs = read(group["log_gap_samples"])
-                @test isequal(logs, map((gap, ok) -> ok ? log(gap) : NaN, gaps, resolved))
+                @test !haskey(group, "log_gap_samples")
+                logs = map((gap, ok) -> ok ? log(gap) : NaN, gaps, resolved)
                 for (prefix, samples) in (("gap", gaps), ("log_gap", logs))
                     @test read(group["$(prefix)_mean"]) ≈ mean(samples)
                     @test read(group["$(prefix)_sem"]) ≈ std(samples) / sqrt(2)
@@ -50,15 +54,16 @@ using Test
                 @test times == collect(0.0:0.2:20.0)
                 expected = disorder_ensemble(16, 1.0, times; keep_samples=true, nsamples=2,
                     seed=read(attributes(group)["seed"]), boundary)
-                for (prefix, samples) in (("correlation", expected.sample_C),
-                        ("log_correlation", expected.sample_logC), ("autocorrelation", expected.sample_Ct),
-                        ("log_autocorrelation", expected.sample_logCt),
-                        ("real_autocorrelation", expected.sample_real_Ct),
-                        ("real_log_autocorrelation", expected.sample_real_logCt))
+                for (prefix, avg, err) in (("correlation", :C_mean, :C_sem),
+                        ("log_correlation", :logC_mean, :logC_sem),
+                        ("autocorrelation", :Ct_mean, :Ct_sem),
+                        ("log_autocorrelation", :logCt_mean, :logCt_sem),
+                        ("real_autocorrelation", :real_Ct_mean, :real_Ct_sem),
+                        ("real_log_autocorrelation", :real_logCt_mean, :real_logCt_sem))
                     average, sem = read(group["$(prefix)_mean"]), read(group["$(prefix)_sem"])
                     @test average isa Vector{Float64} && sem isa Vector{Float64}
-                    @test average ≈ vec(mean(samples; dims=2)) nans=true
-                    @test sem ≈ vec(std(samples; dims=2)) / sqrt(2) nans=true
+                    @test average ≈ getproperty(expected, avg) nans=true
+                    @test sem ≈ getproperty(expected, err) nans=true
                 end
                 @test size(expected.sample_Ct) == (length(times), 2)
                 @test all(isfinite, expected.sample_Ct)
@@ -82,8 +87,8 @@ using Test
             end
         end
     end
-    @test isnan(mean_sem([1.0, NaN]).average)
-    @test isnan(mean_sem([1.0, NaN]).sem)
+    @test isnan(RandomTFIM.mean_sem([1.0, NaN]).average)
+    @test isnan(RandomTFIM.mean_sem([1.0, NaN]).sem)
     for mode in ("gap", "correlation", "autocorrelation", "bad")
         @test_throws ArgumentError main([mode])
     end

@@ -62,5 +62,33 @@ end
         end
         renamed = read_plot_data(input)
         @test isequal(renamed, current)
+        # Reconstruct logs from raw samples, retaining unresolved samples as NaN.
+        h5open(input, "r+") do f
+            for L in sizes, h0 in fields
+                g = f["L$L/h$h0"]
+                g["gap_samples"] = [exp(-1.0), -eps(Float64)]
+                HDF5.delete_object(g, "log_gap_samples")
+                write(g["gap_resolved"], [true, false])
+            end
+        end
+        raw = read_plot_data(input)
+        for d in raw.records
+            @test d.gaps[1] == -1.0
+            @test isnan(d.gaps[2])
+            @test d.resolved == [true, false]
+        end
+        # Most scan points now contain statistics only.
+        h5open(input, "r+") do f
+            HDF5.attributes(f)["nsamples"] = 2
+            for L in sizes, key in ("gap_samples", "gap_resolved")
+                HDF5.delete_object(f["L$L/h1.3"], key)
+            end
+        end
+        selective = read_plot_data(input)
+        @test length(selective.records) == length(current.records)
+        for d in selective.records
+            @test d.n == 2
+            @test isempty(d.gaps) == isempty(d.resolved) == (d.h0 == 1.3)
+        end
     end
 end

@@ -11,27 +11,36 @@ BLAS.set_num_threads(1)
         samples = disorder_ensemble(6, 1.0, times; kwargs..., keep_samples=true)
         @test !hasproperty(summary, :pair_logC)
         @test !hasproperty(samples, :pair_logC)
-        @test summary.gaps == samples.gaps
-        @test summary.resolved == samples.resolved
+        @test !hasproperty(summary, :gaps)
+        @test !hasproperty(summary, :resolved)
+        for field in (:sample_logC, :sample_logCt, :sample_real_logCt, :loggaps)
+            @test !hasproperty(samples, field)
+        end
+        for field in keys(summary)
+            @test isequal(getproperty(summary, field), getproperty(samples, field))
+        end
+        loggaps = map((gap, ok) -> ok ? log(gap) : NaN, samples.gaps, samples.resolved)
+        for (values, avg, sem) in ((samples.gaps, :gap_mean, :gap_sem),
+                (loggaps, :log_gap_mean, :log_gap_sem))
+            @test getproperty(summary, avg) ≈ mean(values) nans=true
+            @test getproperty(summary, sem) ≈ std(values) / sqrt(3) nans=true
+        end
         for (raw, avg, sem) in ((:sample_C, :C_mean, :C_sem),
-                (:sample_logC, :logC_mean, :logC_sem), (:sample_Ct, :Ct_mean, :Ct_sem),
-                (:sample_logCt, :logCt_mean, :logCt_sem),
-                (:sample_real_Ct, :real_Ct_mean, :real_Ct_sem),
-                (:sample_real_logCt, :real_logCt_mean, :real_logCt_sem))
+                (:sample_Ct, :Ct_mean, :Ct_sem),
+                (:sample_real_Ct, :real_Ct_mean, :real_Ct_sem))
             @test !hasproperty(summary, raw)
             values = getproperty(samples, raw)
             @test getproperty(summary, avg) ≈ vec(mean(values; dims=2))
             @test getproperty(summary, sem) ≈ vec(std(values; dims=2)) / sqrt(3)
-            @test getproperty(summary, avg) == getproperty(samples, avg)
-            @test getproperty(summary, sem) == getproperty(samples, sem)
         end
         @test summary.Ct_sem isa Vector{Float64}
         @test summary.Ct_mean isa Vector{Float64}
         @test summary.logCt_mean isa Vector{Float64}
         @test summary.logCt_sem isa Vector{Float64}
-        @test samples.sample_logCt ≈ log.(samples.sample_Ct)
+        @test samples.logCt_mean ≈ vec(mean(log.(samples.sample_Ct); dims=2))
         @test size(samples.sample_Ct) == (length(times), kwargs.nsamples)
         single = disorder_ensemble(6, 1.0, [0.4]; boundary, nsamples=1)
+        @test isnan(single.gap_sem) && isnan(single.log_gap_sem)
         @test all(isnan, single.C_sem)
         @test all(isnan, single.logC_sem)
         @test all(isnan, single.Ct_sem)
@@ -185,7 +194,6 @@ end
     ensemble = disorder_ensemble(8, 1.8, [0.0, 1.7, 13.2]; nsamples=3, seed=92, keep_samples=true)
     expected = map(x -> x > 0 ? log(x) : NaN, ensemble.sample_real_Ct)
     @test any(isnan, expected)
-    @test isequal(ensemble.sample_real_logCt, expected)
     @test isequal(ensemble.real_logCt_mean, vec(mean(expected; dims=2)))
     @test isequal(ensemble.real_logCt_sem, vec(std(expected; dims=2)) / sqrt(3))
 end
@@ -369,6 +377,7 @@ end
         result = @inferred NamedTuple disorder_ensemble(6, 1.0, times; keep_samples=true, boundary,
             nsamples, seed=83, j=4, rmax=2)
         @test result.sample_Ct isa Matrix{Float64}
+        expected_logC = zeros(3, nsamples)
         rng = Xoshiro(83)
         for n in 1:nsamples
             J, h = sample_disorder(rng, 6, 1.0; boundary)
@@ -379,10 +388,12 @@ end
             for r in 0:2
                 origins = 1:(boundary == :open ? 6-r : 6)
                 @test result.sample_C[r+1, n] ≈ mean(pair[origins, r+1])
-                @test result.sample_logC[r+1, n] ≈ mean(log.(pair[origins, r+1]))
+                expected_logC[r+1, n] = mean(log.(pair[origins, r+1]))
             end
             @test result.sample_Ct[:, n] ≈ autocorrelation(J, h, times; boundary, j=4)
         end
+        @test result.logC_mean ≈ vec(mean(expected_logC; dims=2))
+        @test result.logC_sem ≈ vec(std(expected_logC; dims=2)) / sqrt(nsamples)
         without_space = disorder_ensemble(6, 1.0, times; keep_samples=true, boundary, nsamples, seed=83, j=4, rmax=0)
         @test without_space.gaps ≈ result.gaps
         @test without_space.sample_Ct ≈ result.sample_Ct
@@ -393,6 +404,8 @@ end
 
         # Gap-only results also retain serial order, including resolution flags.
         gap_only = disorder_ensemble(32, 0.4, Float64[]; keep_samples=true, boundary, nsamples=129, seed=84, rmax=0)
+        @test any(!, gap_only.resolved)
+        @test isnan(gap_only.log_gap_mean) && isnan(gap_only.log_gap_sem)
         rng = Xoshiro(84)
         for n in 1:129
             J, h = sample_disorder(rng, 32, 0.4; boundary)
@@ -416,7 +429,7 @@ end
     a = @inferred NamedTuple disorder_ensemble(8, 1.0, Float64[]; keep_samples=true, nsamples=5)
     b = disorder_ensemble(8, 1.0, Float64[]; keep_samples=true, nsamples=5)
     @test isequal(a, b)
-    @test all(exp.(mean(a.sample_logC; dims=2)) .<= mean(a.sample_C; dims=2) .+ 1e-14)
+    @test all(exp.(a.logC_mean) .<= a.C_mean .+ 1e-14)
     @test all(disorder_ensemble(4, 3.0, Float64[]; keep_samples=true, nsamples=3, rmax=0).resolved)
     @test_throws ArgumentError energy_gap(ones(3), ones(3))
     @test_throws ArgumentError energy_gap(ones(4), zeros(4))

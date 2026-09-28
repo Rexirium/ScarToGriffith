@@ -143,16 +143,20 @@ only_gaps = disorder_ensemble(L, h0, Float64[]; nsamples=100, boundary, rmax=0)
 
 | 返回字段 | 内容 / 形状 |
 |---|---|
-| `gaps, resolved` | 逐样本能隙及其标记，长度 nsamples |
+| `gap_mean, gap_sem` | 能隙均值和标准误，标量 |
+| `log_gap_mean, log_gap_sem` | 对数能隙均值和标准误，标量；未分辨样本产生 NaN |
+| `gaps, resolved` | 仅 `keep_samples=true` 时返回，逐样本能隙及其标记，长度 nsamples |
 | `C_mean, C_sem` | 空间关联均值和标准误，长度 rmax+1 |
 | `logC_mean, logC_sem` | 空间关联对数的均值和标准误，长度 rmax+1 |
 | `Ct_mean, Ct_sem` | 虚时间关联均值和标准误，长度 length(times) |
 | `logCt_mean, logCt_sem` | 虚时间关联对数的均值和标准误，长度 length(times) |
 | `real_Ct_mean, real_Ct_sem` | 实时间自关联实部的均值和标准误，长度 length(times) |
 | `real_logCt_mean, real_logCt_sem` | 实时间自关联实部对数的均值和标准误 |
-| `sample_real_Ct, sample_real_logCt` | 仅 `keep_samples=true` 时返回，形状 `length(times)×nsamples` |
-| `sample_C, sample_logC` | 仅 `keep_samples=true` 时返回，形状 `(rmax+1)×nsamples` |
-| `sample_Ct, sample_logCt` | 仅 `keep_samples=true` 时返回，形状 `length(times)×nsamples` |
+| `sample_real_Ct` | 仅 `keep_samples=true` 时返回，形状 `length(times)×nsamples` |
+| `sample_C` | 仅 `keep_samples=true` 时返回，形状 `(rmax+1)×nsamples` |
+| `sample_Ct` | 仅 `keep_samples=true` 时返回，形状 `length(times)×nsamples` |
+
+不返回对数样本数组；需要时由后续计算重新取对数。空间对数统计仍按逐对取 log 后平均，不能用 `log.(sample_C)` 重建。
 
 默认 `nsamples=100`、`seed=1996`、`rmax=L÷2`、`keep_samples=false`。
 `times` 是第三个必需位置参数，必须有限且非负；两种时间域共用该网格并同时计算。
@@ -172,14 +176,20 @@ only_gaps = disorder_ensemble(L, h0, Float64[]; nsamples=100, boundary, rmax=0)
 ## HDF5 输出
 
 本地和 Slurm 脚本均同时保存虚时间和实时间结果。根目录中的 `parameters/sizes`、`parameters/fields`
-记录扫描参数，各参数组命名为 `L16/h1.0` 等。组属性为 `j`、`seed`、`seconds`；
-根属性记录边界、时间定义、环境及 `complete`，只有整个扫描完成后才设 `complete=true`。
-两个脚本的 `write_correlations(group, result, times)` 同时写入两组统计。
+记录扫描参数，各参数组命名为 `L16/h1.0` 等。组属性仅保留观测格点 `j` 和随机种子 `seed`。
+根属性仅保留 `boundary`（`open` 或 `periodic`）、`distribution`（`box`）、`nsamples` 和 `complete`，只有整个扫描完成后才设 `complete=true`。
+耗时仅打印到运行日志；环境信息和固定的物理、统计定义不再写入属性，相关约定见本文档。
+两个脚本共用 `results_io.jl` 写入统计量和可选样本。
+计算前从 `fields` 中选出最接近 `0.1、0.5、1、2、5、10` 的 6 个值，记录在 `parameters/sample_fields`。
+这些值对应索引 `[1, 36, 51, 66, 86, 101]`，约为 `[0.1, 0.501187, 1, 1.995262, 5.011872, 10]`。
+仅这些参数调用 `keep_samples=true` 并保存全部返回的样本；其余参数调用 `keep_samples=false`，只保存统计量和时间网格。
 `imaginary_time` 与 `real_time` 保存相同的网格；两种时间域的自关联统计均保存为 Float64 数组，实时间仅保存实部。
 
 | 数据集 | 内容 / 形状 |
 |---|---|
-| `gap_samples, gap_resolved, log_gap_samples` | 逐样本能隙、标记、自然对数，长度 nsamples |
+| `gap_samples, gap_resolved` | 仅特殊参数组：逐样本能隙及分辨标记，长度 nsamples |
+| `sample_C` | 仅特殊参数组：空间关联样本，形状 `(rmax+1)×nsamples` |
+| `sample_Ct, sample_real_Ct` | 仅特殊参数组：虚时间、实时间关联样本，形状 `length(times)×nsamples` |
 | `gap_mean, gap_sem` | 能隙均值和标准误，标量 |
 | `log_gap_mean, log_gap_sem` | 对数能隙均值和标准误，标量 |
 | `correlation_mean, correlation_sem` | 空间关联均值和标准误，长度 rmax+1 |
@@ -190,10 +200,9 @@ only_gaps = disorder_ensemble(L, h0, Float64[]; nsamples=100, boundary, rmax=0)
 | `real_autocorrelation_mean, real_autocorrelation_sem` | 实时间自关联实部的均值和标准误 |
 | `real_log_autocorrelation_mean, real_log_autocorrelation_sem` | 实时间自关联实部对数的均值和标准误 |
 
-未分辨能隙的 `log_gap_samples` 为 `NaN`，原始 gap 仍保留。
-文件保存关联的统计量，不保存 `sample_C`、`sample_logC`、`sample_Ct`、`sample_logCt`、`sample_real_Ct`、`sample_real_logCt`，
-因此不能从默认输出重建逐样本或逐格点对的关联分布。
-距离由数组索引恢复：空间统计量第 r+1 个元素对应 r；样本数由 `gap_samples` 长度恢复。
+不保存 `log_gap_samples` 或关联的对数样本数组；对数能隙由后续分析根据 `gap_samples` 和 `gap_resolved` 重算，未分辨样本对应 `NaN`。
+空间关联样本已在有效起点间平均，不能重建逐格点对的分布。
+距离由数组索引恢复：空间统计量第 r+1 个元素对应 r；样本数由根属性 `nsamples` 读取。
 绘图读取器兼容旧字段 `loggaps/resolved/average/sem/mean_log/log_sem` 及没有 `parameters` 的旧文件。
 已有文件不会自动改写，旧实时间数据不能当作虚时间数据使用。
 

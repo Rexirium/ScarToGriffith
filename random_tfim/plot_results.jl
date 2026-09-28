@@ -19,15 +19,20 @@ function read_plot_data(input)
         records = []
         for L in sizes, h0 in fields
             g = f["L$(L)/h$(h0)"]
-            gaps = read_plot_dataset(g, "log_gap_samples", "loggaps")
-            resolved = Bool.(read_plot_dataset(g, "gap_resolved", "resolved"))
-            n = length(gaps)
+            has_samples = haskey(g, "gap_samples") || haskey(g, "log_gap_samples") || haskey(g, "loggaps")
+            resolved = has_samples ? Bool.(read_plot_dataset(g, "gap_resolved", "resolved")) : Bool[]
+            gaps = if haskey(g, "gap_samples")
+                map((gap, ok) -> ok ? log(gap) : NaN, read(g["gap_samples"]), resolved)
+            else
+                has_samples ? read_plot_dataset(g, "log_gap_samples", "loggaps") : Float64[]
+            end
+            n = has_samples ? length(gaps) : read(HDF5.attributes(f)["nsamples"])
             avg = read_plot_dataset(g, "correlation_mean", "average")
             sem = read_plot_dataset(g, "correlation_sem", "sem")
             logavg = read_plot_dataset(g, "log_correlation_mean", "mean_log")
             logsem = read_plot_dataset(g, "log_correlation_sem", "log_sem")
             @assert length(avg) == length(sem) == length(logavg) == length(logsem) == L ÷ 2 + 1
-            @assert length(resolved) == n
+            @assert length(resolved) == length(gaps)
             @assert all(isfinite, avg) && avg[1] == 1 && logavg[1] == 0
             @assert resolved == isfinite.(gaps)
             push!(records, (; L, h0, n, gaps, resolved, avg, sem, logavg, logsem,
