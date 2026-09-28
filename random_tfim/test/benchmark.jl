@@ -9,7 +9,8 @@ module Reference
     if !isempty(ARGS)
         path = abspath(only(ARGS))
         isfile(path) || throw(ArgumentError("reference source file not found: $path"))
-        include(path)
+        # The optional baseline is loaded at runtime into this module.
+        Base.include(@__MODULE__, path)
     end
 end
 
@@ -77,4 +78,4 @@ function benchmark(reference=nothing)
     end
 end
 
-benchmark(isempty(ARGS) ? nothing : Reference.RandomTFIM)
+benchmark(isempty(ARGS) ? nothing : getfield(Reference, :RandomTFIM))
