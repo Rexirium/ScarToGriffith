@@ -22,10 +22,9 @@ function measure(f)
 end
 
 function check_spatial(old, new)
-    @assert size(old.C) == size(new.C)
-    @assert all(isapprox.(old.C, new.C; atol=1e-10, nans=true))
-    valid = new.resolved .& isfinite.(new.logC)
-    @assert all(isapprox.(old.logC[valid], new.logC[valid]; atol=1e-6, rtol=0))
+    old = old isa NamedTuple ? old.C : old # Accept saved sources with the old API.
+    @assert size(old) == size(new)
+    @assert all(isapprox.(old, new; atol=1e-10, nans=true))
 end
 
 function benchmark(reference=nothing)
@@ -45,8 +44,9 @@ function benchmark(reference=nothing)
         end
         for time_domain in (:imaginary, :real), j in (boundary == :open ? (1, L÷2, L) : (L÷2,))
             if !isnothing(reference)
-                old = reference.autocorrelation(J, h, times; boundary, j, time_domain).C
-                new = RandomTFIM.autocorrelation(J, h, times; boundary, j, time_domain).C
+                old = reference.autocorrelation(J, h, times; boundary, j, time_domain)
+                old = real.(old isa NamedTuple ? old.C : old)
+                new = RandomTFIM.autocorrelation(J, h, times; boundary, j, time_domain)
                 @assert isapprox(old, new; atol=1e-10)
                 println((L, boundary, time_domain, j, max_dynamic_error=maximum(abs.(old-new))))
             end
@@ -58,8 +58,7 @@ function benchmark(reference=nothing)
         for (version, model) in versions
             println((L=L, boundary, version,
                 space=measure(() -> model.correlations(G; boundary)),
-                ensemble_two_samples=measure(() -> model.disorder_ensemble(L, 1.0;
-                    nsamples=2, boundary, times))))
+                ensemble_two_samples=measure(() -> model.disorder_ensemble(L, 1.0, times; nsamples=2, boundary))))
         end
     end
     # Strong fields used to trigger an O(r^3) LU refactorization per prefix.
@@ -70,7 +69,7 @@ function benchmark(reference=nothing)
         if !isnothing(reference)
             check_spatial(reference.correlations(G), pair)
         end
-        println((L=128, h0, unresolved=count(!, pair.resolved)))
+        println((L=128, h0, nonpositive=count(<=(0), pair)))
         for (version, model) in versions
             println((L=128, h0, version,
                 space=measure(() -> model.correlations(G))))

@@ -4,14 +4,20 @@ using .RandomTFIM
 BLAS.set_num_threads(1)
 
 @testset "Ensemble summary and optional samples" begin
-    for boundary in (:open, :periodic), time_domain in (:imaginary, :real)
-        kwargs = (; nsamples=3, seed=71, boundary, time_domain, times=[0.0, 0.4])
-        summary = disorder_ensemble(6, 1.0; kwargs...)
-        samples = disorder_ensemble(6, 1.0; kwargs..., keep_samples=true)
+    for boundary in (:open, :periodic)
+        kwargs = (; nsamples=3, seed=71, boundary)
+        times = [0.0, 0.4]
+        summary = disorder_ensemble(6, 1.0, times; kwargs...)
+        samples = disorder_ensemble(6, 1.0, times; kwargs..., keep_samples=true)
+        @test !hasproperty(summary, :pair_logC)
+        @test !hasproperty(samples, :pair_logC)
         @test summary.gaps == samples.gaps
         @test summary.resolved == samples.resolved
         for (raw, avg, sem) in ((:sample_C, :C_mean, :C_sem),
-                (:sample_logC, :logC_mean, :logC_sem), (:sample_Ct, :Ct_mean, :Ct_sem))
+                (:sample_logC, :logC_mean, :logC_sem), (:sample_Ct, :Ct_mean, :Ct_sem),
+                (:sample_logCt, :logCt_mean, :logCt_sem),
+                (:sample_real_Ct, :real_Ct_mean, :real_Ct_sem),
+                (:sample_real_logCt, :real_logCt_mean, :real_logCt_sem))
             @test !hasproperty(summary, raw)
             values = getproperty(samples, raw)
             @test getproperty(summary, avg) ≈ vec(mean(values; dims=2))
@@ -20,13 +26,19 @@ BLAS.set_num_threads(1)
             @test getproperty(summary, sem) == getproperty(samples, sem)
         end
         @test summary.Ct_sem isa Vector{Float64}
-        @test size(samples.sample_Ct) == (length(kwargs.times), kwargs.nsamples)
-        single = disorder_ensemble(6, 1.0; boundary, time_domain, nsamples=1, times=[0.4])
+        @test summary.Ct_mean isa Vector{Float64}
+        @test summary.logCt_mean isa Vector{Float64}
+        @test summary.logCt_sem isa Vector{Float64}
+        @test samples.sample_logCt ≈ log.(samples.sample_Ct)
+        @test size(samples.sample_Ct) == (length(times), kwargs.nsamples)
+        single = disorder_ensemble(6, 1.0, [0.4]; boundary, nsamples=1)
         @test all(isnan, single.C_sem)
         @test all(isnan, single.logC_sem)
         @test all(isnan, single.Ct_sem)
-        empty_time = disorder_ensemble(6, 1.0; boundary, time_domain, nsamples=3, rmax=0)
+        @test all(isnan, single.logCt_sem)
+        empty_time = disorder_ensemble(6, 1.0, Float64[]; boundary, nsamples=3, rmax=0)
         @test isempty(empty_time.Ct_mean) && isempty(empty_time.Ct_sem)
+        @test isempty(empty_time.logCt_mean) && isempty(empty_time.logCt_sem)
         @test empty_time.C_mean == [1.0]
         @test empty_time.C_sem == [0.0]
     end
@@ -103,30 +115,25 @@ end
         @test G == saved
         for i in 1:L, r in 1:rmax
             if boundary == :open && i+r > L
-                @test isnan(actual.C[i, r+1]) && isnan(actual.logC[i, r+1])
+                @test isnan(actual[i, r+1])
                 continue
             end
             A = [((xor(i+a-1 > L, i+b > L)) ? -1 : 1) *
                 G[mod1(i+a-1, L), mod1(i+b, L)] for a in 1:r, b in 1:r]
             logabs, phase = logabsdet(A)
-            @test actual.C[i, r+1] ≈ phase * exp(logabs) rtol=1e-10 atol=1e-12
-            expected_log = actual.resolved[i, r+1] && phase > 0 ? logabs : NaN
-            @test isequal(actual.logC[i, r+1], expected_log) ||
-                isapprox(actual.logC[i, r+1], expected_log; atol=1e-10)
+            @test actual[i, r+1] ≈ phase * exp(logabs) rtol=1e-10 atol=1e-12
         end
     end
-    @test correlations(small; boundary=:open, rmax=31).logC[1, end] ≈ 31log(1e-20)
+    @test correlations(small; boundary=:open, rmax=31)[1, end] == 0
 
-    # Strong disorder must flag unresolved tails rather than refactor them.
+    # Check raw strong-disorder correlations against independent determinants.
     for h0 in (1.5, 10.0), boundary in (:open, :periodic)
         J, h = sample_disorder(rng, 128, h0; boundary)
         G = ground_state(J, h; boundary).G
         pair = correlations(G; boundary)
         for i in (1, 33, 64), r in (16, 32, 64)
             logabs, phase = logabsdet(G[i:i+r-1, i+1:i+r])
-            expected = pair.resolved[i, r+1] && phase > 0 ? logabs : NaN
-            @test isequal(pair.logC[i, r+1], expected) ||
-                isapprox(pair.logC[i, r+1], expected; atol=1e-6)
+            @test pair[i, r+1] ≈ phase * exp(logabs) atol=1e-10
         end
     end
 
@@ -136,11 +143,11 @@ end
         Jcopy, hcopy = copy(J), copy(h)
         F = svd!(RandomTFIM.fermion_matrix(J, h, Val(:open)))
         for j in (1, 2, 3, 8, 16, 25, 30, 31, 32)
-            actual = autocorrelation(J, h, times; j).C
+            actual = autocorrelation(J, h, times; j)
             @test actual isa Vector{Float64}
             # The determinant and JW-string algorithms contract different
             # matrices, including reflection at the right end of the chain.
-            reference = RandomTFIM.string_autocorrelation(F, times, j, false).C
+            reference = RandomTFIM.string_autocorrelation(F, times, j, false)
             @test actual ≈ reference atol=2e-10
             @test actual[2] ≈ 1 atol=1e-11
         end
@@ -150,48 +157,37 @@ end
     @test_throws ArgumentError autocorrelation(ones(8), ones(8), [floatmax(Float64)]; boundary=:periodic)
 end
 
-@testset "Spatial QR condition diagnostics" begin
-    # A tiny determinant need not be ill-conditioned: uniform scaling keeps
-    # its logarithm meaningful even when exp(logC) underflows.
+@testset "Spatial C-only interface and ensemble logarithms" begin
+    # Return raw Float64 values, including underflow and invalid open-chain pairs.
     G = zeros(6, 6)
     G[1:4, 2:5] = Matrix(Diagonal(fill(1e-100, 4)))
     pair = correlations(G; boundary=:open, rmax=4)
-    @test pair.resolved[1, 5]
-    @test pair.C[1, 5] == 0
-    @test pair.logC[1, 5] ≈ 4log(1e-100)
-    @test !pair.resolved[6, 2] && isnan(pair.logC[6, 2])
+    @test pair isa Matrix{Float64}
+    @test pair[1, 5] == 0
+    @test isnan(pair[6, 2])
 
-    # The same small pivot is acceptable or unresolved according to logtol.
+    # Small nonzero correlations remain unfiltered.
     G[1:4, 2:5] = Matrix(Diagonal([1.0, 1e-10, 1.0, 1.0]))
-    strict = correlations(G; boundary=:open, rmax=4)
-    loose = correlations(G; boundary=:open, rmax=4, logtol=0.1)
-    @test !strict.resolved[1, 3] && isnan(strict.logC[1, 3])
-    @test loose.resolved[1, 3] && loose.logC[1, 3] ≈ log(1e-10)
-    @test isequal(strict.C, loose.C)
-
-    # Off-diagonal entries matter: reading the wrong triangle would accept
-    # this prefix at 8e-4, whereas its lower-triangular estimate rejects it.
-    G .= 0
-    G[1:2, 2:3] = [1.0 1.0; 0.0 1e-10]
-    @test !correlations(G; boundary=:open, rmax=2, logtol=8e-4).resolved[1, 3]
+    @test correlations(G; boundary=:open, rmax=4)[1, 3] ≈ 1e-10
 
     # A singular prefix must not prevent recovery at the next distance.
     G .= 0
     G[1:2, 2:3] = [0.0 1.0; 1.0 0.0]
     pair = correlations(G; boundary=:open, rmax=2)
-    @test !pair.resolved[1, 2] && isnan(pair.logC[1, 2])
-    @test pair.resolved[1, 3] && pair.C[1, 3] ≈ -1
-    @test isnan(pair.logC[1, 3]) # Preserve sign; do not turn negative C positive.
-    @test all(correlations(G; rmax=0).resolved)
-    for tol in (0.0, -1.0, Inf, NaN)
-        @test_throws ArgumentError correlations(G; logtol=tol)
-        @test_throws ArgumentError disorder_ensemble(6, 1.0; logtol=tol)
-    end
+    @test pair[1, 2] == 0
+    @test pair[1, 3] ≈ -1
+    @test correlations(G; rmax=0) == ones(6, 1)
     @test_throws ArgumentError correlations(fill(NaN, 4, 4))
-    # Unresolved logs propagate through averaging; no sample filtering.
-    ensemble = disorder_ensemble(16, 5.0; nsamples=2, logtol=1e-18, keep_samples=true)
-    @test any(isnan, ensemble.sample_logC)
-    @test isequal(ensemble.logC_mean, vec(mean(ensemble.sample_logC; dims=2)))
+
+    values = [1.0, exp(-2), 0.0, -1.0, NaN, Inf]
+    @test isequal(RandomTFIM.correlation_log.(values), [0.0, -2.0, NaN, NaN, NaN, NaN])
+    # Negative real parts must propagate through temporal statistics, not be dropped.
+    ensemble = disorder_ensemble(8, 1.8, [0.0, 1.7, 13.2]; nsamples=3, seed=92, keep_samples=true)
+    expected = map(x -> x > 0 ? log(x) : NaN, ensemble.sample_real_Ct)
+    @test any(isnan, expected)
+    @test isequal(ensemble.sample_real_logCt, expected)
+    @test isequal(ensemble.real_logCt_mean, vec(mean(expected; dims=2)))
+    @test isequal(ensemble.real_logCt_sem, vec(std(expected; dims=2)) / sqrt(3))
 end
 
 @testset "Both boundaries: Majorana/Pfaffian dynamics vs spin ED" begin
@@ -206,30 +202,30 @@ end
             expected = reference.C
             @test abs(reference.magnetization) < 1e-10
             actual = @inferred autocorrelation(bonds, h, times; j, boundary)
-            @test actual.C ≈ expected .- reference.magnetization^2 atol=2e-10
-            @test actual.C[1] ≈ 1 atol=1e-12
-            @test actual.C isa Vector{Float64}
-            @test all(-1e-12 .<= actual.C .<= 1+1e-12)
-            @test all(diff(actual.C) .<= 1e-12)
+            @test actual ≈ expected .- reference.magnetization^2 atol=2e-10
+            @test actual[1] ≈ 1 atol=1e-12
+            @test actual isa Vector{Float64}
+            @test all(-1e-12 .<= actual .<= 1+1e-12)
+            @test all(diff(actual) .<= 1e-12)
             # Relative accuracy is only asserted above the roundoff floor.
             resolved = expected .> 1e-8
-            @test all(isapprox.(actual.C[resolved], expected[resolved]; rtol=1e-6, atol=0))
+            @test all(isapprox.(actual[resolved], expected[resolved]; rtol=1e-6, atol=0))
         end
     end
     h = collect(0.5:0.5:3.0)
     for j in 1:6
-        @test autocorrelation(zeros(5), h, times; j).C ≈ exp.(-2 .* h[j] .* times) rtol=1e-12 atol=0
+        @test autocorrelation(zeros(5), h, times; j) ≈ exp.(-2 .* h[j] .* times) rtol=1e-12 atol=0
     end
     empty_C = @inferred autocorrelation(ones(3), ones(4), Float64[])
-    @test empty_C.C isa Vector{Float64}
-    @test isempty(empty_C.C)
+    @test empty_C isa Vector{Float64}
+    @test isempty(empty_C)
     @test_throws DimensionMismatch autocorrelation(ones(4), ones(4), times)
     @test_throws ArgumentError autocorrelation(ones(3), ones(4), times; j=0)
     for t in (NaN, -0.1, Inf)
         @test_throws ArgumentError autocorrelation(ones(3), ones(4), [t])
     end
     @test_throws ArgumentError autocorrelation(ones(3), zeros(4), times)
-    @test_throws ArgumentError disorder_ensemble(4, 1.0; keep_samples=true, times, nsamples=0)
+    @test_throws ArgumentError disorder_ensemble(4, 1.0, times; keep_samples=true, nsamples=0)
     @test RandomTFIM.pfaffian!(zeros(ComplexF64, 4, 4)) == 0
     # Requires a pivot swap; Pf(A)=a12*a34-a13*a24+a14*a23=-6.
     A = ComplexF64[0 0 2 0; 0 0 0 3; -2 0 0 0; 0 -3 0 0]
@@ -243,36 +239,41 @@ end
         exact = spin_oracle(J, h; periodic=boundary == :periodic)
         for j in unique([1, L÷2, L])
             expected = spin_autocorrelation(exact, j, times, 1im).C
-            actual = autocorrelation(J, h, times; boundary, j, time_domain=:real).C
-            @test actual isa Vector{ComplexF64}
-            @test actual ≈ expected atol=2e-10
+            actual = autocorrelation(J, h, times; boundary, j, time_domain=:real)
+            @test actual isa Vector{Float64}
+            @test actual ≈ real.(expected) atol=2e-10
             @test actual[1] ≈ 1 atol=1e-12
-            @test actual[3] ≈ conj(actual[4]) atol=1e-12
+            @test actual[3] ≈ actual[4] atol=1e-12
         end
     end
     for boundary in (:open, :periodic), j in (1, 4, 8)
         h = collect(0.25:0.25:2.0)
         J = zeros(boundary == :open ? 7 : 8)
-        @test autocorrelation(J, h, times; boundary, j, time_domain=:real).C ≈
-            exp.(-2im .* h[j] .* times) atol=1e-12
+        @test autocorrelation(J, h, times; boundary, j, time_domain=:real) ≈
+            cos.(2 .* h[j] .* times) atol=1e-12
     end
+    times = abs.(times)
     for boundary in (:open, :periodic)
-        result = disorder_ensemble(8, 1.8; keep_samples=true, times, boundary, nsamples=3, seed=92,
-            time_domain=:real)
-        @test result.sample_Ct isa Matrix{ComplexF64}
+        result = disorder_ensemble(8, 1.8, times; keep_samples=true, boundary, nsamples=3, seed=92)
+        @test result.sample_real_Ct isa Matrix{Float64}
         rng = Xoshiro(92)
+        reference = Matrix{ComplexF64}(undef, length(times), 3)
         for n in 1:3
             J, h = sample_disorder(rng, 8, 1.8; boundary)
-            @test result.sample_Ct[:, n] ≈ autocorrelation(J, h, times;
-                boundary, time_domain=:real).C
+            exact = spin_oracle(J, h; periodic=boundary == :periodic)
+            reference[:, n] = spin_autocorrelation(exact, 4, times, 1im).C
+            @test result.sample_real_Ct[:, n] ≈ autocorrelation(J, h, times;
+                boundary, time_domain=:real)
         end
-        empty_result = disorder_ensemble(8, 1.8; keep_samples=true, boundary, nsamples=1, time_domain=:real)
-        @test size(empty_result.sample_Ct) == (0, 1)
-        @test eltype(empty_result.sample_Ct) == ComplexF64
+        @test result.real_Ct_mean ≈ vec(mean(real.(reference); dims=2)) atol=2e-10
+        @test result.real_Ct_sem ≈ vec(std(real.(reference); dims=2)) / sqrt(3) atol=2e-10
+        empty_result = disorder_ensemble(8, 1.8, Float64[]; keep_samples=true, boundary, nsamples=1)
+        @test size(empty_result.sample_real_Ct) == (0, 1)
+        @test eltype(empty_result.sample_real_Ct) == Float64
     end
-    @test autocorrelation(ones(3), ones(4), Float64[]; time_domain=:real).C isa Vector{ComplexF64}
+    @test autocorrelation(ones(3), ones(4), Float64[]; time_domain=:real) isa Vector{Float64}
     @test_throws ArgumentError autocorrelation(ones(3), ones(4), times; time_domain=:bad)
-    @test_throws ArgumentError disorder_ensemble(4, 1.0; time_domain=:bad)
+    @test_throws MethodError disorder_ensemble(4, 1.0)
     for t in (NaN, Inf, -Inf, floatmax(Float64))
         @test_throws ArgumentError autocorrelation(ones(3), ones(4), [t]; time_domain=:real)
     end
@@ -284,7 +285,7 @@ end
     times = [20.0, 100.0, 400.0]
     for boundary in (:open, :periodic), j in (1, 4)
         J = zeros(boundary == :open ? 7 : 8)
-        actual = autocorrelation(J, ones(8), times; boundary, j).C
+        actual = autocorrelation(J, ones(8), times; boundary, j)
         @test all(isapprox.(actual, exp.(-2 .* times); rtol=1e-12, atol=0))
         @test all(isfinite, actual)
     end
@@ -299,8 +300,8 @@ end
         exact = spin_oracle(J, h; periodic=boundary == :periodic)
         for (time_domain, scale) in ((:imaginary, 1.0), (:real, 1im)), j in (1, 4, 8)
             expected = spin_autocorrelation(exact, j, times, scale).C
-            actual = autocorrelation(J, h, times; boundary, j, time_domain).C
-            @test actual ≈ expected atol=2e-12
+            actual = autocorrelation(J, h, times; boundary, j, time_domain)
+            @test actual ≈ real.(expected) atol=2e-12
             @test actual[[1, end]] ≈ ones(2) atol=2e-12
         end
     end
@@ -318,9 +319,9 @@ end
         @test result.G * result.G' ≈ I atol=1e-12
         pair = @inferred correlations(result.G)
         for r in 0:L÷2, i in 1:L
-            @test pair.C[i, r+1] ≈ exact.C[i, mod1(i+r, L)] atol=2e-10
+            @test pair[i, r+1] ≈ exact.C[i, mod1(i+r, L)] atol=2e-10
         end
-        @test exp.(pair.logC) ≈ pair.C atol=1e-12
+        @test pair isa Matrix{Float64}
     end
 end
 
@@ -335,28 +336,22 @@ end
         pair = correlations(state.G; boundary=:open, rmax=L-1)
         for r in 0:L-1, i in 1:L
             if i+r <= L
-                @test pair.C[i, r+1] ≈ exact.C[i, i+r] atol=2e-10
-                @test exp(pair.logC[i, r+1]) ≈ pair.C[i, r+1] atol=1e-12
+                @test pair[i, r+1] ≈ exact.C[i, i+r] atol=2e-10
             else
-                @test isnan(pair.C[i, r+1]) && isnan(pair.logC[i, r+1])
+                @test isnan(pair[i, r+1])
             end
         end
         # Cutting the periodic seam must recover OBC, including time evolution.
         periodic_J = vcat(J, 0.0)
         @test energy_gap(periodic_J, h).gap ≈ state.gap atol=1e-11
         times = [17.3, 0.0, 2.1, 17.3, 0.14]
-        @test autocorrelation(periodic_J, h, times; boundary=:periodic).C ≈
-            autocorrelation(J, h, times; boundary=:open).C atol=2e-10
+        @test autocorrelation(periodic_J, h, times; boundary=:periodic) ≈
+            autocorrelation(J, h, times; boundary=:open) atol=2e-10
     end
     for boundary in (:open, :periodic)
-        @test autocorrelation(zeros(boundary == :open ? 5 : 6), ones(6), [0.0, 1.2]; boundary).C ≈ exp.(-2 .* [0.0, 1.2])
+        @test autocorrelation(zeros(boundary == :open ? 5 : 6), ones(6), [0.0, 1.2]; boundary) ≈ exp.(-2 .* [0.0, 1.2])
     end
-    a = disorder_ensemble(6, 1.0; keep_samples=true, nsamples=3, boundary=:open, rmax=5, keep_pairs=true)
-    for r in 0:5
-        @test vec(mean(a.pair_logC[1:6-r, r+1, :]; dims=1)) ≈ a.sample_logC[r+1, :]
-    end
-    @test a.sample_C ≈ disorder_ensemble(6, 1.0; keep_samples=true, nsamples=3, boundary=:open, rmax=5).sample_C
-    @test all(disorder_ensemble(6, 3.0; keep_samples=true, nsamples=3, boundary=:open, rmax=0).resolved)
+    @test all(disorder_ensemble(6, 3.0, Float64[]; keep_samples=true, nsamples=3, boundary=:open, rmax=0).resolved)
     Jp, hp = sample_disorder(Xoshiro(8), 6, 1.0)
     Jo, ho = sample_disorder(Xoshiro(8), 6, 1.0; boundary=:open)
     @test Jo == Jp[1:end-1] && ho == hp
@@ -371,8 +366,8 @@ end
     times = [0.0, 0.3, 0.7]
     nsamples = 17 # More samples than test threads; check serial RNG ordering.
     for boundary in (:open, :periodic)
-        result = @inferred NamedTuple disorder_ensemble(6, 1.0; keep_samples=true, times, boundary,
-            nsamples, seed=83, j=4, rmax=2, keep_pairs=true)
+        result = @inferred NamedTuple disorder_ensemble(6, 1.0, times; keep_samples=true, boundary,
+            nsamples, seed=83, j=4, rmax=2)
         @test result.sample_Ct isa Matrix{Float64}
         rng = Xoshiro(83)
         for n in 1:nsamples
@@ -381,52 +376,48 @@ end
             pair = correlations(state.G; boundary, rmax=2)
             @test result.gaps[n] ≈ state.gap
             @test result.resolved[n] == state.resolved
-            @test isequal(result.pair_logC[:, :, n], pair.logC)
             for r in 0:2
                 origins = 1:(boundary == :open ? 6-r : 6)
-                @test result.sample_C[r+1, n] ≈ mean(pair.C[origins, r+1])
-                @test result.sample_logC[r+1, n] ≈ mean(pair.logC[origins, r+1])
+                @test result.sample_C[r+1, n] ≈ mean(pair[origins, r+1])
+                @test result.sample_logC[r+1, n] ≈ mean(log.(pair[origins, r+1]))
             end
-            @test result.sample_Ct[:, n] ≈ autocorrelation(J, h, times; boundary, j=4).C
+            @test result.sample_Ct[:, n] ≈ autocorrelation(J, h, times; boundary, j=4)
         end
-        without_space = disorder_ensemble(6, 1.0; keep_samples=true, times, boundary, nsamples, seed=83, j=4, rmax=0)
+        without_space = disorder_ensemble(6, 1.0, times; keep_samples=true, boundary, nsamples, seed=83, j=4, rmax=0)
         @test without_space.gaps ≈ result.gaps
         @test without_space.sample_Ct ≈ result.sample_Ct
-        without_time = disorder_ensemble(6, 1.0; keep_samples=true, boundary, nsamples, seed=83, rmax=2)
+        without_time = disorder_ensemble(6, 1.0, Float64[]; keep_samples=true, boundary, nsamples, seed=83, rmax=2)
         @test without_time.sample_C ≈ result.sample_C
         @test size(without_time.sample_Ct) == (0, nsamples)
         @test without_time.sample_Ct isa Matrix{Float64}
 
         # Gap-only results also retain serial order, including resolution flags.
-        gap_only = disorder_ensemble(32, 0.4; keep_samples=true, boundary, nsamples=129, seed=84, rmax=0)
+        gap_only = disorder_ensemble(32, 0.4, Float64[]; keep_samples=true, boundary, nsamples=129, seed=84, rmax=0)
         rng = Xoshiro(84)
         for n in 1:129
             J, h = sample_disorder(rng, 32, 0.4; boundary)
             expected = energy_gap(J, h; boundary)
-            @test gap_only.gaps[n] == expected.gap
+            @test gap_only.gaps[n] ≈ expected.gap atol=1e-12
             @test gap_only.resolved[n] == expected.resolved
         end
     end
     for t in (NaN, -0.1, Inf)
-        @test_throws ArgumentError disorder_ensemble(6, 1.0; times=[t])
+        @test_throws ArgumentError disorder_ensemble(6, 1.0, [t])
     end
-    @test_throws ArgumentError disorder_ensemble(6, 1.0; keep_samples=true, times, j=0)
+    @test_throws ArgumentError disorder_ensemble(6, 1.0, times; keep_samples=true, j=0)
 end
 
 @testset "Limits and sampling" begin
     J, h = zeros(6), collect(0.5:0.5:3.0)
     state = ground_state(J, h)
     @test state.gap ≈ 2minimum(h)
-    @test correlations(state.G).C[:, 2:end] == zeros(6, 3)
+    @test correlations(state.G)[:, 2:end] == zeros(6, 3)
     @test !energy_gap(ones(32), fill(0.1, 32)).resolved
-    a = @inferred NamedTuple disorder_ensemble(8, 1.0; keep_samples=true, nsamples=5)
-    b = disorder_ensemble(8, 1.0; keep_samples=true, nsamples=5)
+    a = @inferred NamedTuple disorder_ensemble(8, 1.0, Float64[]; keep_samples=true, nsamples=5)
+    b = disorder_ensemble(8, 1.0, Float64[]; keep_samples=true, nsamples=5)
     @test isequal(a, b)
     @test all(exp.(mean(a.sample_logC; dims=2)) .<= mean(a.sample_C; dims=2) .+ 1e-14)
-    pairs = disorder_ensemble(4, 1.0; keep_samples=true, nsamples=3, keep_pairs=true)
-    @test size(pairs.pair_logC) == (4, 3, 3)
-    @test dropdims(mean(pairs.pair_logC; dims=1); dims=1) ≈ pairs.sample_logC
-    @test all(disorder_ensemble(4, 3.0; keep_samples=true, nsamples=3, rmax=0).resolved)
+    @test all(disorder_ensemble(4, 3.0, Float64[]; keep_samples=true, nsamples=3, rmax=0).resolved)
     @test_throws ArgumentError energy_gap(ones(3), ones(3))
     @test_throws ArgumentError energy_gap(ones(4), zeros(4))
 end

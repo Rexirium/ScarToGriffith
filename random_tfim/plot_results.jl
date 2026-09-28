@@ -37,100 +37,177 @@ function read_plot_data(input)
     end
 end
 
-function main(args)
-    input = isempty(args) ? joinpath(@__DIR__, "results", "full_sample1000.h5") : abspath(args[1])
-    out = length(args) < 2 ? joinpath(dirname(input), "figures") : abspath(args[2])
-    data = read_plot_data(input)
-    records = data.records
-    fields, sizes = data.fields, data.sizes
-    colors = ["#0072B2", "#D55E00", "#009E73", "#CC79A7"]
-    markers = [:circle, :rect, :utriangle, :diamond]
-    @assert length(sizes) <= length(colors)
-    mkpath(out)
-    set_theme!(Theme(fontsize=17, linewidth=2, Axis=(xgridvisible=false, ygridvisible=false,)))
+const PLOT_COLORS = ["#0072B2", "#D55E00", "#009E73", "#CC79A7", "#E69F00", "#000000"]
 
-    # Common unit-width ln(gap) bins; denominator includes unresolved samples.
-    finite_gaps = [x for d in records for x in d.gaps if isfinite(x)]
-    edges = collect(floor(minimum(finite_gaps)):1.0:ceil(maximum(finite_gaps)))
-    centers = (edges[1:end-1] .+ edges[2:end]) ./ 2
-    gapfig = Figure(size=(1560, 870))
-    avgfig = Figure(size=(1560, 870))
-    logfig = Figure(size=(1560, 870))
-    titles = ["Energy-gap distributions", "Average spatial correlations", "Average log correlations"]
-    figs = [gapfig, avgfig, logfig]
-    for (fig, title) in zip(figs, titles)
-        Label(fig[0, 1:4], title * "  |  Young & Rieger (1996)", fontsize=25)
+function representative_fields(fields, targets)
+    available = sort(unique(fields))
+    isempty(available) && error("No fields available for targets $targets")
+    selected = [available[argmin(abs.(available .- h))] for h in targets]
+    length(unique(selected)) == length(targets) ||
+        error("Input needs distinct representative fields for targets $targets; got $selected")
+    selected
+end
+
+field_label(h) = "h₀ = $(round(h; sigdigits=5))"
+panel_position(k, ncols) = (div(k - 1, ncols) + 1, (k - 1) % ncols + 1)
+
+# Mask invalid points without connecting curves across missing data. On log axes,
+# omit intervals crossing zero instead of inventing a positive uncertainty bound.
+function uncertainty_values(y, sem; positive=false)
+    @assert length(y) == length(sem)
+    center = Float64.(y)
+    valid = isfinite.(center) .& (.!positive .| (center .> 0))
+    center[.!valid] .= NaN
+    lower, upper = center .- sem, center .+ sem
+    valid_band = valid .& isfinite.(sem) .& (sem .>= 0) .&
+        isfinite.(lower) .& isfinite.(upper) .& (.!positive .| (lower .> 0))
+    lower[.!valid_band] .= NaN
+    upper[.!valid_band] .= NaN
+    (; center, lower, upper)
+end
+
+function uncertainty_curve!(ax, x, y, sem, color; positive=false)
+    values = uncertainty_values(y, sem; positive)
+    band!(ax, x, values.lower, values.upper; color=(color, 0.20))
+    lines!(ax, x, values.center; color, linewidth=2)
+end
+
+function finish_figure!(fig, labels, ncols, note)
+    Legend(fig[3, 1:ncols],
+        [LineElement(color=PLOT_COLORS[k], linewidth=2) for k in eachindex(labels)],
+        labels; orientation=:horizontal, framevisible=false)
+    Label(fig[4, 1:ncols], note; fontsize=13)
+end
+
+function gap_density(gaps, edges)
+    counts = zeros(Int, length(edges) - 1)
+    for x in gaps
+        isfinite(x) || continue
+        @assert first(edges) <= x <= last(edges)
+        counts[clamp(searchsortedlast(edges, x), 1, length(counts))] += 1
     end
-    report = ["# Plot audit", "", "Input: `$input`", "Julia: $(VERSION); project: `$(Base.active_project())`",
-        "CairoMakie: $(pkgversion(CairoMakie)); HDF5: $(pkgversion(HDF5))", "Boundary: $(data.boundary)", "",
-        "Natural logarithms. Error bands are ±1 SEM across independent disorder samples.",
-        "Gap densities use counts / (total samples × bin width), so missing probability is not renormalized away.",
-        "Log correlations use mean(sample_logC), not log(mean(sample_C)). Distances with any nonfinite log sample are omitted.",
-        "Correlation means and SEM are read directly from HDF5. Counts below refer to distances, not individual samples.", "",
-        "| h0 | L | samples | unresolved gaps | nonfinite mean_log distances | negative average distances | last complete log r |",
-        "|---|---|---|---|---|---|---|"]
-    for (k, h0) in enumerate(fields)
-        row, col = (k-1) ÷ 4 + 1, (k-1) % 4 + 1
-        title = "h₀ = $h0"
-        ag = Axis(gapfig[row, col]; title, xlabel=L"\ln\Delta E", ylabel=L"P(\ln\Delta E)", yscale=log10)
-        ac = Axis(avgfig[row, col]; title, xlabel=L"r", ylabel=L"C_{\mathrm{av}}(r)", xscale=log10, yscale=log10)
-        al = Axis(logfig[row, col]; title, xlabel=L"\sqrt{r}", ylabel=L"[\ln C(r)]_{\mathrm{av}}")
-        xlims!(ag, first(edges), last(edges)); ylims!(ag, 5e-4, 1)
-        xlims!(ac, 1, maximum(sizes) ÷ 2)
-        positive_means = [v for d in records if d.h0 == h0 for v in d.avg if v > 0]
-        # ylims!(ac, 10.0^floor(log10(minimum(positive_means)) - 0.3), 1)
-        xlims!(al, 0, sqrt(maximum(sizes) ÷ 2))
-        missing = String[]
-        for (j, L) in enumerate(sizes)
-            d = only(filter(d -> d.L == L && d.h0 == h0, records))
-            color, marker = colors[j], markers[j]
-            counts = zeros(Int, length(centers))
-            for x in filter(isfinite, d.gaps)
-                counts[clamp(searchsortedlast(edges, x), 1, length(counts))] += 1
-            end
-            density = counts ./ (d.n .* diff(edges))
-            @assert isapprox(sum(density .* diff(edges)), count(d.resolved) / d.n)
-            density[counts .== 0] .= NaN # break empty bins on the log axis
-            scatterlines!(ag, centers, density; color, marker, markersize=5)
-            nmiss = count(!, d.resolved)
-            nmiss > 0 && push!(missing, "L=$L: $nmiss/$(d.n)")
+    density = counts ./ (length(gaps) .* diff(edges))
+    @assert isapprox(sum(density .* diff(edges)), count(isfinite, gaps) / length(gaps))
+    density[counts .== 0] .= NaN
+    density
+end
 
-            r = collect(0:L÷2)
-            y = copy(d.avg); y[(r .== 0) .| (y .<= 0)] .= NaN
-            lower = d.avg .- d.sem
-            lower[lower .<= 0] .= NaN
-            upper = d.avg .+ d.sem
-            upper[upper .<= 0] .= NaN
-            band!(ac, r[2:end], lower[2:end], upper[2:end]; color=(color, 0.16))
-            scatterlines!(ac, r[2:end], y[2:end]; color, marker, markersize=4)
-            valid = isfinite.(d.logavg) .& isfinite.(d.logsem)
-            ly = copy(d.logavg); ly[.!valid] .= NaN
-            band!(al, sqrt.(r), ly .- d.logsem, ly .+ d.logsem; color=(color, 0.16))
-            scatterlines!(al, sqrt.(r), ly; color, marker, markersize=4)
-            last_r = r[findlast(valid)]
-            if last_r < L ÷ 2
-                scatter!(al, [sqrt(last_r)], [ly[last_r+1]]; color, marker=:xcross, markersize=14)
-            end
-            push!(report, "| $h0 | $L | $(d.n) | $nmiss | $(d.invalid_log) | $(d.negative_C) | $last_r |")
+function plot_gap_distributions(data, fields, sizes)
+    fig = Figure(size=(1150, 900))
+    Label(fig[0, 1:2], "Log energy-gap distributions", fontsize=25)
+    for (k, h0) in enumerate(fields)
+        row, col = panel_position(k, 2)
+        ax = Axis(fig[row, col]; title=field_label(h0), xlabel=L"\ln\Delta E",
+            ylabel=L"P(\ln\Delta E)", yscale=log10)
+        records = [only(filter(d -> d.L == L && d.h0 == h0, data.records)) for L in sizes]
+        finite_gaps = [x for d in records for x in d.gaps if isfinite(x)]
+        isempty(finite_gaps) && error("No resolved gaps at h0=$h0")
+        lo = floor(minimum(finite_gaps))
+        edges = collect(lo:1.0:max(lo + 1, ceil(maximum(finite_gaps))))
+        centers = (edges[1:end-1] .+ edges[2:end]) ./ 2
+        missing = String[]
+        for (j, d) in enumerate(records)
+            lines!(ax, centers, gap_density(d.gaps, edges); color=PLOT_COLORS[j])
+            nmiss = count(!, d.resolved)
+            nmiss > 0 && push!(missing, "L=$(d.L): $nmiss/$(d.n)")
         end
         if !isempty(missing)
-            text!(ag, 0.03, 0.98; text="Unresolved\n" * join(missing, "\n"), space=:relative,
-                align=(:left, :top), fontsize=12)
+            text!(ax, 0.03, 0.98; text="Unresolved\n" * join(missing, "\n"),
+                space=:relative, align=(:left, :top), fontsize=12)
         end
     end
-    notes = ["Natural-log bins: width 1\nDensity normalized by all samples\nUnresolved gaps omitted\nYoung & Rieger: Figs. 1, 3",
-        "All starting sites averaged first\nShading: ±1 disorder SEM\n1 ≤ r ≤ L/2; log–log axes\nYoung & Rieger: Fig. 8",
-        "Average of ln C, not ln of average C\nShading: ±1 disorder SEM\n×: last complete point before truncation\nYoung & Rieger: Fig. 9"]
-    for (fig, note) in zip(figs, notes)
-        panel = GridLayout(fig[2, 4])
-        Legend(panel[1, 1], [LineElement(color=c, linewidth=3) for c in colors[1:length(sizes)]],
-            ["L = $L" for L in sizes], "Chain length"; framevisible=false)
-        Label(panel[2, 1], note; fontsize=16, justification=:left)
-        Label(fig[3, 1:4], "$(first(records).n) disorder samples per (L, h₀)  •  $(data.boundary)", fontsize=15)
+    finish_figure!(fig, ["L = $L" for L in sizes], 2,
+        "$(basename(data.input)) | ln-gap bin width = 1; density normalized by all samples")
+    fig
+end
+
+function plot_spatial_correlations(data, fields, sizes; logarithmic=false)
+    fig = Figure(size=(1500, 900))
+    title = logarithmic ? "Mean log spatial correlations" : "Mean spatial correlations"
+    Label(fig[0, 1:3], title, fontsize=25)
+    for (k, h0) in enumerate(fields)
+        row, col = panel_position(k, 3)
+        ax = if logarithmic
+            Axis(fig[row, col]; title=field_label(h0), xlabel=L"\sqrt{r}",
+                ylabel=L"[\ln C(r)]_{\mathrm{av}}")
+        else
+            Axis(fig[row, col]; title=field_label(h0), xlabel=L"r",
+                ylabel=L"C_{\mathrm{av}}(r)", xscale=log10, yscale=log10)
+        end
+        for (j, L) in enumerate(sizes)
+            d = only(filter(d -> d.L == L && d.h0 == h0, data.records))
+            r = collect(0:div(L, 2))
+            if logarithmic
+                uncertainty_curve!(ax, sqrt.(r), d.logavg, d.logsem, PLOT_COLORS[j])
+            else
+                uncertainty_curve!(ax, r[2:end], d.avg[2:end], d.sem[2:end],
+                    PLOT_COLORS[j]; positive=true)
+            end
+        end
     end
-    for (fig, name) in zip(figs, ["gap_distribution", "average_correlation", "log_correlation_sqrt_r"])
-        save(joinpath(out, "$name.png"), fig; px_per_unit=1.5)
-        println("Saved ", joinpath(out, name))
+    finish_figure!(fig, ["L = $L" for L in sizes], 3,
+        "$(basename(data.input)) | Shading: ±1 disorder SEM; invalid points/bounds omitted")
+    fig
+end
+
+function plot_autocorrelation(data, fields, sizes)
+    fig = Figure(size=(1150, 900))
+    Label(fig[0, 1:2], "Imaginary-time autocorrelations", fontsize=25)
+    h5open(data.input, "r") do f
+        for (j, L) in enumerate(sizes)
+            row, col = panel_position(j, 2)
+            ax = Axis(fig[row, col]; title="L = $L", xlabel=L"\tau",
+                ylabel=L"C_{\mathrm{av}}(\tau)", xscale=log10, yscale=log10)
+            for (k, h0) in enumerate(fields)
+                g = f["L$(L)/h$(h0)"]
+                times = read(g["imaginary_time"])
+                y = read(g["autocorrelation_mean"])
+                sem = read(g["autocorrelation_sem"])
+                @assert length(times) == length(y) == length(sem)
+                keep = isfinite.(times) .& (times .> 0)
+                @assert any(keep) "No positive imaginary times for L=$L, h0=$h0"
+                uncertainty_curve!(ax, times[keep], y[keep], sem[keep], PLOT_COLORS[k]; positive=true)
+            end
+        end
+    end
+    finish_figure!(fig, field_label.(fields), 2,
+        "$(basename(data.input)) | Shading: ±1 disorder SEM; nonpositive times/values/bounds omitted")
+    fig
+end
+
+function main(args)
+    input = isempty(args) ? joinpath(@__DIR__, "results", "full.h5") : abspath(args[1])
+    out = length(args) < 2 ? joinpath(dirname(input), "figures") : abspath(args[2])
+    data = (; read_plot_data(input)..., input)
+    sizes = sort(data.sizes)
+    length(sizes) == 4 || error("Four size panels require exactly four sizes; got $sizes")
+    fields = representative_fields(data.fields, [0.1, 0.5, 1.0, 2.0, 5.0, 10.0])
+    gap_fields = representative_fields(filter(>=(1.0), data.fields), [1.0, 2.0, 5.0, 10.0])
+    mkpath(out)
+    set_theme!(Theme(fontsize=17, linewidth=2, Axis=(xgridvisible=false, ygridvisible=false,)))
+    for (name, fig) in (
+        ("gap_distribution", plot_gap_distributions(data, gap_fields, sizes)),
+        ("average_correlation", plot_spatial_correlations(data, fields, sizes)),
+        ("log_correlation_sqrt_r", plot_spatial_correlations(data, fields, sizes; logarithmic=true)),
+        ("imaginary_time_autocorrelation", plot_autocorrelation(data, fields, sizes)))
+        path = joinpath(out, "$name.png")
+        save(path, fig; px_per_unit=1.5)
+        println("Saved ", path)
+    end
+    report = ["# Plot audit", "", "Input: `$input`", "Boundary: $(data.boundary)",
+        "Julia: $VERSION; CairoMakie: $(pkgversion(CairoMakie)); HDF5: $(pkgversion(HDF5))",
+        "Sizes: $sizes", "Gap fields (2×2): $gap_fields", "Correlation fields (2×3): $fields",
+        "Autocorrelation: 2×2 size panels, the same six fields, from the same input file.", "",
+        "Natural logarithms. Shading = ±1 SEM across independent disorder samples, not a confidence interval.",
+        "Gap density = counts / (all samples × bin width); unresolved mass is not renormalized away.",
+        "Mean log correlations are mean(log C), not log(mean C). No refitting or resampling.",
+        "Nonfinite means break curves. Invalid SEM/bounds omit shading; log axes also omit nonpositive values/bounds.",
+        "Zero distance is omitted on log-log spatial axes; zero time is omitted on log-log time axes.", "",
+        "| h0 | L | samples | unresolved gaps | nonfinite mean-log distances | negative mean distances |",
+        "|---|---|---|---|---|---|"]
+    for d in data.records
+        d.h0 in union(fields, gap_fields) || continue
+        push!(report, "| $(d.h0) | $(d.L) | $(d.n) | $(count(!, d.resolved)) | $(d.invalid_log) | $(d.negative_C) |")
     end
     write(joinpath(out, "plot_audit.md"), join(report, "\n") * "\n")
     println("Verified summary dimensions, r=0 normalization, and histogram probability mass.")

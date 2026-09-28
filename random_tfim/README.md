@@ -31,22 +31,28 @@ julia --threads=4 random_tfim/run.jl full
 
 两种模式均扫描 `h0 = 10 .^ range(-1, 1, 101)`，计算能隙、`r=0:L÷2` 的空间关联，
 以及中点 `j=L÷2`、`tau=0:0.2:20` 的虚时间自关联。
-自定义链长、时间网格、实时间演化或 `logtol` 时，使用下面的函数接口。
+自定义链长、时间网格或实时间演化时，使用下面的函数接口。
 
 ### 绘制已有数据
 
 绘图使用共享 `@v1.13` 环境中的 CairoMakie 和 HDF5：
 
 ```sh
-julia --project=@v1.13 random_tfim/plot_results.jl random_tfim/results/demo_small.h5 random_tfim/results/figures
+julia --project=@v1.13 random_tfim/plot_results.jl random_tfim/results/full.h5 random_tfim/results/figures
 ```
 
-不传参数时读取 `random_tfim/results/full_sample1000.h5`；默认输出到输入文件旁的 `figures/`。
-[plot_results.jl](plot_results.jl) 按 h0 分面，输出 `gap_distribution.png`、
-`average_correlation.png`、`log_correlation_sqrt_r.png` 和 `plot_audit.md`，不重新采样。
+不传参数时读取 `random_tfim/results/full.h5`；默认输出到输入文件旁的 `figures/`。
+[plot_results.jl](plot_results.jl) 从同一输入文件绘制四张图，不重新采样：
+
+- `gap_distribution.png`：2×2 子图，选取 h0≥1 中最接近 1、2、5、10 的四点，各曲线对应不同尺寸。
+- `average_correlation.png`：2×3 子图，选取最接近 0.1、0.5、1、2、5、10 的六点，绘制 C 对 r 的双对数图。
+- `log_correlation_sqrt_r.png`：同样六点与尺寸，绘制无序平均 ln C 对 √r 的线性图。
+- `imaginary_time_autocorrelation.png`：2×2 子图分别对应四个尺寸，各含上述六个 h0 的虚时间自关联双对数曲线。
+
+输入须含四个尺寸及足够的不同 h0 点；图中标注实际取值，完整取值和数据审计写入 `plot_audit.md`。
 阴影为独立无序样本间的 ±1 SEM。能隙使用宽度为 1 的自然对数分箱，
 密度按全部样本数归一化；未分辨的概率质量不重新分配。
-非有限对数统计对应的距离不作图，提前结束的曲线以 × 标记；审计文件记录无效距离等信息。
+非有限均值处断开曲线，无效 SEM 处不画阴影；对数轴另行省略非正值及跨零误差带。
 
 ### Slurm 扫描
 
@@ -73,7 +79,7 @@ L, h0 = 32, 1.0
 boundary = :periodic                 # 改为 :open 可切换整套计算
 J, h = sample_disorder(Xoshiro(1996), L, h0; boundary)
 state = ground_state(J, h; boundary) # gap、resolved 和 G
-pair = correlations(state.G; boundary, rmax=L÷2, logtol=1e-6)
+pair = correlations(state.G; boundary, rmax=L÷2)
 
 times = collect(0.0:0.2:20.0)
 imaginary = autocorrelation(J, h, times; boundary, time_domain=:imaginary)
@@ -84,22 +90,22 @@ realtime = autocorrelation(J, h, times; boundary, time_domain=:real)
 **`autocorrelation` 默认开边界，其余公开接口默认周期边界**，建议像示例一样显式传递 `boundary`。
 相同 seed 在两种边界下生成相同的横场和内部键，开链仅去掉接缝键。
 
-| 函数 | 命名元组中的字段 |
+| 函数 | 返回值 |
 |---|---|
-| `sample_disorder(rng, L, h0; boundary)` | `J, h` |
-| `energy_gap(J, h; boundary)` | `gap, resolved` |
-| `ground_state(J, h; boundary)` | `gap, resolved, G` |
-| `correlations(G; boundary, rmax, logtol)` | `C, logC, resolved`，形状均为 `L×(rmax+1)` |
-| `autocorrelation(J, h, times; boundary, j, time_domain)` | `C`，长度为 `length(times)` |
+| `sample_disorder(rng, L, h0; boundary)` | 命名元组 `(J, h)` |
+| `energy_gap(J, h; boundary)` | 命名元组 `(gap, resolved)` |
+| `ground_state(J, h; boundary)` | 命名元组 `(gap, resolved, G)` |
+| `correlations(G; boundary, rmax)` | 直接返回 `Matrix{Float64}`，形状 `L×(rmax+1)` |
+| `autocorrelation(J, h, times; boundary, j, time_domain)` | 直接返回 `Vector{Float64}`，长度 `length(times)` |
 
 空间关联中 `C[i,r+1]=⟨σz(i)σz(i+r)⟩`，`r=0` 列为 1。
 默认 `rmax=L÷2`；周期链最多取 L÷2，开链可取 L−1。
-开链仅 `i+r≤L` 的位置有效，越界位置为 `NaN`、`resolved=false`。
-空间关联的 `resolved` 是逐格点对标记；能隙接口的同名字段是单个能隙标记。
+开链仅 `i+r≤L` 的位置有效，越界位置为 `NaN`。
+`resolved` 仅保留在能隙接口及无序样本能隙中。
 
 ### 实时间与虚时间
 
-两种模式都计算零温、未对称化的纵向自关联，取 ħ=1：
+两种模式都计算零温纵向自关联，取 ħ=1。内部演化使用：
 
 $$
 C_j(z)=\langle0|e^{zH}\sigma_j^z e^{-zH}\sigma_j^z|0\rangle
@@ -109,11 +115,12 @@ $$
 | `time_domain` | z | 合法时间 | `C` 的元素类型 |
 |---|---|---|---|
 | `:imaginary`（默认） | τ | 有限、非负 | `Float64` |
-| `:real` | it | 有限，可为负 | `ComplexF64`，保留完整相位 |
+| `:real` | it | 有限，可为负 | `Float64`，仅返回实部 |
 
 `times` 可为空、乱序或含重复点；`j` 默认 L÷2，开链取左中点。
 零时间也执行完整计算，结果在舍入误差内满足 `C(0)≈1`。
-精确算术下，虚时间关联在 [0,1] 内且单调不增；实时间满足 `C(-t)=conj(C(t))`。
+实时间返回 `Re C_j(it)=⟨{σz(j,t),σz(j,0)}⟩/2`，即对称化关联，内部仍保留复数演化。
+精确算术下，虚时间关联在 [0,1] 内且单调不增；返回的实时间关联满足 `C(-t)=C(t)`，可为负。
 有限链的确定宇称基态有 `⟨σz⟩=0`，因此结果同时等于 connected correlation。
 接口适用于零温平稳基态，不包含热态、quench 初态或破缺对称态。
 
@@ -122,18 +129,16 @@ $$
 沿用上例的 `L`、`h0`、`boundary` 和 `times`：
 
 ```julia
-ensemble = disorder_ensemble(L, h0;
-    nsamples=100, seed=1996, boundary, times,
-    time_domain=:imaginary, logtol=1e-6,
-    keep_samples=true, keep_pairs=false)
+ensemble = disorder_ensemble(L, h0, times; nsamples=100, seed=1996, boundary, keep_samples=true)
 
 average = ensemble.C_mean
 mean_log = ensemble.logC_mean
 typical = exp.(mean_log)
 time_average = ensemble.Ct_mean
+real_time_average = ensemble.real_Ct_mean
 
-# 只计算能隙：默认 times 为空，再设置 rmax=0
-only_gaps = disorder_ensemble(L, h0; nsamples=100, boundary, rmax=0)
+# 只保留能隙结果：显式传入空 times，再设置 rmax=0
+only_gaps = disorder_ensemble(L, h0, Float64[]; nsamples=100, boundary, rmax=0)
 ```
 
 | 返回字段 | 内容 / 形状 |
@@ -141,27 +146,36 @@ only_gaps = disorder_ensemble(L, h0; nsamples=100, boundary, rmax=0)
 | `gaps, resolved` | 逐样本能隙及其标记，长度 nsamples |
 | `C_mean, C_sem` | 空间关联均值和标准误，长度 rmax+1 |
 | `logC_mean, logC_sem` | 空间关联对数的均值和标准误，长度 rmax+1 |
-| `Ct_mean, Ct_sem` | 时间关联均值和标准误，长度 length(times) |
-| `pair_logC` | 默认空数组；`keep_pairs=true` 时为 `L×(rmax+1)×nsamples` |
+| `Ct_mean, Ct_sem` | 虚时间关联均值和标准误，长度 length(times) |
+| `logCt_mean, logCt_sem` | 虚时间关联对数的均值和标准误，长度 length(times) |
+| `real_Ct_mean, real_Ct_sem` | 实时间自关联实部的均值和标准误，长度 length(times) |
+| `real_logCt_mean, real_logCt_sem` | 实时间自关联实部对数的均值和标准误 |
+| `sample_real_Ct, sample_real_logCt` | 仅 `keep_samples=true` 时返回，形状 `length(times)×nsamples` |
 | `sample_C, sample_logC` | 仅 `keep_samples=true` 时返回，形状 `(rmax+1)×nsamples` |
-| `sample_Ct` | 仅 `keep_samples=true` 时返回，形状 `length(times)×nsamples` |
+| `sample_Ct, sample_logCt` | 仅 `keep_samples=true` 时返回，形状 `length(times)×nsamples` |
 
-默认 `nsamples=100`、`seed=1996`、`times=[]`、`rmax=L÷2`，两个 `keep_*` 选项均为 false。
-空 `times` 跳过动态计算；`rmax=0` 跳过非平凡空间关联。
+默认 `nsamples=100`、`seed=1996`、`rmax=L÷2`、`keep_samples=false`。
+`times` 是第三个必需位置参数，必须有限且非负；两种时间域共用该网格并同时计算。
+显式传入空 `times` 时返回空时间统计；`rmax=0` 跳过非平凡空间关联。
 先逐样本计算，再平均：空间关联先平均同一样本内的有效起点（周期 L 个、开链 L−r 个），
 随后在无序样本间求均值和 SEM。同一样本的能隙与各关联数组使用相同构型。
 随机数在并行前顺序生成，构型顺序与 Julia 线程数无关。
 
 所有 SEM 使用样本标准差除以 `sqrt(nsamples)`，单样本 SEM 为 `NaN`。
-实时间的 `Ct_mean/sample_Ct` 为复数，`Ct_sem` 为实数，方差使用偏差的模平方。
-`logC_mean` 是先取对数再平均，不是 `log(C_mean)`；未分辨或非正关联产生的 `NaN` 会传播到对数统计，
+虚时间使用 `sample_Ct/Ct_mean/Ct_sem`，实时间使用 `sample_real_Ct/real_Ct_mean/real_Ct_sem`，均为实数；实时间 SEM 仅统计实部的样本波动。
+对数统一使用返回值的 `log(Ct)`，实时间对应原始复关联的 `log(real(Ct))`。
+两类关联及其对数的均值和 SEM 均在 `disorder_ensemble` 内计算。
+空间关联逐对取 log 后先平均有效起点，自关联逐时间点取 log；再在样本间求均值和 SEM。
+`logC_mean/logCt_mean` 是先取对数再平均，不是均值的对数；非正或非有限实数（实时间取实部）产生的 `NaN` 会传播到对数统计，
 不会通过删除格点或样本重新平均。`exp.(logC_mean)` 是典型关联；将对数均值 ±1 SEM 指数映射得到的范围不是指定置信水平的置信区间。
 
 ## HDF5 输出
 
-本地和 Slurm 脚本均保存虚时间结果。根目录中的 `parameters/sizes`、`parameters/fields`
+本地和 Slurm 脚本均同时保存虚时间和实时间结果。根目录中的 `parameters/sizes`、`parameters/fields`
 记录扫描参数，各参数组命名为 `L16/h1.0` 等。组属性为 `j`、`seed`、`seconds`；
 根属性记录边界、时间定义、环境及 `complete`，只有整个扫描完成后才设 `complete=true`。
+两个脚本的 `write_correlations(group, result, times)` 同时写入两组统计。
+`imaginary_time` 与 `real_time` 保存相同的网格；两种时间域的自关联统计均保存为 Float64 数组，实时间仅保存实部。
 
 | 数据集 | 内容 / 形状 |
 |---|---|
@@ -170,11 +184,14 @@ only_gaps = disorder_ensemble(L, h0; nsamples=100, boundary, rmax=0)
 | `log_gap_mean, log_gap_sem` | 对数能隙均值和标准误，标量 |
 | `correlation_mean, correlation_sem` | 空间关联均值和标准误，长度 rmax+1 |
 | `log_correlation_mean, log_correlation_sem` | 空间关联对数的均值和标准误，长度 rmax+1 |
-| `imaginary_time` | 虚时间网格 |
+| `imaginary_time, real_time` | 共用的时间网格 |
 | `autocorrelation_mean, autocorrelation_sem` | 虚时间自关联均值和标准误，与时间网格等长 |
+| `log_autocorrelation_mean, log_autocorrelation_sem` | 虚时间自关联对数的均值和标准误，与时间网格等长 |
+| `real_autocorrelation_mean, real_autocorrelation_sem` | 实时间自关联实部的均值和标准误 |
+| `real_log_autocorrelation_mean, real_log_autocorrelation_sem` | 实时间自关联实部对数的均值和标准误 |
 
 未分辨能隙的 `log_gap_samples` 为 `NaN`，原始 gap 仍保留。
-文件保存关联的统计量，不保存 `sample_C`、`sample_logC`、`sample_Ct` 或 `pair_logC`，
+文件保存关联的统计量，不保存 `sample_C`、`sample_logC`、`sample_Ct`、`sample_logCt`、`sample_real_Ct`、`sample_real_logCt`，
 因此不能从默认输出重建逐样本或逐格点对的关联分布。
 距离由数组索引恢复：空间统计量第 r+1 个元素对应 r；样本数由 `gap_samples` 长度恢复。
 绘图读取器兼容旧字段 `loggaps/resolved/average/sem/mean_log/log_sem` 及没有 `parameters` 的旧文件。
@@ -253,19 +270,17 @@ $$
 
 - **能隙：** 周期链的阈值为 `64eps(Float64)*max(abs(E0),abs(E1),1)`，
   开链为 `64eps(Float64)*max(sum(ε),1)`；不超过阈值时 `resolved=false`，原始 gap 不裁剪。
-- **空间关联：** 小对角元仅触发下三角因子的 `LAPACK.trcon!` 条件数估计，不再重做 LU。
-  令 u=`eps(Float64)`，筛查阈值为当前原始前缀最大元素尺度乘以 `max(sqrt(u),64*r^2*u/logtol)`。
-  估计对数误差 `64*r^2*u/rcond` 超过 `logtol`（默认 `1e-6`）或行列式为零时，
-  `resolved=false`、`logC=NaN`，保留原始有符号 `C`；负行列式的 `logC` 也为 `NaN`。
+- **空间关联：** `correlations` 仅返回原始有符号 `C`，不再返回 `logC/resolved`，也不再接受 `logtol`。
+  QR 内部仍用对数行列式重建 `C`，但最终转换为 Float64 时可能下溢为零。
+  `disorder_ensemble` 从返回的 `C` 取 log，不恢复下溢前的对数，也不做条件数筛选。
 - **时间关联：** 不自动取绝对值或截断负值。缩放避免指数溢出，但长虚时间的极小尾部仍可能受舍入误差、噪声底和下溢影响。
 
-这些标记是启发式诊断，不是严格误差界。空间关联中未触发检查的项暂标为已分辨，
-不能保证发现所有病态矩阵，也不认证上游构造 G 的误差。
-对数行列式能避免最终乘积下溢，不能恢复矩阵构造时丢失的信息；可信的极小尾部需要额外精度验证。
+能隙标记是启发式诊断，不是严格误差界。空间关联与自关联的非正实值在取 log 时记为 NaN，
+不取绝对值、不裁剪、不删除样本。对数行列式不能恢复矩阵构造时丢失的信息；可信的极小尾部需要额外精度验证。
 
 ### 计算成本与并行
 
-空间关联的总成本约为 `O(L*rmax^3)`，可疑前缀的条件估计通常为 `O(r^2)`。
+空间关联的总成本约为 `O(L*rmax^3)`。
 一般位置的时间关联约为 `O(L^3+Nt*L^3)`，工作矩阵占 `O(L^2)`；短字符串端点更便宜。
 联合计算复用 SVD，核心不修改输入，也不使用全局可变状态。
 
@@ -276,7 +291,6 @@ $$
 
 性能以 [benchmark.jl](test/benchmark.jl) 在当前机器上的结果为准：固定种子、单 BLAS 线程、
 预热后七次中位数，覆盖两种边界、两种时间模式、端点和强场空间关联。
-条件估计使用标准库临时向量，减少重复分解的同时可能增加累计分配量。
 
 ## 测试与基准
 
@@ -299,7 +313,7 @@ julia --startup-file=no random_tfim/test/benchmark.jl /path/to/old/RandomTFIM.jl
 核心测试独立构造完整自旋哈密顿量，核对能隙、空间关联和两种时间关联；
 另检查宇称、断开周期接缝、解耦极限、微小尾部、奇异前缀、负时间及可重复采样。
 `smoke_io.jl` 实际运行 demo/full 的少量样本扫描；`summary_io.jl` 验证输出接口，不提交 Slurm 作业。
-基准对照源码须支持 `time_domain=:imaginary/:real`；未分辨空间对数不要求与旧规则一致。
+基准对照源码须支持 `time_domain=:imaginary/:real`；空间关联核对原始 `C`。
 这些小规模验证不代表已完成 full 默认 10000 样本的论文统计精度复现。
 
 ## 论文图与数据需求
@@ -314,5 +328,5 @@ julia --startup-file=no random_tfim/test/benchmark.jl /path/to/old/RandomTFIM.jl
 | 13–16 | 空间关联除以临界值、对数关联减去临界值；横轴分别为 rδ²、2rδ |
 | 17–19 | 对数均值可由现有统计量得到；逐格点对分布与方差需要额外数据 |
 
-提取关联分布时可用 `keep_pairs=true` 获取原始对数；跨样本误差应按无序样本分块，
+提取逐格点对关联分布时需逐样本调用 `ground_state` 和 `correlations`，再对关联取对数；跨样本误差应按无序样本分块，
 不要把同一样本内的起点视为独立样本。能隙直方图应报告未分辨比例，并按实际箱宽归一化。

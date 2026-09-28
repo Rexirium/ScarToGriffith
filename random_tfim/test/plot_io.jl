@@ -1,6 +1,22 @@
 using Test
 include(joinpath(@__DIR__, "..", "plot_results.jl"))
 
+@testset "Plot selection, missing probability, and uncertainty masks" begin
+    fields = [0.1, 0.501, 1.0, 1.995, 5.012, 10.0]
+    @test representative_fields(reverse(fields), [0.1, 0.5, 1, 2, 5, 10]) == fields
+    @test representative_fields(filter(>=(1), fields), [1, 2, 5, 10]) == fields[3:end]
+    @test_throws ErrorException representative_fields([1.0], [1, 2])
+    @test gap_density([-2.0, -1.0, 0.0, NaN], [-2.0, -1.0, 0.0]) == [0.25, 0.5]
+    values = uncertainty_values([1.0, 0.1, 0.0, NaN], [0.2, 0.2, 0.1, 0.1]; positive=true)
+    @test values.center[1:2] == [1.0, 0.1]
+    @test all(isnan, values.center[3:4])
+    @test values.lower[1] == 0.8
+    @test all(isnan, values.lower[2:4]) && all(isnan, values.upper[2:4])
+    values = uncertainty_values([-2.0, -3.0], [0.5, NaN])
+    @test values.center == [-2.0, -3.0]
+    @test values.lower[1] == -2.5 && isnan(values.lower[2])
+end
+
 @testset "Plot reader: parameter arrays and legacy files" begin
     mktempdir() do directory
         input = joinpath(directory, "ensemble.h5")

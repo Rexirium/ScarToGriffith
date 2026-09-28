@@ -17,13 +17,22 @@ function mean_sem(samples::AbstractVector)
 end
 
 function write_correlations(group, result, times)
+    RandomTFIM.time_scale(times, :imaginary)
     group["correlation_mean"] = result.C_mean
     group["correlation_sem"] = result.C_sem
     group["log_correlation_mean"] = result.logC_mean
     group["log_correlation_sem"] = result.logC_sem
     group["imaginary_time"] = times
+    group["real_time"] = times
+    # Both time domains provide real-valued sample means and SEM upstream.
     group["autocorrelation_mean"] = result.Ct_mean
     group["autocorrelation_sem"] = result.Ct_sem
+    group["log_autocorrelation_mean"] = result.logCt_mean
+    group["log_autocorrelation_sem"] = result.logCt_sem
+    group["real_autocorrelation_mean"] = result.real_Ct_mean
+    group["real_autocorrelation_sem"] = result.real_Ct_sem
+    group["real_log_autocorrelation_mean"] = result.real_logCt_mean
+    group["real_log_autocorrelation_sem"] = result.real_logCt_sem
 end
 
 function parse_config(args)
@@ -47,9 +56,8 @@ end
 
 function compute_case(job, cfg)
     BLAS.set_num_threads(1)
-    seconds = @elapsed result = disorder_ensemble(job.L, job.h0;
-        nsamples=cfg.nsamples, seed=job.seed, rmax=job.L ÷ 2,
-        boundary=cfg.boundary, times=cfg.times)
+    seconds = @elapsed result = disorder_ensemble(job.L, job.h0, cfg.times; nsamples=cfg.nsamples, seed=job.seed, rmax=job.L ÷ 2,
+        boundary=cfg.boundary)
     return (; L=job.L, h0=job.h0, seed=job.seed, result,
         worker_id=myid(), seconds)
 end
@@ -86,9 +94,9 @@ function write_metadata(file, cfg)
     attributes(file)["distribution"] = "box"
     attributes(file)["boundary"] = "$(cfg.boundary) spins; even L; Pauli normalization"
     attributes(file)["precision"] = "Float64 outputs; ComplexF64 internal Pfaffian; unresolved log gaps are NaN"
-    attributes(file)["observable"] = "gap; <sigma_z(i) sigma_z(i+r)>; <sigma_z(j,tau) sigma_z(j,0)>; j=L/2; ground state"
-    attributes(file)["time_domain"] = "imaginary"
-    attributes(file)["time_definition"] = "tau >= 0; sigma_z(tau) = exp(tau*H) sigma_z exp(-tau*H); hbar=1"
+    attributes(file)["observable"] = "gap; <sigma_z(i) sigma_z(i+r)>; <sigma_z(j,tau) sigma_z(j,0)>; real(<sigma_z(j,t) sigma_z(j,0)>); j=L/2; ground state"
+    attributes(file)["time_domain"] = "imaginary and real"
+    attributes(file)["time_definition"] = "tau >= 0; sigma_z(tau) = exp(tau*H) sigma_z exp(-tau*H); t >= 0; sigma_z(t) = exp(im*t*H) sigma_z exp(-im*t*H); real part only; hbar=1"
     attributes(file)["uncertainty"] = "SEM across independent disorder samples; corrected sample variance; NaN for one sample"
     attributes(file)["blas"] = string(BLAS.get_config())
     attributes(file)["blas_threads"] = BLAS.get_num_threads()

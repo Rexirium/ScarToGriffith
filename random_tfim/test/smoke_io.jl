@@ -11,7 +11,7 @@ using Test
             h5open(output, "r") do file
                 @test read(attributes(file)["complete"])
                 @test read(attributes(file)["mode"]) == mode
-                @test read(attributes(file)["time_domain"]) == "imaginary"
+                @test read(attributes(file)["time_domain"]) == "imaginary and real"
                 @test occursin("exp(tau*H)", read(attributes(file)["time_definition"]))
                 @test occursin("sigma_z(j,tau)", read(attributes(file)["observable"]))
                 @test startswith(read(attributes(file)["boundary"]), string(boundary))
@@ -30,7 +30,10 @@ using Test
                             "gap_mean", "gap_sem", "log_gap_mean", "log_gap_sem",
                             "correlation_mean", "correlation_sem",
                             "log_correlation_mean", "log_correlation_sem",
-                            "imaginary_time", "autocorrelation_mean", "autocorrelation_sem"])
+                            "imaginary_time", "autocorrelation_mean", "autocorrelation_sem",
+                            "log_autocorrelation_mean", "log_autocorrelation_sem",
+                            "real_time", "real_autocorrelation_mean", "real_autocorrelation_sem",
+                            "real_log_autocorrelation_mean", "real_log_autocorrelation_sem"])
                         @test Set(keys(attributes(group))) == Set(["j", "seed", "seconds"])
                     end
                 end
@@ -45,10 +48,13 @@ using Test
                 end
                 times = read(group["imaginary_time"])
                 @test times == collect(0.0:0.2:20.0)
-                expected = disorder_ensemble(16, 1.0; keep_samples=true, times, nsamples=2,
+                expected = disorder_ensemble(16, 1.0, times; keep_samples=true, nsamples=2,
                     seed=read(attributes(group)["seed"]), boundary)
                 for (prefix, samples) in (("correlation", expected.sample_C),
-                        ("log_correlation", expected.sample_logC), ("autocorrelation", expected.sample_Ct))
+                        ("log_correlation", expected.sample_logC), ("autocorrelation", expected.sample_Ct),
+                        ("log_autocorrelation", expected.sample_logCt),
+                        ("real_autocorrelation", expected.sample_real_Ct),
+                        ("real_log_autocorrelation", expected.sample_real_logCt))
                     average, sem = read(group["$(prefix)_mean"]), read(group["$(prefix)_sem"])
                     @test average isa Vector{Float64} && sem isa Vector{Float64}
                     @test average ≈ vec(mean(samples; dims=2)) nans=true
@@ -70,7 +76,8 @@ using Test
             for name in ("gap_sem", "log_gap_sem")
                 @test isnan(read(group[name]))
             end
-            for name in ("correlation_sem", "log_correlation_sem", "autocorrelation_sem")
+            for name in ("correlation_sem", "log_correlation_sem", "autocorrelation_sem", "log_autocorrelation_sem",
+                    "real_autocorrelation_sem", "real_log_autocorrelation_sem")
                 @test all(isnan, read(group[name]))
             end
         end
