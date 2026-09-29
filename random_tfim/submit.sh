@@ -19,6 +19,6 @@ export OPENBLAS_NUM_THREADS=1
 export OMP_NUM_THREADS=1
 # SlurmClusterManager starts the worker processes; do not add srun here.
 if (($# == 0)); then
-	set -- full
+	set -- full 50_000
 fi
 julia --startup-file=no --threads=2 random_tfim/run_slurm.jl "$@"

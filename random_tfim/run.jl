@@ -22,7 +22,7 @@ function main(args)
     length(args) <= 4 || throw(ArgumentError("expected at most four arguments"))
     boundary = length(args) >= 4 ? Symbol(args[4]) : :periodic
     RandomTFIM.check_boundary(boundary)
-    default_samples = mode == "demo" ? 50 : 50_000
+    default_samples = mode == "demo" ? 20 : 10_000
     nsamples = length(args) >= 2 ? parse(Int, args[2]) : default_samples
     output = length(args) >= 3 ? abspath(args[3]) : joinpath(@__DIR__, "results", "$mode.h5")
     stem, ext = splitext(output)
