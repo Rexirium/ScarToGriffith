@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH -A hpc1906185151
-#SBATCH --partition=C064M1024G
+#SBATCH --partition=C064M0256G
 #SBATCH --qos=low
 #SBATCH -J random-tfim
-#SBATCH --nodes=6
+#SBATCH --nodes=4
 #SBATCH --cpus-per-task=8
 #SBATCH --ntasks-per-node=7
 #SBATCH --time=7200
