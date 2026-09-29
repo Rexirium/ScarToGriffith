@@ -30,7 +30,7 @@ function main(args)
     sizes = mode == "demo" ? (16, 32) : (16, 32, 64, 128)
     fields = 10 .^ range(-1, 1, 101)
     sample_fields = select_sample_fields(fields)
-    times = collect(0.0:0.2:20.0)
+    times = 10 .^ range(-1, 3, 101)
     BLAS.set_num_threads(1)
     mkpath(dirname(output))
 
