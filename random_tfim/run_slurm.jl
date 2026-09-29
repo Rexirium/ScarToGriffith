@@ -6,7 +6,7 @@ end
 
 module RandomTFIMSlurm
 
-using Distributed, HDF5, LinearAlgebra, Statistics
+using Distributed, HDF5, LinearAlgebra, Statistics, Dates
 
 include("RandomTFIM.jl")
 using .RandomTFIM
@@ -23,6 +23,8 @@ function parse_config(args)
     default_samples = mode == "demo" ? 20 : 10_000
     nsamples = length(args) >= 2 ? parse(Int, args[2]) : default_samples
     output = length(args) >= 3 ? abspath(args[3]) : joinpath(@__DIR__, "results", "$mode.h5")
+    stem, ext = splitext(output)
+    output = stem * "_" * Dates.format(now(), "yyyymmdd_HHMMSS") * ext
     nsamples > 0 || throw(ArgumentError("samples must be positive"))
     ispath(output) && throw(ArgumentError("output already exists: $output"))
 
