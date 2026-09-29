@@ -1,7 +1,7 @@
 using Pkg
 Pkg.activate(joinpath(@__DIR__, "..", "julia-env", "local"))
 
-using LinearAlgebra, Statistics, HDF5
+using LinearAlgebra, Statistics, HDF5, Dates
 if !isdefined(Main, :RandomTFIM)
     include(joinpath(@__DIR__, "RandomTFIM.jl"))
     using .RandomTFIM
@@ -13,6 +13,7 @@ include("results_io.jl")
 
 Both modes compute gaps, spatial correlations and imaginary- and real-time autocorrelations with SEM.
 Usage: julia random_tfim/run.jl [demo|full] [samples] [output.h5] [open|periodic]
+Output filenames receive a _yyyymmdd_HHMMSS timestamp before the extension.
 """
 function main(args)
     mode = isempty(args) ? "demo" : args[1]
@@ -24,6 +25,8 @@ function main(args)
     default_samples = mode == "demo" ? 20 : 10_000
     nsamples = length(args) >= 2 ? parse(Int, args[2]) : default_samples
     output = length(args) >= 3 ? abspath(args[3]) : joinpath(@__DIR__, "results", "$mode.h5")
+    stem, ext = splitext(output)
+    output = stem * "_" * Dates.format(now(), "yyyymmdd_HHMMSS") * ext
     ispath(output) && throw(ArgumentError("output already exists: $output"))
     nsamples > 0 || throw(ArgumentError("samples must be positive"))
 
