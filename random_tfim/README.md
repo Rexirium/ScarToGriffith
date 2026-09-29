@@ -41,13 +41,26 @@ julia --threads=4 random_tfim/run.jl full
 julia --project=@v1.13 random_tfim/plot_results.jl random_tfim/results/full.h5 random_tfim/results/figures
 ```
 
-不传参数时读取 `random_tfim/results/full.h5`；默认输出到输入文件旁的 `figures/`。
-[plot_results.jl](plot_results.jl) 从同一输入文件绘制四张图，不重新采样：
+不传参数时读取 `random_tfim/results/` 下最新的 `full.h5` 或 `full_YYYYMMDD_HHMMSS.h5`；默认输出到输入文件旁的 `figures/`。
+[plot_results.jl](plot_results.jl) 从同一输入文件绘制九张图（实时间数据缺失时为八张），不重新采样：
 
 - `gap_distribution.png`：2×2 子图，选取 h0≥1 中最接近 1、2、5、10 的四点，各曲线对应不同尺寸。
+- `scaled_gap_distribution.png`：同一布局，先将样本变换为 ln ΔE/√L，再以公共箱宽 0.1 统计密度。
 - `average_correlation.png`：2×3 子图，选取最接近 0.1、0.5、1、2、5、10 的六点，绘制 C 对 r 的双对数图。
 - `log_correlation_sqrt_r.png`：同样六点与尺寸，绘制无序平均 ln C 对 √r 的线性图。
-- `imaginary_time_autocorrelation.png`：2×2 子图分别对应四个尺寸，各含上述六个 h0 的虚时间自关联双对数曲线。
+- `imaginary_time_autocorrelation.png`：2×2 子图分别对应四个尺寸，各含上述六个 h0 的 |〈C(τ)〉| 双对数曲线；对已保存的均值取绝对值，沿用已保存的 SEM。
+- `imaginary_time_autocorrelation_slopes.png`：h0≥1，横轴对数、纵轴线性；各尺寸的 1/z 为 ln|〈C(τ)〉| 对 ln τ 的回归斜率绝对值，回归使用全部有效时间点。
+- `real_time_autocorrelation.png`：存在实时间数据时输出；同虚时图布局，纵轴线性。
+- `imaginary_time_log_distribution.png`：最大尺寸（当前 L=128），四个子图沿用能隙图的 h0；选取最接近 τ=1、3、10、30、100、300 的六个网格点，用 `scatterlines!` 绘制逐样本 −ln|C(τ)| 的密度，图例标注实际时间。
+- `imaginary_time_rescaled_distribution.png`：同一批样本和布局，绘制 x=−ln|C(τ)|/τ^μ 的密度；每个 h0 使用实际网格时间独立拟合 μ，并标在子图标题。
+
+两张虚时分布图要求对应参数组保存 `sample_Ct`，每条曲线使用 60 个等宽箱。
+μ 最小化六个时刻的对应分位数在对数空间中的差异：Σ[ln Q_p(−ln|C|)−μ ln τ−a_p]²，
+p=0.05、0.10、…、0.95，每个分位数有独立截距 a_p；拟合与分箱无关。
+先对每个样本取绝对值，再取负对数；仅零值和非有限值不取对数，其数量标在图中，密度仍按全部样本数归一化。
+拟合只使用有效样本的正分位数，μ、拟合前后残差和缺失比例写入 `plot_audit.md`；
+该 μ 描述所选时间范围内的最佳重合，不能直接视作渐近物理指数。
+均值图的 |〈C〉| 与先逐样本取绝对值再平均的 〈|C|〉不同；多数 h0 未保存样本，因此统一采用前者。
 
 输入须含四个尺寸及足够的不同 h0 点；图中标注实际取值，完整取值和数据审计写入 `plot_audit.md`。
 阴影为独立无序样本间的 ±1 SEM。能隙使用宽度为 1 的自然对数分箱，
