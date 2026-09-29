@@ -14,7 +14,7 @@ function main(args)
     # Exact decoupled-spin check also warms up both implementations.
     check_times = [0.0, 1.0, 10.0, 100.0]
     F = svd!(RandomTFIM.fermion_matrix(zeros(7), ones(8), Val(:open)))
-    for values in (RandomTFIM.determinant_autocorrelation(F, F, check_times, 4),
+    for values in (RandomTFIM.autocorrelation(F, F, check_times, 4, 1.0; rcond_tol=0.0),
                    RandomTFIM.string_autocorrelation(F, check_times, 4, false))
         @assert all(isapprox.(values, exp.(-2 .* check_times); rtol=1e-12, atol=0))
     end
@@ -31,7 +31,7 @@ function main(args)
                 J, h = sample_disorder(Xoshiro(seed), L, h0; boundary=:open)
                 F = svd!(RandomTFIM.fermion_matrix(J, h, Val(:open)))
                 j = L ÷ 2
-                det_seconds = @elapsed C_det = RandomTFIM.determinant_autocorrelation(F, F, times, j)
+                det_seconds = @elapsed C_det = RandomTFIM.autocorrelation(F, F, times, j, 1.0; rcond_tol=0.0)
                 pf_seconds = @elapsed C_pf = RandomTFIM.string_autocorrelation(F, times, j, false)
                 @assert isapprox(C_det[1], 1; atol=1e-10)
                 @assert isapprox(C_pf[1], 1; atol=1e-10)

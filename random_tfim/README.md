@@ -265,13 +265,42 @@ R_{ab}(z)=\frac{\delta_{ab}+B_{ab}}2+
 C_j(z)=e^{z\sum_a(\epsilon_a^e-\epsilon_a^g)}\det R(z).
 $$
 
-中点及一般位置使用这一 L×L 缩放行列式；开链的外部指数系数直接设为零。
+两种边界、所有观测位置均先构造这一 L×L 缩放矩阵；开链的外部指数系数直接设为零。
 虚时间矩阵为实数，实时间为复数。通过 `logabsdet` 与外部指数合并恢复结果，
 不构造增长的双曲函数，也不使用 `sqrt(det)`。
 非对角元共享行因子；对角上的常数项和衰减项分开计算，以保留解耦极限的微小尾部。
 
-靠近开链端点时，令 `d=min(j,L+1-j)`；若 `4d−2≤L÷4`，改用较短的 Jordan–Wigner 字符串 Pfaffian。
-右端通过反射并交换 U、V 处理。取 Majorana 约定
+每个时间点在 LU 分解前计算矩阵一范数，再复用 LU 因子调用 `LAPACK.gecon!`，
+估计 `rcond₁(R)=1/(‖R‖₁‖R⁻¹‖₁)`。若估计值大于 `rcond_tol`，使用行列式；
+否则 OBC 使用较短一侧的 JW 字符串 Pfaffian，PBC 使用保留宇称结构的高斯态重叠 Pfaffian。
+实时间监测完整的复矩阵 R，
+不根据关联实部是否为负切换。时间点可乱序，每点独立判断。
+
+`autocorrelation` 和 `disorder_ensemble` 均接受 `rcond_tol`，默认 `sqrt(eps(Float64))≈1.49e-8`。
+有效范围为 [0,1]：0 强制行列式，1 强制 Pfaffian，便于交叉验证。
+这是数值稳定性的启发式阈值，不是严格的相对误差保证；更大的阈值会更早切换。
+
+PBC 后备算法在演化模式基底中，逐模式选择条件概率不小于 1/2 的参考占据态 r，
+令 `S=diag(1−2r)`、`Z=(I−SB)/(I+SB)`，并显式保持 Z 的反对称性。
+记 `dₐ=exp(−2εₐᵉz)`，`kₐ=rₐ ? dₐ : 1`，`qₐ=rₐ ? 1 : dₐ`，则
+
+$$
+W(z)=\begin{pmatrix}Z&-\operatorname{diag}(k)\\
+\operatorname{diag}(k)&-\operatorname{diag}(q)Z\operatorname{diag}(q)\end{pmatrix},\qquad
+C_j(z)=\frac{(-1)^{L(L+1)/2}\operatorname{Pf}W(z)}{\det(I+Z)}
+e^{z\sum_a(\epsilon_a^e-\epsilon_a^g)}.
+$$
+
+这是 2L×2L 的高斯重叠公式，不是把病态 R 嵌入反对称矩阵。
+矩阵仅使用衰减指数或单位模相位；Pfaffian 的对数幅值与归一化、扇区能量补偿合并后恢复结果。
+参考占据态及工作空间只在首次切换时建立，后续复用。
+PBC 虚时间 Pfaffian 使用 Float64 工作区，实时间使用 ComplexF64；每点的 q 因子预计算到复用缓冲区。
+强制 Pfaffian 时跳过 R 的构造、LU 和倒条件数估计；强制行列式时跳过倒条件数估计。
+
+OBC 后备算法使用 Jordan–Wigner 字符串 Pfaffian。令 `d=min(j,L+1-j)`，
+矩阵维数为 `4d−2`；右半链通过反射并交换 U、V 处理。
+仅收集倒条件数不达标的时间点，批量计算并写回原位置，工作区只建立一次；
+两种时间模式均使用 ComplexF64 收缩矩阵。取 Majorana 约定
 $\gamma_{2k-1}=(\prod_{\ell<k}\sigma_\ell^x)\sigma_k^z$、
 $\gamma_{2k}=(\prod_{\ell<k}\sigma_\ell^x)\sigma_k^y$，则
 $\sigma_j^z=i^{j-1}\gamma_1\cdots\gamma_{2j-1}$。在左端字符串 S=1:2j−1 上，
@@ -295,7 +324,8 @@ $$
 - **空间关联：** `correlations` 仅返回原始有符号 `C`，不再返回 `logC/resolved`，也不再接受 `logtol`。
   QR 内部仍用对数行列式重建 `C`，但最终转换为 Float64 时可能下溢为零。
   `disorder_ensemble` 从返回的 `C` 取 log，不恢复下溢前的对数，也不做条件数筛选。
-- **时间关联：** 不自动取绝对值或截断负值。缩放避免指数溢出，但长虚时间的极小尾部仍可能受舍入误差、噪声底和下溢影响。
+- **时间关联：** 按倒条件数自动切换行列式/Pfaffian，不取绝对值或截断负值。
+  切换改善行列式近奇异导致的伪尾部，但不能保证任意长时间的相对精度，仍可能受输入分解精度和下溢影响。
 
 能隙标记是启发式诊断，不是严格误差界。空间关联与自关联的非正实值在取 log 时记为 NaN，
 不取绝对值、不裁剪、不删除样本。对数行列式不能恢复矩阵构造时丢失的信息；可信的极小尾部需要额外精度验证。
@@ -303,7 +333,9 @@ $$
 ### 计算成本与并行
 
 空间关联的总成本约为 `O(L*rmax^3)`。
-一般位置的时间关联约为 `O(L^3+Nt*L^3)`，工作矩阵占 `O(L^2)`；短字符串端点更便宜。
+时间关联约为 `O(L^3+Nt*L^3)`，工作矩阵占 `O(L^2)`。
+每点复用 LU 估计倒条件数；切换后 OBC 使用 `4min(j,L+1-j)−2` 维 JW-Pfaffian，
+PBC 使用 2L 维高斯重叠 Pfaffian，端点也遵循同一倒条件数判据。
 联合计算复用 SVD，核心不修改输入，也不使用全局可变状态。
 
 运行脚本固定单 BLAS 线程，用 Julia 线程并行不同样本；直接调用时也建议 `BLAS.set_num_threads(1)`。

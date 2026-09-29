@@ -1,6 +1,7 @@
 using Test, LinearAlgebra, Random, Statistics
 include(joinpath(@__DIR__, "..", "RandomTFIM.jl"))
 using .RandomTFIM
+include("reference_pfaffian.jl")
 BLAS.set_num_threads(1)
 
 @testset "Ensemble summary and optional samples" begin
@@ -96,17 +97,17 @@ end
     for n in (2, 4, 6, 8)
         X = randn(rng, ComplexF64, n, n)
         A = X - transpose(X)
-        @test RandomTFIM.pfaffian!(copy(A)) ≈ pfaffian_expansion(A) rtol=1e-12
+        @test pfaffian!(copy(A)) ≈ pfaffian_expansion(A) rtol=1e-12
         D = randn(rng, ComplexF64, n, n)
         W = zeros(ComplexF64, 2n, 2n)
         W[1:2:2n, 2:2:2n] = D
         W[2:2:2n, 1:2:2n] = -transpose(D)
-        @test RandomTFIM.pfaffian!(W) ≈ det(D) rtol=1e-12
+        @test pfaffian!(W) ≈ det(D) rtol=1e-12
     end
     tiny = zeros(ComplexF64, 4, 4)
     tiny[1, 2], tiny[2, 1] = 1e-310, -1e-310
     tiny[3, 4], tiny[4, 3] = 1e300, -1e300
-    @test RandomTFIM.pfaffian!(tiny) ≈ 1e-10 rtol=1e-12
+    @test pfaffian!(tiny) ≈ 1e-10 rtol=1e-12
 
     # Test all prefixes against fresh pivoted LU, including a singular first
     # prefix followed by a nonsingular second one, and determinant underflow.
@@ -234,10 +235,10 @@ end
     end
     @test_throws ArgumentError autocorrelation(ones(3), zeros(4), times)
     @test_throws ArgumentError disorder_ensemble(4, 1.0, times; keep_samples=true, nsamples=0)
-    @test RandomTFIM.pfaffian!(zeros(ComplexF64, 4, 4)) == 0
+    @test pfaffian!(zeros(ComplexF64, 4, 4)) == 0
     # Requires a pivot swap; Pf(A)=a12*a34-a13*a24+a14*a23=-6.
     A = ComplexF64[0 0 2 0; 0 0 0 3; -2 0 0 0; 0 -3 0 0]
-    @test RandomTFIM.pfaffian!(A) == -6
+    @test pfaffian!(A) == -6
 end
 
 @testset "Real-time autocorrelation vs spin ED" begin
@@ -288,7 +289,7 @@ end
 end
 
 @testset "Imaginary-time tails: decoupled spins without cancellation" begin
-    # L=8,j=1 exercises the short-string branch; j=4 uses the determinant.
+    # Both endpoints and the midpoint use the condition-number fallback.
     # Pointwise relative checks detect loss of tiny tails hidden by array norms.
     times = [20.0, 100.0, 400.0]
     for boundary in (:open, :periodic), j in (1, 4)
@@ -299,8 +300,112 @@ end
     end
 end
 
+@testset "Condition-controlled determinant and boundary-specific Pfaffians" begin
+    # Force each path as well as the adaptive path against independent spin ED.
+    for boundary in (:open, :periodic), L in (2, 6), h0 in (0.4, 1.0, 3.0)
+        J, h = sample_disorder(Xoshiro(480+L), L, h0; boundary)
+        exact = spin_oracle(J, h; periodic=boundary == :periodic)
+        for j in unique([1, L÷2, L]), time_domain in (:imaginary, :real)
+            times = time_domain == :imaginary ? [0.0, 0.3, 1.7, 13.2] : [0.0, -1.7, 0.3, 1.7, 13.2]
+            scale = time_domain == :imaginary ? 1.0 : 1.0im
+            expected = real.(spin_autocorrelation(exact, j, times, scale).C)
+            for rcond_tol in (0.0, sqrt(eps(Float64)), 1.0)
+                actual = @inferred autocorrelation(J, h, times; j, boundary, time_domain, rcond_tol)
+                @test actual ≈ expected atol=2e-10
+            end
+        end
+    end
+
+    # Critical PBC has a zero fermion mode; disconnected spins have exact
+    # occupied modes. Neither permits assuming an empty-vacuum Thouless chart.
+    for J in (ones(6), zeros(6)), time_domain in (:imaginary, :real)
+        h, times = ones(6), [0.0, 0.4, 7.0]
+        exact = spin_oracle(J, h)
+        scale = time_domain == :imaginary ? 1.0 : 1.0im
+        expected = real.(spin_autocorrelation(exact, 3, times, scale).C)
+        @test autocorrelation(J, h, times; boundary=:periodic, j=3,
+            time_domain, rcond_tol=1.0) ≈ expected atol=2e-10
+    end
+
+    # A coarse threshold makes both branches accessible in both time domains.
+    # Time order is arbitrary: fallback cannot become a permanent time cutoff.
+    for boundary in (:open, :periodic), time_domain in (:imaginary, :real)
+        J, h = sample_disorder(Xoshiro(483), 6, 1.8; boundary)
+        times = [13.2, 0.0, 1.7, 13.2]
+        det = autocorrelation(J, h, times; boundary, time_domain, rcond_tol=0.0)
+        pf = autocorrelation(J, h, times; boundary, time_domain, rcond_tol=1.0)
+        adaptive = autocorrelation(J, h, times; boundary, time_domain, rcond_tol=0.99)
+        @test adaptive[2] == det[2]
+        @test adaptive[[1, 3, 4]] == pf[[1, 3, 4]]
+    end
+
+    # Regression: the old determinant reaches a +/- roundoff plateau, while
+    # the selected JW fallback retains a decaying OBC tail.
+    J, h = sample_disorder(Xoshiro(3), 16, 3.0; boundary=:open)
+    F = svd!(RandomTFIM.fermion_matrix(J, h, Val(:open)))
+    times = [100.0, 0.0, 10.0, 1000.0, 100.0]
+    reference = RandomTFIM.string_autocorrelation(F, times, 8, false)
+    actual = autocorrelation(J, h, times; j=8)
+    @test all(isapprox.(actual, reference; rtol=1e-8, atol=0))
+    @test all(actual .> 0)
+    @test actual[[1, 4, 5]] == autocorrelation(J, h, times; j=8, rcond_tol=1.0)[[1, 4, 5]]
+
+    # OBC uses the shorter reflected string on the right half. Compare both
+    # sides with an unreflected string and the independent Gaussian overlap.
+    for j in (2, 7, 9, 15), scale in (1.0, 1.0im)
+        times = scale isa Real ? [100.0, 0.0, 0.3, 10.0, 100.0] : [13.2, 0.0, -1.7, 1.7, 13.2]
+        actual = RandomTFIM.autocorrelation(F, F, times, j, scale; rcond_tol=1.0)
+        reference = RandomTFIM.string_autocorrelation(F, times, j, false, scale)
+        @test actual ≈ reference atol=1e-12
+        G = F.U * F.V'
+        G[1:j, :] .*= -1
+        G[:, 1:j-1] .*= -1
+        chart = RandomTFIM.pfaffian_chart(F.U' * G * F.V, typeof(scale))
+        overlap = [RandomTFIM.gaussian_pfaffian!(chart, exp.(-2scale .* F.S .* t), zero(scale)) for t in times]
+        @test actual ≈ overlap atol=1e-12
+        adaptive = RandomTFIM.autocorrelation(F, F, times, j, scale; rcond_tol=0.99)
+        @test adaptive[[1, 5]] == actual[[1, 5]]
+    end
+
+    # Independent two-spin parity blocks avoid forbidden-parity ED roundoff
+    # contaminating the reference at exponentially small imaginary-time tails.
+    for boundary in (:open, :periodic)
+        J = boundary == :open ? [0.3] : [0.1, 0.2]
+        h = [0.8, 1.1]
+        bond = sum(J)
+        even = eigen(Symmetric([-bond -sum(h); -sum(h) bond]))
+        odd = eigen(Symmetric([-bond h[1]-h[2]; h[1]-h[2] bond]))
+        weights = abs2.(odd.vectors' * even.vectors[:, 1])
+        gaps = odd.values .- even.values[1]
+        times = [0.0, 20.0, 100.0, 300.0]
+        reference = [sum(weights .* exp.(-gaps .* t)) for t in times]
+        for rcond_tol in (sqrt(eps(Float64)), 1.0)
+            actual = autocorrelation(J, h, times; boundary, j=1, rcond_tol)
+            @test all(isapprox.(actual, reference; rtol=1e-9, atol=0))
+        end
+    end
+
+    # Ensemble forwarding must use the same threshold for both time domains.
+    for boundary in (:open, :periodic), rcond_tol in (0.0, 1.0)
+        times = [0.0, 0.7, 100.0]
+        result = disorder_ensemble(6, 3.0, times; boundary, rcond_tol,
+            nsamples=2, seed=49, rmax=0, keep_samples=true)
+        rng = Xoshiro(49)
+        for n in 1:2
+            J, h = sample_disorder(rng, 6, 3.0; boundary)
+            @test result.sample_Ct[:, n] == autocorrelation(J, h, times; boundary, rcond_tol)
+            @test result.sample_real_Ct[:, n] == autocorrelation(J, h, times;
+                boundary, rcond_tol, time_domain=:real)
+        end
+    end
+    for tolerance in (-1.0, 1.01, NaN, Inf)
+        @test_throws ArgumentError autocorrelation(ones(3), ones(4), Float64[]; rcond_tol=tolerance)
+        @test_throws ArgumentError disorder_ensemble(4, 1.0, Float64[]; rcond_tol=tolerance)
+    end
+end
+
 @testset "Time-loop optimizations: zero and near-zero times" begin
-    # Both short-string endpoints and determinant paths must retain phase
+    # Both endpoint and midpoint calculations must retain phase
     # and diagonal decay tails when the off-diagonal row factor is tiny.
     times = [0.0, 1e-14, 1e-8, 0.3, 0.0]
     for boundary in (:open, :periodic)
