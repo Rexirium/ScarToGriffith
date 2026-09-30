@@ -9,13 +9,21 @@ using Test
     @test length(unique(selected)) == 6
     sample_keys = ("gap_samples", "gap_resolved",
         "sample_C", "sample_Ct", "sample_real_Ct")
-    for nsamples in (1, 3), boundary in (:open, :periodic)
-        cfg = (; base..., nsamples, boundary, times=[0.0, 0.3])
+    @test base.field_distribution == :uniform
+    @test RandomTFIMSlurm.parse_config(["demo", "2", "unused.h5", "open", "fixed"]).field_distribution == :fixed
+    @test_throws ArgumentError RandomTFIMSlurm.parse_config(["demo", "2", "unused.h5", "open", "bad"])
+    @test_throws ArgumentError main(["demo", "2", "unused.h5", "open", "bad"])
+    for nsamples in (1, 3), boundary in (:open, :periodic), field_distribution in (:uniform, :fixed)
+        cfg = (; base..., nsamples, boundary, field_distribution, times=[0.0, 0.3])
         mktempdir() do directory
             h5open(joinpath(directory, "summary.h5"), "w") do file
                 RandomTFIMSlurm.write_metadata(file, cfg)
                 @test read(file["parameters/sample_fields"]) == selected
-                @test Set(keys(attributes(file))) == Set(["complete", "nsamples", "distribution", "boundary"])
+                @test Set(keys(attributes(file))) == Set(["complete", "nsamples", "distribution", "field_distribution", "boundary", (field_distribution == :fixed ? ["fixed_field_divisor"] : String[])...])
+                @test read(attributes(file)["field_distribution"]) == string(field_distribution)
+                if field_distribution == :fixed
+                    @test read(attributes(file)["fixed_field_divisor"]) == exp(1)
+                end
                 @test !read(attributes(file)["complete"])
                 @test read(attributes(file)["boundary"]) == string(boundary)
                 @test read(attributes(file)["distribution"]) == "box"
@@ -24,6 +32,9 @@ using Test
                     job = (; L=6, h0, seed=72)
                     data = RandomTFIMSlurm.compute_case(job, cfg)
                     keep = h0 in selected
+                    expected = disorder_ensemble(6, h0, cfg.times; nsamples, boundary,
+                        field_distribution, seed=72, keep_samples=keep)
+                    @test isequal(data.result, expected)
                     @test hasproperty(data.result, :gaps) == keep
                     @test hasproperty(data.result, :sample_Ct) == keep
                     @test !hasproperty(data.result, :sample_logCt)

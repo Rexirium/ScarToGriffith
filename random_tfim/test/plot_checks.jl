@@ -4,7 +4,7 @@ include(joinpath(@__DIR__, "..", "plot_results.jl"))
 @testset "Plot transformations" begin
     times = [0.1, 1.0, 10.0, 100.0]
     @test autocorrelation_log_slope(times, 3 .* times .^ (-0.7)) ≈ 0.7
-    @test autocorrelation_log_slope(times, [1, -1, 1, -1] .* 3 .* times .^ (-0.7)) ≈ 0.7
+    @test autocorrelation_log_slope(times, [3 * times[1]^(-0.7), -100.0, 3 * times[3]^(-0.7), -0.001]) ≈ 0.7
     @test autocorrelation_log_slope([0.0; times; Inf; 5.0],
         [1.0; 3 .* times .^ (-0.7); 1.0; 0.0]) ≈ 0.7
     @test_throws ErrorException autocorrelation_log_slope([1.0, 1.0], [1.0, 2.0])
@@ -30,6 +30,8 @@ end
     @test fit.rms_before > fit.rms_after
     @test fit_time_collapse(times, [copy(base) for t in times]).mu ≈ 0 atol=1e-12
     @test fit_time_collapse(times, [vcat(y, NaN) for y in samples]).mu ≈ 0.63
+    @test fit_time_collapse(times, [samples[1:4]; [fill(NaN, 1000), fill(NaN, 1000)]]).mu ≈ 0.63
+    @test isnan(fit_time_collapse(times, [fill(NaN, 10) for t in times]).mu)
     @test_throws ErrorException fit_time_collapse(ones(6), samples)
     @test_throws ErrorException fit_time_collapse(times, [zeros(10) for t in times])
 
@@ -39,14 +41,14 @@ end
             g = create_group(f, "L128/h2.0")
             g["imaginary_time"] = [0.0; times]
             C = vcat(ones(1, length(base)), reduce(hcat, exp.(-y) for y in samples)')
-            # 负样本取绝对值；零值不能取对数，|C| > 1 对应负的 -ln|C|。
+            # 负样本和零值不能取对数，C > 1 对应负的 -ln C。
             C[2, 1:3] = [-0.1, 0.0, 1.1]
             g["sample_Ct"] = C
         end
         panels = read_autocorrelation_distributions((; input), [2.0], 128)
         @test only(panels).times == times
-        @test count(!isfinite, only(panels).samples[1]) == 1
-        @test only(panels).samples[1][1] ≈ -log(0.1)
+        @test count(!isfinite, only(panels).samples[1]) == 2
+        @test isnan(only(panels).samples[1][1])
         @test only(panels).samples[1][3] ≈ -log(1.1)
         @test only(panels).samples[2] ≈ samples[2]
     end

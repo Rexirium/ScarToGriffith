@@ -36,6 +36,8 @@ end
             end
         end
         legacy = read_plot_data(input)
+        @test legacy.field_distribution == "uniform"
+        @test critical_field(legacy) == 1.0
         @test legacy.sizes == sizes && legacy.fields == fields
         h5open(input, "r+") do f
             p = create_group(f, "parameters")
@@ -90,5 +92,21 @@ end
             @test d.n == 2
             @test isempty(d.gaps) == isempty(d.resolved) == (d.h0 == 1.3)
         end
+        h5open(input, "r+") do f
+            HDF5.attributes(f)["field_distribution"] = "fixed"
+        end
+        fixed = read_plot_data(input)
+        @test fixed.field_distribution == "fixed"
+        @test critical_field(fixed) ≈ 2 / exp(1)
+        @test isequal(fixed.records, selective.records)
+        @test occursin("legacy", field_distribution_label(fixed))
+        h5open(input, "r+") do f
+            HDF5.attributes(f)["fixed_field_divisor"] = exp(1)
+        end
+        normalized = read_plot_data(input)
+        @test normalized.fixed_field_divisor == exp(1)
+        @test critical_field(normalized) == 1.0
+        @test field_distribution_label(normalized) == "h = h₀/e"
+        @test isequal(normalized.records, fixed.records)
     end
 end

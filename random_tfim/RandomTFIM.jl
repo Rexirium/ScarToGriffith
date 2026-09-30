@@ -286,16 +286,27 @@ function autocorrelation(initial, evolution, times, j, scale;
     return C
 end
 
+function check_field_distribution(field_distribution::Symbol)
+    field_distribution in (:uniform, :fixed) ||
+        throw(ArgumentError("field_distribution must be :uniform or :fixed"))
+    return field_distribution
+end
+
 """Draw box disorder; J has L (:periodic, default) or L-1 (:open) bonds.
 
+Select field_distribution=:uniform for h ~ U(0,h0), or :fixed for h=h0/e.
+J ~ U(0,1) in both modes; both consume the same RNG draws.
 The same RNG seed yields the same fields and interior bonds for both boundaries.
 """
-function sample_disorder(rng::AbstractRNG, L::Int, h0::Real; boundary::Symbol=:periodic)
+function sample_disorder(rng::AbstractRNG, L::Int, h0::Real;
+        boundary::Symbol=:periodic, field_distribution::Symbol=:uniform)
     check_boundary(boundary)
     L >= 2 && iseven(L) || throw(ArgumentError("require even L >= 2"))
     isfinite(h0) && h0 > 0 || throw(ArgumentError("h0 must be finite and positive"))
+    check_field_distribution(field_distribution)
     # 1-rand excludes zero, which would give an exactly degenerate chain.
     J, h = 1 .- rand(rng, L), Float64(h0) .* (1 .- rand(rng, L))
+    field_distribution == :fixed && fill!(h, Float64(h0) / exp(1))
     # Draw the seam even for OBC to keep all physical fields/bonds paired across boundaries.
     return (J=boundary == :open ? J[1:end-1] : J, h=h)
 end
@@ -484,6 +495,7 @@ Sites within a sample are correlated, so SEM uses sample columns, not sites.
 Average pair logarithms before exponentiating to get the typical correlation.
 Select boundary=:periodic (default) or :open. Open-chain sample means use
 only the L-r valid origins.
+Select field_distribution=:uniform (default) or :fixed (h=h0/e); J remains uniform.
 The rcond_tol keyword is forwarded to both imaginary- and real-time
 autocorrelations; it has the same meaning and default as in autocorrelation.
 Logarithms are taken per pair/time before averaging. Nonpositive or nonfinite
@@ -493,7 +505,8 @@ sample and ensemble statistics without dropping sites or realizations.
 Base.@constprop :aggressive function disorder_ensemble(L::Int, h0::Real,
         times::AbstractVector{<:Real}; nsamples::Int=100, seed::Int=1996,
         rmax::Int=L ÷ 2, keep_samples::Bool=false, boundary::Symbol=:periodic,
-        j::Int=L ÷ 2, rcond_tol::Real=sqrt(eps(Float64)))
+        j::Int=L ÷ 2, rcond_tol::Real=sqrt(eps(Float64)),
+        field_distribution::Symbol=:uniform)
     check_boundary(boundary)
     nsamples > 0 || throw(ArgumentError("nsamples must be positive"))
     1 <= j <= L || throw(ArgumentError("require 1 <= j <= L"))
@@ -504,7 +517,7 @@ Base.@constprop :aggressive function disorder_ensemble(L::Int, h0::Real,
     bc = Val(boundary)
     rng = Xoshiro(seed)
     # Preserve the serial RNG stream; worker threads never share a mutable RNG.
-    samples = [sample_disorder(rng, L, h0; boundary) for _ in 1:nsamples]
+    samples = [sample_disorder(rng, L, h0; boundary, field_distribution) for _ in 1:nsamples]
 
     gaps = zeros(nsamples)
     resolved = fill(false, nsamples)

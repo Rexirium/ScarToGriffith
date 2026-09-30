@@ -21,8 +21,15 @@ julia --threads=4 random_tfim/run.jl full 2 random_tfim/results/full_smoke.h5 op
 julia --threads=4 random_tfim/run.jl full
 ```
 
-命令格式为 `run.jl [demo|full] [samples] [output.h5] [open|periodic]`。
-省略参数时使用 `demo`、该模式的默认样本数、`random_tfim/results/<mode>.h5` 和周期边界。
+命令格式为 `run.jl [demo|full] [samples] [output.h5] [open|periodic] [uniform|fixed]`。
+省略参数时使用 `demo`、该模式的默认样本数、`random_tfim/results/<mode>_uniform.h5`、周期边界和 `uniform`。
+输出文件名自动追加时间戳。`uniform` 使用 `h∼U(0,h0)`；`fixed` 使用每个格点相同的 `h=h0/e`，其中 e 为自然常数。
+两种模式的临界点均为 `h0=1`，耦合均为 `J∼U(0,1)`；平均横场分别为 `h0/2` 和 `h0/e`。
+
+```sh
+julia --threads=4 random_tfim/run.jl full 10000 random_tfim/results/full_uniform.h5 periodic uniform
+julia --threads=4 random_tfim/run.jl full 10000 random_tfim/results/full_fixed.h5 periodic fixed
+```
 
 | 模式 | 每个 `(L,h0)` 的默认样本数 | 链长 L |
 |---|---:|---|
@@ -30,7 +37,7 @@ julia --threads=4 random_tfim/run.jl full
 | `full` | 10000 | 16, 32, 64, 128 |
 
 两种模式均扫描 `h0 = 10 .^ range(-1, 1, 101)`，计算能隙、`r=0:L÷2` 的空间关联，
-以及中点 `j=L÷2`、`tau=0:0.2:20` 的虚时间自关联。
+以及中点 `j=L÷2`、`times=10 .^ range(-1,3,101)`（0.1 到 1000）的虚时间和实时间自关联。
 自定义链长、时间网格或实时间演化时，使用下面的函数接口。
 
 ### 绘制已有数据
@@ -41,26 +48,28 @@ julia --threads=4 random_tfim/run.jl full
 julia --project=@v1.13 random_tfim/plot_results.jl random_tfim/results/full.h5 random_tfim/results/figures
 ```
 
-不传参数时读取 `random_tfim/results/` 下最新的 `full.h5` 或 `full_YYYYMMDD_HHMMSS.h5`；默认输出到输入文件旁的 `figures/`。
+不传参数时读取 `random_tfim/results/` 下最新的 `full.h5`、`full_uniform.h5`、`full_fixed.h5` 或其带时间戳版本；默认输出到输入文件旁的 `figures/`。
+比较两种模式时请显式指定输入文件和不同输出目录，避免图像互相覆盖。各图和审计报告标注横场模式；旧文件缺少 `field_distribution` 时按 `uniform` 读取。
 [plot_results.jl](plot_results.jl) 从同一输入文件绘制九张图（实时间数据缺失时为八张），不重新采样：
 
 - `gap_distribution.png`：2×2 子图，选取 h0≥1 中最接近 1、2、5、10 的四点，各曲线对应不同尺寸。
 - `scaled_gap_distribution.png`：同一布局，先将样本变换为 ln ΔE/√L，再以公共箱宽 0.1 统计密度。
 - `average_correlation.png`：2×3 子图，选取最接近 0.1、0.5、1、2、5、10 的六点，绘制 C 对 r 的双对数图。
 - `log_correlation_sqrt_r.png`：同样六点与尺寸，绘制无序平均 ln C 对 √r 的线性图。
-- `imaginary_time_autocorrelation.png`：2×2 子图分别对应四个尺寸，各含上述六个 h0 的 |〈C(τ)〉| 双对数曲线；对已保存的均值取绝对值，沿用已保存的 SEM。
-- `imaginary_time_autocorrelation_slopes.png`：h0≥1，横轴对数、纵轴线性；各尺寸的 1/z 为 ln|〈C(τ)〉| 对 ln τ 的回归斜率绝对值，回归使用全部有效时间点。
+- `imaginary_time_autocorrelation.png`：2×2 子图分别对应四个尺寸，各含上述六个 h0 的 〈C(τ)〉 双对数曲线；直接使用已保存的均值和 SEM。
+- `imaginary_time_autocorrelation_slopes.png`：h0≥该模式的临界值，横轴对数、纵轴线性；各尺寸显示 ln〈C(τ)〉 对 ln τ 的回归斜率绝对值，回归使用全部有效时间点。它是有效斜率，只有渐近幂律窗口才可解释为 1/z，固定横场的有隙区不能如此解释。
 - `real_time_autocorrelation.png`：存在实时间数据时输出；同虚时图布局，纵轴线性。
-- `imaginary_time_log_distribution.png`：最大尺寸（当前 L=128），四个子图沿用能隙图的 h0；选取最接近 τ=1、3、10、30、100、300 的六个网格点，用 `scatterlines!` 绘制逐样本 −ln|C(τ)| 的密度，图例标注实际时间。
-- `imaginary_time_rescaled_distribution.png`：同一批样本和布局，绘制 x=−ln|C(τ)|/τ^μ 的密度；每个 h0 使用实际网格时间独立拟合 μ，并标在子图标题。
+- `imaginary_time_log_distribution.png`：最大尺寸（当前 L=128），四个子图沿用能隙图的 h0；选取最接近 τ=1、3、10、30、100、300 的六个网格点，用 `scatterlines!` 绘制逐样本 −ln C(τ) 的密度，图例标注实际时间。
+- `imaginary_time_rescaled_distribution.png`：同一批样本和布局，绘制 x=−ln C(τ)/τ^μ 的密度；每个 h0 使用实际网格时间独立拟合 μ，并标在子图标题。
 
 两张虚时分布图要求对应参数组保存 `sample_Ct`，每条曲线使用 60 个等宽箱。
-μ 最小化六个时刻的对应分位数在对数空间中的差异：Σ[ln Q_p(−ln|C|)−μ ln τ−a_p]²，
+μ 最小化六个时刻的对应分位数在对数空间中的差异：Σ[ln Q_p(−ln C)−μ ln τ−a_p]²，
 p=0.05、0.10、…、0.95，每个分位数有独立截距 a_p；拟合与分箱无关。
-先对每个样本取绝对值，再取负对数；仅零值和非有限值不取对数，其数量标在图中，密度仍按全部样本数归一化。
+直接对每个正样本取负对数；非正值和非有限值不取对数，其数量标在图中，密度仍按全部样本数归一化。
 拟合只使用有效样本的正分位数，μ、拟合前后残差和缺失比例写入 `plot_audit.md`；
+若某个时刻所有样本都因下溢等原因无效，该时刻不参与拟合且不画密度，但仍记录缺失数量；不足两个有效时刻时 μ 为 NaN，缩放图标注不可用。
 该 μ 描述所选时间范围内的最佳重合，不能直接视作渐近物理指数。
-均值图的 |〈C〉| 与先逐样本取绝对值再平均的 〈|C|〉不同；多数 h0 未保存样本，因此统一采用前者。
+虚时间均值与逐样本分布均直接使用保存的数据，不取绝对值。
 
 输入须含四个尺寸及足够的不同 h0 点；图中标注实际取值，完整取值和数据审计写入 `plot_audit.md`。
 阴影为独立无序样本间的 ±1 SEM。能隙使用宽度为 1 的自然对数分箱，
@@ -72,6 +81,7 @@ p=0.05、0.10、…、0.95，每个分位数有独立截距 a_p；拟合与分�
 ```sh
 sbatch random_tfim/submit.sh
 sbatch random_tfim/submit.sh demo 4 random_tfim/results/demo_slurm.h5 open
+sbatch random_tfim/submit.sh full 50000 random_tfim/results/full_fixed.h5 periodic fixed
 ```
 
 [submit.sh](submit.sh) 默认运行 `full`，参数与本地脚本一致。
@@ -90,7 +100,8 @@ BLAS.set_num_threads(1)
 
 L, h0 = 32, 1.0
 boundary = :periodic                 # 改为 :open 可切换整套计算
-J, h = sample_disorder(Xoshiro(1996), L, h0; boundary)
+field_distribution = :uniform        # 改为 :fixed 使用 h=h0/e
+J, h = sample_disorder(Xoshiro(1996), L, h0; boundary, field_distribution)
 state = ground_state(J, h; boundary) # gap、resolved 和 G
 pair = correlations(state.G; boundary, rmax=L÷2)
 
@@ -102,10 +113,11 @@ realtime = autocorrelation(J, h, times; boundary, time_domain=:real)
 要求偶数 `L≥2`、有限的 `J≥0` 和 `h>0`。`h` 长度为 L；开边界的 `J` 长度为 L−1，周期边界为 L。
 **`autocorrelation` 默认开边界，其余公开接口默认周期边界**，建议像示例一样显式传递 `boundary`。
 相同 seed 在两种边界下生成相同的横场和内部键，开链仅去掉接缝键。
+两种横场模式消耗相同的随机数，因此同一 seed 的逐样本耦合也相同；默认均匀模式保持原有随机序列。
 
 | 函数 | 返回值 |
 |---|---|
-| `sample_disorder(rng, L, h0; boundary)` | 命名元组 `(J, h)` |
+| `sample_disorder(rng, L, h0; boundary, field_distribution=:uniform)` | 命名元组 `(J, h)` |
 | `energy_gap(J, h; boundary)` | 命名元组 `(gap, resolved)` |
 | `ground_state(J, h; boundary)` | 命名元组 `(gap, resolved, G)` |
 | `correlations(G; boundary, rmax)` | 直接返回 `Matrix{Float64}`，形状 `L×(rmax+1)` |
@@ -142,7 +154,7 @@ $$
 沿用上例的 `L`、`h0`、`boundary` 和 `times`：
 
 ```julia
-ensemble = disorder_ensemble(L, h0, times; nsamples=100, seed=1996, boundary, keep_samples=true)
+ensemble = disorder_ensemble(L, h0, times; nsamples=100, seed=1996, boundary, field_distribution, keep_samples=true)
 
 average = ensemble.C_mean
 mean_log = ensemble.logC_mean
@@ -151,7 +163,7 @@ time_average = ensemble.Ct_mean
 real_time_average = ensemble.real_Ct_mean
 
 # 只保留能隙结果：显式传入空 times，再设置 rmax=0
-only_gaps = disorder_ensemble(L, h0, Float64[]; nsamples=100, boundary, rmax=0)
+only_gaps = disorder_ensemble(L, h0, Float64[]; nsamples=100, boundary, field_distribution, rmax=0)
 ```
 
 | 返回字段 | 内容 / 形状 |
@@ -190,9 +202,10 @@ only_gaps = disorder_ensemble(L, h0, Float64[]; nsamples=100, boundary, rmax=0)
 
 本地和 Slurm 脚本均同时保存虚时间和实时间结果。根目录中的 `parameters/sizes`、`parameters/fields`
 记录扫描参数，各参数组命名为 `L16/h1.0` 等。组属性仅保留观测格点 `j` 和随机种子 `seed`。
-根属性仅保留 `boundary`（`open` 或 `periodic`）、`distribution`（`box`）、`nsamples` 和 `complete`，只有整个扫描完成后才设 `complete=true`。
+根属性为 `boundary`（`open` 或 `periodic`）、`distribution`（`box`，描述耦合分布）、`field_distribution`（`uniform` 或 `fixed`）、`nsamples` 和 `complete`，只有整个扫描完成后才设 `complete=true`。固定模式另存 `fixed_field_divisor=e`，实际横场为 `h0/fixed_field_divisor`。扫描参数和组名中的 `h0` 始终是用户输入的尺度。
+旧 fixed 文件没有 `fixed_field_divisor` 时，绘图按原来的 `h=h0/2` 读取并标注 legacy，其临界点仍为 `2/e`；已有数据不改写，新定义需要重新计算。
 耗时仅打印到运行日志；环境信息和固定的物理、统计定义不再写入属性，相关约定见本文档。
-两个脚本共用 `results_io.jl` 写入统计量和可选样本。
+两个脚本共用 `results_io.jl` 解析运行参数，并写入元数据、统计量和可选样本。
 计算前从 `fields` 中选出最接近 `0.1、0.5、1、2、5、10` 的 6 个值，记录在 `parameters/sample_fields`。
 这些值对应索引 `[1, 36, 51, 66, 86, 101]`，约为 `[0.1, 0.501187, 1, 1.995262, 5.011872, 10]`。
 仅这些参数调用 `keep_samples=true` 并保存全部返回的样本；其余参数调用 `keep_samples=false`，只保存统计量和时间网格。
@@ -228,8 +241,17 @@ H=-\sum_{i=1}^{L}J_i\sigma_i^z\sigma_{i+1}^z-\sum_{i=1}^{L}h_i\sigma_i^x.
 $$
 
 开链的键求和到 L−1；周期链的 `J[L]` 是接缝键，L=2 时仍保留两条键。
-采样采用箱形分布 `J∼U(0,1)`、`h∼U(0,h0)`，实现排除零值。
-该随机模型的临界点为 h0=1，控制参数 δ=½ ln h0。
+耦合采用箱形分布 `J∼U(0,1)`，实现排除零值。横场由 `field_distribution` 选择：
+
+| 模式 | 横场 | 临界 h0 | 顺磁侧 |
+|---|---|---|---|
+| `uniform`（默认） | `h∼U(0,h0)`，排除零值 | 1 | 所有有限 h0>1 均保留 Griffiths 稀有区 |
+| `fixed` | `h=h0/e` | 1 | `1<h0<e` 为 Griffiths 区；`h0>e` 为有隙顺磁区 |
+
+临界条件为 `mean(log h)=mean(log J)`，其中 `mean(log J)=-1`。
+若采用 δ=(mean(log h)−mean(log J))/(var(log h)+var(log J))，均匀模式 δ=½ ln h0，固定模式 δ=ln h0。
+`h0=e≈2.718282` 是固定模式 Griffiths 区的边界，不作为严格有隙区处理。上述相区指热力学极限；有限链、有限样本和时间窗口会影响拟合。
+能隙分布仍选取 h0≈1、2、5、10，便于模式间比较；新计算的两种模式均以 h0=1 为临界点。
 
 ### 能隙与空间关联
 
@@ -358,6 +380,7 @@ julia --startup-file=no random_tfim/test/summary_io.jl
 
 # 绘图读取器：当前和旧版文件布局
 julia --startup-file=no --project=@v1.13 random_tfim/test/plot_io.jl
+julia --startup-file=no --project=@v1.13 random_tfim/test/plot_checks.jl
 
 # 性能基准；可选参数为另存的旧版源码路径
 julia --startup-file=no random_tfim/test/benchmark.jl
@@ -366,7 +389,7 @@ julia --startup-file=no random_tfim/test/benchmark.jl /path/to/old/RandomTFIM.jl
 
 核心测试独立构造完整自旋哈密顿量，核对能隙、空间关联和两种时间关联；
 另检查宇称、断开周期接缝、解耦极限、微小尾部、奇异前缀、负时间及可重复采样。
-`smoke_io.jl` 实际运行 demo/full 的少量样本扫描；`summary_io.jl` 验证输出接口，不提交 Slurm 作业。
+`smoke_io.jl` 实际运行 demo/full 的少量样本扫描，覆盖 uniform/fixed 和两种边界；`summary_io.jl` 验证两种横场的输出元数据和本地/Slurm 计算一致性，不提交 Slurm 作业。
 基准对照源码须支持 `time_domain=:imaginary/:real`；空间关联核对原始 `C`。
 这些小规模验证不代表已完成 full 默认 10000 样本的论文统计精度复现。
 

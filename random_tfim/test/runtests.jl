@@ -4,6 +4,29 @@ using .RandomTFIM
 include("reference_pfaffian.jl")
 BLAS.set_num_threads(1)
 
+@testset "Selectable transverse fields" begin
+    for boundary in (:open, :periodic)
+        rng_uniform, rng_fixed = Xoshiro(91), Xoshiro(91)
+        for _ in 1:3
+            uniform = sample_disorder(rng_uniform, 6, 3.0; boundary)
+            fixed = sample_disorder(rng_fixed, 6, 3.0; boundary, field_distribution=:fixed)
+            @test uniform.J == fixed.J
+            @test all(0 .< uniform.h .<= 3)
+            @test fixed.h == fill(3.0 / exp(1), 6)
+        end
+        result = disorder_ensemble(6, 3.0, [0.0, 0.4]; boundary,
+            field_distribution=:fixed, nsamples=3, seed=91, keep_samples=true)
+        rng = Xoshiro(91)
+        for n in 1:3
+            J, h = sample_disorder(rng, 6, 3.0; boundary, field_distribution=:fixed)
+            @test result.sample_Ct[:, n] ≈ autocorrelation(J, h, [0.0, 0.4]; boundary)
+            @test result.sample_real_Ct[:, n] ≈ autocorrelation(J, h, [0.0, 0.4]; boundary, time_domain=:real)
+        end
+    end
+    @test_throws ArgumentError sample_disorder(Xoshiro(1), 6, 1.0; field_distribution=:bad)
+    @test_throws ArgumentError disorder_ensemble(6, 1.0, [0.0]; field_distribution=:bad)
+end
+
 @testset "Ensemble summary and optional samples" begin
     for boundary in (:open, :periodic)
         kwargs = (; nsamples=3, seed=71, boundary)

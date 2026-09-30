@@ -40,7 +40,14 @@ function read_plot_data(input)
             push!(records, (; L, h0, n, gaps, resolved, avg, sem, logavg, logsem,
                 invalid_log=count(!isfinite, logavg), negative_C=count(<(0), avg)))
         end
-        (; records, sizes, fields, boundary=read(HDF5.attributes(f)["boundary"]))
+        attrs = HDF5.attributes(f)
+        field_distribution = haskey(attrs, "field_distribution") ? read(attrs["field_distribution"]) : "uniform"
+        field_distribution in ("uniform", "fixed") || error("Unknown field distribution: $field_distribution")
+        # Fixed-field files before this attribute used h=h0/2.
+        fixed_field_divisor = haskey(attrs, "fixed_field_divisor") ? read(attrs["fixed_field_divisor"]) : 2.0
+        fixed_field_divisor in (2.0, exp(1)) || error("Unknown fixed-field divisor: $fixed_field_divisor")
+        (; records, sizes, fields, field_distribution, fixed_field_divisor,
+            boundary=read(HDF5.attributes(f)["boundary"]))
     end
 end
 
@@ -55,6 +62,10 @@ function representative_fields(fields, targets)
         error("Input needs distinct representative fields for targets $targets; got $selected")
     selected
 end
+
+critical_field(data) = data.field_distribution == "fixed" ? data.fixed_field_divisor / exp(1) : 1.0
+field_distribution_label(data) = data.field_distribution == "fixed" ?
+    (data.fixed_field_divisor == exp(1) ? "h = h₀/e" : "h = h₀/2 (legacy)") : "h ∼ U(0, h₀)"
 
 field_label(h) = "h₀ = $(round(h; sigdigits=5))"
 panel_position(k, ncols) = (div(k - 1, ncols) + 1, (k - 1) % ncols + 1)
@@ -135,7 +146,7 @@ function plot_gap_distributions(data, fields, sizes; scaled=false)
         end
     end
     finish_figure!(fig, ["L = $L" for L in sizes], 2,
-        "$(basename(data.input)) | " * (scaled ? "ln-gap/√L samples; common bin width = 0.1" : "ln-gap bin width = 1") *
+        "$(basename(data.input)) | $(field_distribution_label(data)) | " * (scaled ? "ln-gap/√L samples; common bin width = 0.1" : "ln-gap bin width = 1") *
         "; density normalized by all samples")
     fig
 end
@@ -164,7 +175,7 @@ function plot_spatial_correlations(data, fields, sizes; logarithmic=false)
         end
     end
     finish_figure!(fig, ["L = $L" for L in sizes], 3,
-        "$(basename(data.input)) | Shading: ±1 disorder SEM; invalid points/bounds omitted")
+        "$(basename(data.input)) | $(field_distribution_label(data)) | Shading: ±1 disorder SEM; invalid points/bounds omitted")
     fig
 end
 
@@ -178,13 +189,14 @@ function plot_autocorrelation(data, fields, sizes; real_time=false)
         for (j, L) in enumerate(sizes)
             row, col = panel_position(j, 2)
             ax = Axis(fig[row, col]; title="L = $L", xlabel=real_time ? L"t" : L"\tau",
-                ylabel=real_time ? L"C_{\mathrm{av}}(t)" : L"|C_{\mathrm{av}}(\tau)|",
-                xscale=log10, yscale=real_time ? identity : log10)
+                ylabel=real_time ? L"C_{\mathrm{av}}(t)" : L"C_{\mathrm{av}}(\tau)",
+                xscale=log10, yscale=real_time ? identity : log10,
+                # Gapped tails reach subnormal values; log padding can underflow to zero.
+                yautolimitmargin=real_time ? (0.05, 0.05) : (0.0, 0.0))
             for (k, h0) in enumerate(fields)
                 g = f["L$(L)/h$(h0)"]
                 times = read(g[time_key])
                 y = read(g[prefix * "autocorrelation_mean"])
-                real_time || (y = abs.(y))
                 sem = read(g[prefix * "autocorrelation_sem"])
                 @assert length(times) == length(y) == length(sem)
                 keep = isfinite.(times) .& (times .> 0)
@@ -194,18 +206,17 @@ function plot_autocorrelation(data, fields, sizes; real_time=false)
         end
     end
     finish_figure!(fig, field_label.(fields), 2,
-        "$(basename(data.input)) | Shading: ±1 disorder SEM; positive times only" *
-        (real_time ? "; linear vertical axis" : "; |stored mean|; zero/invalid values omitted"))
+        "$(basename(data.input)) | $(field_distribution_label(data)) | Shading: ±1 disorder SEM; positive times only" *
+        (real_time ? "; linear vertical axis" : "; stored mean; nonpositive/invalid values omitted"))
     fig
 end
 
 function autocorrelation_log_slope(times, y)
     @assert length(times) == length(y)
-    y = abs.(y)
     keep = isfinite.(times) .& (times .> 0) .& isfinite.(y) .& (y .> 0)
     count(keep) >= 2 || error("Log-log regression needs at least two valid points")
 
-    # 带截距的无权最小二乘；取斜率绝对值得到 1/z。
+    # 有效斜率仅在渐近幂律窗口内可解释为 1/z。
     x, z = log.(times[keep]), log.(y[keep])
     dx = x .- mean(x)
     denominator = sum(abs2, dx)
@@ -216,9 +227,9 @@ end
 function plot_autocorrelation_slopes(data, sizes)
     fig = Figure(size=(1000, 700))
     Label(fig[0, 1], "Imaginary-time autocorrelation slopes", fontsize=25)
-    ax = Axis(fig[1, 1]; xlabel=L"h_0", ylabel=L"1/z",
+    ax = Axis(fig[1, 1]; xlabel=L"h_0", ylabel="Effective log-log slope",
         xscale=log10, yscale=identity)
-    fields = sort(filter(>=(1.0), data.fields))
+    fields = sort(filter(>=(critical_field(data)), data.fields))
 
     h5open(data.input, "r") do f
         for (j, L) in enumerate(sizes)
@@ -230,9 +241,9 @@ function plot_autocorrelation_slopes(data, sizes)
         end
     end
 
-    xlims!(ax, 1.0, maximum(fields))
+    xlims!(ax, critical_field(data), maximum(fields))
     axislegend(ax; position=:lt, framevisible=false)
-    Label(fig[2, 1], "$(basename(data.input)) | $(length(fields)) fields; log-log fit of |stored mean| over all valid positive times";
+    Label(fig[2, 1], "$(basename(data.input)) | $(field_distribution_label(data)) | $(length(fields)) fields; log-log fit of stored mean over all valid positive times";
         fontsize=13)
     fig
 end
@@ -241,6 +252,9 @@ end
 function fit_time_collapse(times, samples)
     @assert length(times) == length(samples) >= 2
     @assert all(t -> isfinite(t) && t > 0, times)
+    valid = [any(isfinite, y) for y in samples]
+    count(valid) >= 2 || return (; mu=NaN, rms_before=NaN, rms_after=NaN)
+    times, samples = times[valid], samples[valid]
     quantiles = hcat([quantile(filter(isfinite, y), 0.05:0.05:0.95) for y in samples]...)
     keep = vec(all(quantiles .> 0; dims=2))
     any(keep) || error("Time collapse needs positive quantiles")
@@ -264,9 +278,8 @@ function read_autocorrelation_distributions(data, fields, L)
             indices = [findfirst(==(t), grid) for t in times]
             C = read(g["sample_Ct"])
             @assert size(C, 1) == length(grid)
-            # 先对每个样本取绝对值，再取负对数；零值和非有限值不能取对数。
-            samples = [map(c -> isfinite(c) && abs(c) > 0 ? -log(abs(c)) : NaN, C[i, :]) for i in indices]
-            all(y -> any(isfinite, y), samples) || error("No valid samples for L=$L, h0=$h0")
+            # 直接对每个正样本取负对数；非正值和非有限值不能取对数。
+            samples = [map(c -> isfinite(c) && c > 0 ? -log(c) : NaN, C[i, :]) for i in indices]
             (; L, h0, times, samples, fit=fit_time_collapse(times, samples))
         end
     end
@@ -279,24 +292,26 @@ function plot_autocorrelation_distributions(data, panels; scaled=false)
     for (k, d) in enumerate(panels)
         row, col = panel_position(k, 2)
         title = field_label(d.h0)
-        scaled && (title *= " | μ = $(round(d.fit.mu; digits=4))")
+        scaled && (title *= isfinite(d.fit.mu) ? " | μ = $(round(d.fit.mu; digits=4))" : " | μ unavailable")
         ax = Axis(fig[row, col]; title,
-            xlabel=scaled ? L"x = -\ln |C(\tau)| / \tau^{\mu}" : L"-\ln |C(\tau)|",
-            ylabel=scaled ? L"P(x)" : L"P(-\ln |C(\tau)|)", yscale=log10,
+            xlabel=scaled ? L"x = -\ln C(\tau) / \tau^{\mu}" : L"-\ln C(\tau)",
+            ylabel=scaled ? L"P(x)" : L"P(-\ln C(\tau))", yscale=log10,
             yautolimitmargin=(0.05, 0.15))
 
         missing = String[]
         for (j, (t, y)) in enumerate(zip(d.times, d.samples))
             # 直接对变换后的样本重新统计密度；每条曲线用 60 个等宽箱。
             values = scaled ? y ./ t^d.fit.mu : y
+            nmiss = count(!isfinite, y)
+            nmiss > 0 && push!(missing, "τ=$(round(t; sigdigits=3)): $nmiss/$(length(y))")
+            scaled && !isfinite(d.fit.mu) && continue
+            any(isfinite, values) || continue
             lo, hi = extrema(filter(isfinite, values))
             hi == lo && (hi = lo + 1.0)
             edges = range(lo, hi; length=61)
             centers = (edges[1:end-1] .+ edges[2:end]) ./ 2
             scatterlines!(ax, centers, gap_density(values, edges); color=PLOT_COLORS[j],
                 markersize=5, label="τ = $(round(t; sigdigits=4))")
-            nmiss = count(!isfinite, y)
-            nmiss > 0 && push!(missing, "τ=$(round(t; sigdigits=3)): $nmiss/$(length(y))")
         end
         if !isempty(missing)
             text!(ax, 0.98, 0.98; text="Invalid C\n" * join(missing, "\n"),
@@ -306,7 +321,7 @@ function plot_autocorrelation_distributions(data, panels; scaled=false)
     # 同一时间网格共用图例；禁止把不同时间误标为同一条曲线。
     @assert all(d.times == first(panels).times for d in panels)
     finish_figure!(fig, ["τ = $(round(t; sigdigits=4))" for t in first(panels).times], 2,
-        "$(basename(data.input)) | Use |C|; density / all samples; zero/nonfinite C omitted" *
+        "$(basename(data.input)) | $(field_distribution_label(data)) | Use C; density / all samples; nonpositive/nonfinite C omitted" *
         (scaled ? "\nμ: least-squares matching of log quantiles (5–95%) of valid samples" :
             "\n60 equal-width bins per curve; nearest grid points to τ = 1, 3, 10, 30, 100, 300"))
     fig
@@ -315,7 +330,7 @@ end
 function main(args)
     input = if isempty(args)
         candidates = filter(readdir(joinpath(@__DIR__, "results"); join=true)) do path
-            occursin(r"^full(?:_\d{8}_\d{6})?\.h5$", basename(path))
+            occursin(r"^full(?:_(?:uniform|fixed))?(?:_\d{8}_\d{6})?\.h5$", basename(path))
         end
         isempty(candidates) && error("No full ensemble found; pass an input HDF5 path")
         candidates[argmax(mtime.(candidates))]
@@ -325,7 +340,7 @@ function main(args)
     out = length(args) < 2 ? joinpath(dirname(input), "figures") : abspath(args[2])
     data = (; read_plot_data(input)..., input)
 
-    # 分布图选取存有样本的代表场强；斜率图使用全部 h₀ ≥ 1 的点。
+    # 分布图保留相同 h₀ 代表点便于比较；斜率图从各模式临界点开始。
     sizes = sort(data.sizes)
     length(sizes) == 4 || error("Four size panels require exactly four sizes; got $sizes")
     fields = representative_fields(data.fields, [0.1, 0.5, 1.0, 2.0, 5.0, 10.0])
@@ -359,6 +374,7 @@ function main(args)
     end
 
     report = ["# Plot audit", "", "Input: `$input`", "Boundary: $(data.boundary)",
+        "Field distribution: $(data.field_distribution); $(field_distribution_label(data)); critical h0=$(critical_field(data))",
         "Julia: $VERSION; CairoMakie: $(pkgversion(CairoMakie)); HDF5: $(pkgversion(HDF5))",
         "Sizes: $sizes", "Gap fields (2×2): $gap_fields", "Correlation fields (2×3): $fields",
         "Autocorrelation: 2×2 size panels, the same six fields, from the same input file.", "",
@@ -366,12 +382,15 @@ function main(args)
         "Natural logarithms. Shading = ±1 SEM across independent disorder samples, not a confidence interval.",
         "Gap density = counts / (all samples × bin width); unresolved mass is not renormalized away.",
         "Scaled gap density: transform each sample to x = ln(ΔE)/√L, then histogram with common bin width 0.1 for every L; normalize by all samples.",
-        "Imaginary-time mean curves use |stored autocorrelation_mean|, retaining the stored SEM; this is not mean(|sample_Ct|). Real-time curves keep their signs.",
-        "Autocorrelation slopes (1/z): one curve per L, all $(count(>=(1.0), data.fields)) fields with h0 >= 1; absolute unweighted OLS slope of ln(|autocorrelation_mean|) versus ln(time), with intercept, over all finite positive times and nonzero finite means.",
+        "Imaginary-time mean curves use stored autocorrelation_mean directly, retaining the stored SEM. Real-time curves keep their signs.",
+        "Autocorrelation effective log-log slopes: one curve per L, all $(count(>=(critical_field(data)), data.fields)) fields with h0 >= $(critical_field(data)); absolute unweighted OLS slope of ln(autocorrelation_mean) versus ln(time), with intercept, over all finite positive times and positive finite means.",
+        "Slopes are descriptive, not automatically 1/z." *
+            (data.field_distribution == "fixed" ? " Fixed fields are gapped for h0 > $(data.fixed_field_divisor)." : " Uniform fields retain a Griffiths region for all finite h0 > 1."),
         "Mean log spatial correlations are mean(log C), not log(mean C). No resampling.",
         "Time distributions: L=$(maximum(sizes)), fields=$gap_fields, target times=$DISTRIBUTION_TIMES, actual nearest times=$(first(distributions).times); 60 equal-width bins per curve, normalized by all samples.",
-        "Collapse minimizes sum over times and quantiles of [ln Q_p(-ln |C|) - μ ln τ - a_p]^2, with independent intercept a_p and p=0.05:0.05:0.95; only positive quantiles of valid samples enter the fit.",
-        "Time distributions use the absolute value of each sample before the negative logarithm. Zero/nonfinite samples are omitted; missing mass remains in the density. μ and log-quantile RMS are descriptive fits, not an asymptotic exponent determination.",
+        "Collapse minimizes sum over times and quantiles of [ln Q_p(-ln C) - μ ln τ - a_p]^2, with independent intercept a_p and p=0.05:0.05:0.95; only positive quantiles of valid samples enter the fit.",
+        "Times with no valid samples are excluded from collapse fitting; fewer than two valid times gives unavailable (NaN) μ. Empty densities are omitted, with missing counts retained.",
+        "Time distributions use each sample directly in the negative logarithm. Nonpositive/nonfinite samples are omitted; missing mass remains in the density. μ and log-quantile RMS are descriptive fits, not an asymptotic exponent determination.",
         "Nonfinite means break curves. Invalid SEM/bounds omit shading; log axes also omit nonpositive values/bounds.",
         "Zero distance is omitted on log-log spatial axes; zero time is omitted on log-log time axes.", "",
         "| h0 | L | samples | unresolved gaps | nonfinite mean-log distances | negative mean distances |",

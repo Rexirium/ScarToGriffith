@@ -13,32 +13,10 @@ using .RandomTFIM
 
 include("results_io.jl")
 
-function parse_config(args)
-    mode = isempty(args) ? "demo" : args[1]
-    mode in ("demo", "full") || throw(ArgumentError("unknown mode: $mode"))
-    length(args) <= 4 || throw(ArgumentError("expected at most four arguments"))
-
-    boundary = length(args) >= 4 ? Symbol(args[4]) : :periodic
-    RandomTFIM.check_boundary(boundary)
-    default_samples = mode == "demo" ? 20 : 10_000
-    nsamples = length(args) >= 2 ? parse(Int, args[2]) : default_samples
-    output = length(args) >= 3 ? abspath(args[3]) : joinpath(@__DIR__, "results", "$mode.h5")
-    stem, ext = splitext(output)
-    output = stem * "_" * Dates.format(now(), "yyyymmdd_HHMMSS") * ext
-    nsamples > 0 || throw(ArgumentError("samples must be positive"))
-    ispath(output) && throw(ArgumentError("output already exists: $output"))
-
-    sizes = mode == "demo" ? (16, 32) : (16, 32, 64, 128)
-    fields = 10 .^ range(-1, 1, 101)
-    sample_fields = select_sample_fields(fields)
-    times = 10 .^ range(-1, 3, 101)
-    return (; mode, nsamples, output, boundary, sizes, fields, sample_fields, times)
-end
-
 function compute_case(job, cfg)
     BLAS.set_num_threads(1)
     seconds = @elapsed result = disorder_ensemble(job.L, job.h0, cfg.times; nsamples=cfg.nsamples, seed=job.seed, rmax=job.L ÷ 2,
-        boundary=cfg.boundary, keep_samples=job.h0 in cfg.sample_fields)
+        boundary=cfg.boundary, field_distribution=cfg.field_distribution, keep_samples=job.h0 in cfg.sample_fields)
     return (; L=job.L, h0=job.h0, seed=job.seed, result,
         worker_id=myid(), seconds)
 end
@@ -52,18 +30,6 @@ function write_case(file, data, cfg)
     println("L=$(data.L) h0=$(data.h0) samples=$(cfg.nsamples) worker=$(data.worker_id)",
         " time=$(round(data.seconds; digits=3))s")
     flush(file)
-end
-
-function write_metadata(file, cfg)
-    attributes(file)["complete"] = false
-    attributes(file)["nsamples"] = cfg.nsamples
-    attributes(file)["distribution"] = "box"
-    attributes(file)["boundary"] = string(cfg.boundary)
-
-    parameters = create_group(file, "parameters")
-    parameters["sizes"] = collect(cfg.sizes)
-    parameters["fields"] = collect(cfg.fields)
-    parameters["sample_fields"] = cfg.sample_fields
 end
 
 function run_scan(cfg, pids)

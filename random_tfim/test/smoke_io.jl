@@ -3,13 +3,18 @@ using Test
 
 @testset "Demo/full: all observables and disorder SEM" begin
     mktempdir() do directory
-        for mode in ("demo", "full"), boundary in (:periodic, :open)
+        for (mode, boundary, field_distribution) in (("demo", :periodic, :uniform),
+                ("demo", :open, :fixed), ("full", :periodic, :fixed), ("full", :open, :uniform))
             output = joinpath(directory, "$(mode)_$(boundary).h5")
-            redirect_stdout(devnull) do
-                main([mode, "2", output, string(boundary)])
+            output = redirect_stdout(devnull) do
+                main([mode, "2", output, string(boundary), string(field_distribution)])
             end
             h5open(output, "r") do file
-                @test Set(keys(attributes(file))) == Set(["complete", "nsamples", "distribution", "boundary"])
+                @test Set(keys(attributes(file))) == Set(["complete", "nsamples", "distribution", "field_distribution", "boundary", (field_distribution == :fixed ? ["fixed_field_divisor"] : String[])...])
+                @test read(attributes(file)["field_distribution"]) == string(field_distribution)
+                if field_distribution == :fixed
+                    @test read(attributes(file)["fixed_field_divisor"]) == exp(1)
+                end
                 @test read(attributes(file)["complete"])
                 @test read(attributes(file)["boundary"]) == string(boundary)
                 sizes = mode == "demo" ? (16, 32) : (16, 32, 64, 128)
@@ -51,9 +56,9 @@ using Test
                     @test read(group["$(prefix)_sem"]) ≈ std(samples) / sqrt(2)
                 end
                 times = read(group["imaginary_time"])
-                @test times == collect(0.0:0.2:20.0)
+                @test times == 10 .^ range(-1, 3, 101)
                 expected = disorder_ensemble(16, 1.0, times; keep_samples=true, nsamples=2,
-                    seed=read(attributes(group)["seed"]), boundary)
+                    seed=read(attributes(group)["seed"]), boundary, field_distribution)
                 for (prefix, avg, err) in (("correlation", :C_mean, :C_sem),
                         ("log_correlation", :logC_mean, :logC_sem),
                         ("autocorrelation", :Ct_mean, :Ct_sem),
@@ -68,12 +73,11 @@ using Test
                 @test size(expected.sample_Ct) == (length(times), 2)
                 @test all(isfinite, expected.sample_Ct)
                 @test gaps ≈ expected.gaps
-                @test read(group["autocorrelation_mean"])[1] ≈ 1 atol=1e-12
+                @test 0 < read(group["autocorrelation_mean"])[1] <= 1
             end
-            @test_throws ArgumentError main([mode, "2", output])
         end
         single = joinpath(directory, "single.h5")
-        redirect_stdout(devnull) do
+        single = redirect_stdout(devnull) do
             main(["demo", "1", single])
         end
         h5open(single, "r") do file
