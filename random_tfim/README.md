@@ -371,26 +371,21 @@ PBC 使用 2L 维高斯重叠 Pfaffian，端点也遵循同一倒条件数判据
 ## 测试与基准
 
 ```sh
-# 核心物理、边界、数值诊断和无序统计：仅标准库
+# 一条命令运行核心物理、HDF5/运行脚本、绘图测试
 julia --startup-file=no --threads=2 random_tfim/test/runtests.jl
 
-# HDF5 写入/回读，以及本地和 Slurm 输出接口；自动激活 local 环境
-julia --startup-file=no --threads=2 random_tfim/test/smoke_io.jl
-julia --startup-file=no random_tfim/test/summary_io.jl
+# 只检查核心物理：仅标准库
+julia --startup-file=no --threads=2 random_tfim/test/runtests.jl core
 
-# 绘图读取器：当前和旧版文件布局
-julia --startup-file=no --project=@v1.13 random_tfim/test/plot_io.jl
-julia --startup-file=no --project=@v1.13 random_tfim/test/plot_checks.jl
-
-# 性能基准；可选参数为另存的旧版源码路径
+# 可选：当前实现的性能基准，不计入正确性测试
 julia --startup-file=no random_tfim/test/benchmark.jl
-julia --startup-file=no random_tfim/test/benchmark.jl /path/to/old/RandomTFIM.jl
 ```
 
-核心测试独立构造完整自旋哈密顿量，核对能隙、空间关联和两种时间关联；
-另检查宇称、断开周期接缝、解耦极限、微小尾部、奇异前缀、负时间及可重复采样。
-`smoke_io.jl` 实际运行 demo/full 的少量样本扫描，覆盖 uniform/fixed 和两种边界；`summary_io.jl` 验证两种横场的输出元数据和本地/Slurm 计算一致性，不提交 Slurm 作业。
-基准对照源码须支持 `time_domain=:imaginary/:real`；空间关联核对原始 `C`。
+入口依次启动三个独立 Julia 进程；某组失败仍继续运行其余组，最终返回失败状态。
+`physics.jl` 保留自旋哈密顿量对照、宇称、两种边界、解耦极限、微小尾部、奇异前缀和无序统计测试。
+`io.jl` 自动激活 local 环境，以小链的两个代表场强检查两种横场、两种边界、样本/摘要输出及本地/Slurm 一致性，并只运行一次单样本 demo；不提交 Slurm 作业。
+`plot_io.jl` 使用已有 `@v1.13` 环境，合并绘图读取、旧文件兼容、掩码、斜率和分布缩放测试。
+删除独立尾部对比诊断脚本（核心测试已覆盖相应数值检查）；性能基准仅测当前实现，不再加载旧源码。
 这些小规模验证不代表已完成 full 默认 10000 样本的论文统计精度复现。
 
 ## 论文图与数据需求
