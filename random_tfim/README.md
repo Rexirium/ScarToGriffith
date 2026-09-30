@@ -89,6 +89,19 @@ sbatch random_tfim/submit.sh full 50000 random_tfim/results/full_fixed.h5 period
 每个 worker 处理一个 `(L,h0)`，固定启动 8 个 Julia 线程；主进程独占 HDF5 写入。
 提交前按集群修改账户、分区、工作目录和资源数，使分配的 CPU 与 worker 线程数匹配。
 
+## 代码结构
+
+[RandomTFIM.jl](RandomTFIM.jl) 保留模块定义、标准库依赖和导出接口，按顺序加载以下实现文件：
+
+- [model.jl](model.jl)：链参数校验、无序采样、费米子矩阵、能隙与基态。
+- [correlations.jl](correlations.jl)：空间关联及增量 QR 计算。
+- [autocorrelation.jl](autocorrelation.jl)：实时间/虚时间自关联及 Pfaffian 后备算法。
+- [ensemble.jl](ensemble.jl)：无序样本并行计算、均值与标准误。
+
+这些文件共享 `RandomTFIM` 命名空间，由模块入口统一加载；使用时仍只需
+`include("random_tfim/RandomTFIM.jl")` 和 `using .RandomTFIM`。
+命令行运行入口仍为 `run.jl` 和 `run_slurm.jl`。
+
 ## 函数接口
 
 ### 单个无序样本
@@ -343,6 +356,8 @@ $$
 
 - **能隙：** 周期链的阈值为 `64eps(Float64)*max(abs(E0),abs(E1),1)`，
   开链为 `64eps(Float64)*max(sum(ε),1)`；不超过阈值时 `resolved=false`，原始 gap 不裁剪。
+  `energy_gap`、`ground_state` 和 `disorder_ensemble` 统一使用完整 SVD 的奇异值，
+  避免不同 SVD 路径的舍入差异使阈值附近的标记不一致；单独计算能隙也会计算奇异向量。
 - **空间关联：** `correlations` 仅返回原始有符号 `C`，不再返回 `logC/resolved`，也不再接受 `logtol`。
   QR 内部仍用对数行列式重建 `C`，但最终转换为 Float64 时可能下溢为零。
   `disorder_ensemble` 从返回的 `C` 取 log，不恢复下溢前的对数，也不做条件数筛选。

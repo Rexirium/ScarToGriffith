@@ -534,7 +534,8 @@ end
         @test size(without_time.sample_Ct) == (0, nsamples)
         @test without_time.sample_Ct isa Matrix{Float64}
 
-        # Gap-only results also retain serial order, including resolution flags.
+        # Include tiny gaps near the resolution threshold (periodic sample 105).
+        # All three APIs must use the same SVD path and retain serial order.
         gap_only = disorder_ensemble(32, 0.4, Float64[]; keep_samples=true, boundary, nsamples=129, seed=84, rmax=0)
         @test any(!, gap_only.resolved)
         @test isnan(gap_only.log_gap_mean) && isnan(gap_only.log_gap_sem)
@@ -542,8 +543,10 @@ end
         for n in 1:129
             J, h = sample_disorder(rng, 32, 0.4; boundary)
             expected = energy_gap(J, h; boundary)
-            @test gap_only.gaps[n] ≈ expected.gap atol=1e-12
+            state = ground_state(J, h; boundary)
+            @test gap_only.gaps[n] == expected.gap == state.gap
             @test gap_only.resolved[n] == expected.resolved
+            @test state.resolved == expected.resolved
         end
     end
     for t in (NaN, -0.1, Inf)
