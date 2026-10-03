@@ -17,7 +17,7 @@ function parse_config(args)
 
     sizes = mode == "demo" ? (16, 32) : (16, 32, 64, 128)
     fields = 10 .^ range(-1, 1, 101)
-    sample_fields = select_sample_fields(fields)
+    sample_fields = select_sample_fields(fields, field_distribution)
     times = 10 .^ range(-1, 3, 101)
     return (; mode, nsamples, output, boundary, field_distribution, sizes, fields, sample_fields, times)
 end
@@ -37,7 +37,11 @@ function write_metadata(file, cfg)
 end
 
 # Select existing scan points nearest the six representative plotting fields.
-select_sample_fields(fields) = [fields[argmin(abs.(fields .- h))] for h in (0.1, 0.5, 1.0, 2.0, 5.0, 10.0)]
+function select_sample_fields(fields, field_distribution=:uniform)
+    targets = field_distribution == :fixed ? (0.5, 1.0, 1.5, 2.0, exp(1), 3.0) :
+        (0.1, 0.5, 1.0, 2.0, 5.0, 10.0)
+    return [fields[argmin(abs.(fields .- h))] for h in targets]
+end
 
 function write_correlations(group, result, times)
     group["correlation_mean"] = result.C_mean

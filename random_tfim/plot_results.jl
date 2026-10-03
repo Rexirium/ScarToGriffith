@@ -1,53 +1,42 @@
 using CairoMakie, HDF5, Statistics
 
-# Prefer descriptive dataset names, retaining support for existing ensembles.
-read_plot_dataset(group, name, legacy) = read(group[haskey(group, name) ? name : legacy])
-
 # Run: julia --project=@v1.13 random_tfim/plot_results.jl [input.h5] [output_dir]
 # Stored statistics include the spatial average over all starting sites.
 function read_plot_data(input)
     h5open(input, "r") do f
-        @assert read(HDF5.attributes(f)["complete"]) "Input ensemble is incomplete"
-        if haskey(f, "parameters")
-            sizes = read(f["parameters/sizes"])
-            fields = read(f["parameters/fields"])
-        else
-            # Existing ensembles predate the parameters group.
-            sizes = sort([parse(Int, k[2:end]) for k in keys(f) if startswith(k, "L")])
-            fields = sort([parse(Float64, k[2:end]) for k in keys(f["L$(first(sizes))"])])
-        end
+        attrs = HDF5.attributes(f)
+        @assert read(attrs["complete"]) "Input ensemble is incomplete"
+        sizes = read(f["parameters/sizes"])
+        fields = read(f["parameters/fields"])
+        sample_fields = read(f["parameters/sample_fields"])
+        n = read(attrs["nsamples"])
 
         records = []
         for L in sizes, h0 in fields
             g = f["L$(L)/h$(h0)"]
-            has_samples = haskey(g, "gap_samples") || haskey(g, "log_gap_samples") || haskey(g, "loggaps")
-            resolved = has_samples ? Bool.(read_plot_dataset(g, "gap_resolved", "resolved")) : Bool[]
-            gaps = if haskey(g, "gap_samples")
-                map((gap, ok) -> ok ? log(gap) : NaN, read(g["gap_samples"]), resolved)
-            else
-                has_samples ? read_plot_dataset(g, "log_gap_samples", "loggaps") : Float64[]
-            end
-            n = has_samples ? length(gaps) : read(HDF5.attributes(f)["nsamples"])
-            avg = read_plot_dataset(g, "correlation_mean", "average")
-            sem = read_plot_dataset(g, "correlation_sem", "sem")
-            logavg = read_plot_dataset(g, "log_correlation_mean", "mean_log")
-            logsem = read_plot_dataset(g, "log_correlation_sem", "log_sem")
+            has_samples = h0 in sample_fields
+            resolved = has_samples ? Bool.(read(g["gap_resolved"])) : Bool[]
+            gaps = has_samples ?
+                map((gap, ok) -> ok ? log(gap) : NaN, read(g["gap_samples"]), resolved) : Float64[]
+            avg = read(g["correlation_mean"])
+            sem = read(g["correlation_sem"])
+            logavg = read(g["log_correlation_mean"])
+            logsem = read(g["log_correlation_sem"])
 
             @assert length(avg) == length(sem) == length(logavg) == length(logsem) == L ÷ 2 + 1
             @assert length(resolved) == length(gaps)
+            @assert !has_samples || length(gaps) == n
             @assert all(isfinite, avg) && avg[1] == 1 && logavg[1] == 0
             @assert resolved == isfinite.(gaps)
             push!(records, (; L, h0, n, gaps, resolved, avg, sem, logavg, logsem,
                 invalid_log=count(!isfinite, logavg), negative_C=count(<(0), avg)))
         end
-        attrs = HDF5.attributes(f)
-        field_distribution = haskey(attrs, "field_distribution") ? read(attrs["field_distribution"]) : "uniform"
+        field_distribution = read(attrs["field_distribution"])
         field_distribution in ("uniform", "fixed") || error("Unknown field distribution: $field_distribution")
-        # Fixed-field files before this attribute used h=h0/2.
-        fixed_field_divisor = haskey(attrs, "fixed_field_divisor") ? read(attrs["fixed_field_divisor"]) : 2.0
-        fixed_field_divisor in (2.0, exp(1)) || error("Unknown fixed-field divisor: $fixed_field_divisor")
-        (; records, sizes, fields, field_distribution, fixed_field_divisor,
-            boundary=read(HDF5.attributes(f)["boundary"]))
+        if field_distribution == "fixed"
+            @assert read(attrs["fixed_field_divisor"]) == exp(1) "Expected h = h₀/e"
+        end
+        (; records, sizes, fields, sample_fields, field_distribution, boundary=read(attrs["boundary"]))
     end
 end
 
@@ -63,9 +52,8 @@ function representative_fields(fields, targets)
     selected
 end
 
-critical_field(data) = data.field_distribution == "fixed" ? data.fixed_field_divisor / exp(1) : 1.0
 field_distribution_label(data) = data.field_distribution == "fixed" ?
-    (data.fixed_field_divisor == exp(1) ? "h = h₀/e" : "h = h₀/2 (legacy)") : "h ∼ U(0, h₀)"
+    "h = h₀/e" : "h ∼ U(0, h₀)"
 
 field_label(h) = "h₀ = $(round(h; sigdigits=5))"
 panel_position(k, ncols) = (div(k - 1, ncols) + 1, (k - 1) % ncols + 1)
@@ -229,7 +217,7 @@ function plot_autocorrelation_slopes(data, sizes)
     Label(fig[0, 1], "Imaginary-time autocorrelation slopes", fontsize=25)
     ax = Axis(fig[1, 1]; xlabel=L"h_0", ylabel="Effective log-log slope",
         xscale=log10, yscale=identity)
-    fields = sort(filter(>=(critical_field(data)), data.fields))
+    fields = sort(filter(>=(1.0), data.fields))
 
     h5open(data.input, "r") do f
         for (j, L) in enumerate(sizes)
@@ -241,7 +229,7 @@ function plot_autocorrelation_slopes(data, sizes)
         end
     end
 
-    xlims!(ax, critical_field(data), maximum(fields))
+    xlims!(ax, 1.0, maximum(fields))
     axislegend(ax; position=:lt, framevisible=false)
     Label(fig[2, 1], "$(basename(data.input)) | $(field_distribution_label(data)) | $(length(fields)) fields; log-log fit of stored mean over all valid positive times";
         fontsize=13)
@@ -330,7 +318,7 @@ end
 function main(args)
     input = if isempty(args)
         candidates = filter(readdir(joinpath(@__DIR__, "results"); join=true)) do path
-            occursin(r"^full(?:_(?:uniform|fixed))?(?:_\d{8}_\d{6})?\.h5$", basename(path))
+            occursin(r"^full_(?:uniform|fixed)_\d{8}_\d{6}\.h5$", basename(path))
         end
         isempty(candidates) && error("No full ensemble found; pass an input HDF5 path")
         candidates[argmax(mtime.(candidates))]
@@ -340,12 +328,13 @@ function main(args)
     out = length(args) < 2 ? joinpath(dirname(input), "figures") : abspath(args[2])
     data = (; read_plot_data(input)..., input)
 
-    # 分布图保留相同 h₀ 代表点便于比较；斜率图从各模式临界点开始。
     sizes = sort(data.sizes)
     length(sizes) == 4 || error("Four size panels require exactly four sizes; got $sizes")
-    fields = representative_fields(data.fields, [0.1, 0.5, 1.0, 2.0, 5.0, 10.0])
-    sampled_fields = [h for h in data.fields if all(!isempty(d.gaps) for d in data.records if d.h0 == h)]
-    gap_fields = representative_fields(filter(>=(1.0), sampled_fields), [1.0, 2.0, 5.0, 10.0])
+    fields = sort(data.sample_fields)
+    length(fields) == 6 || error("Six saved sample fields are required; got $fields")
+    # Keep four distribution panels: nearest critical point and three largest fields.
+    gap_fields = [fields[argmin(abs.(fields .- 1.0))]; fields[end-2:end]]
+    length(unique(gap_fields)) == 4 || error("Distribution panels need four distinct fields")
 
     mkpath(out)
     set_theme!(Theme(fontsize=17, linewidth=2, Axis=(xgridvisible=false, ygridvisible=false,)))
@@ -355,12 +344,8 @@ function main(args)
         ("average_correlation", plot_spatial_correlations(data, fields, sizes)),
         ("log_correlation_sqrt_r", plot_spatial_correlations(data, fields, sizes; logarithmic=true)),
         ("imaginary_time_autocorrelation", plot_autocorrelation(data, fields, sizes)),
-        ("imaginary_time_autocorrelation_slopes", plot_autocorrelation_slopes(data, sizes))]
-    has_real_time = h5open(input, "r") do f
-        all(haskey(f["L$(L)/h$(h)"], "real_autocorrelation_mean") for L in sizes, h in fields)
-    end
-    has_real_time && push!(figures,
-        ("real_time_autocorrelation", plot_autocorrelation(data, fields, sizes; real_time=true)))
+        ("imaginary_time_autocorrelation_slopes", plot_autocorrelation_slopes(data, sizes)),
+        ("real_time_autocorrelation", plot_autocorrelation(data, fields, sizes; real_time=true))]
 
     distributions = read_autocorrelation_distributions(data, gap_fields, maximum(sizes))
     push!(figures,
@@ -374,18 +359,18 @@ function main(args)
     end
 
     report = ["# Plot audit", "", "Input: `$input`", "Boundary: $(data.boundary)",
-        "Field distribution: $(data.field_distribution); $(field_distribution_label(data)); critical h0=$(critical_field(data))",
+        "Field distribution: $(data.field_distribution); $(field_distribution_label(data)); critical h0=$(1.0)",
         "Julia: $VERSION; CairoMakie: $(pkgversion(CairoMakie)); HDF5: $(pkgversion(HDF5))",
         "Sizes: $sizes", "Gap fields (2×2): $gap_fields", "Correlation fields (2×3): $fields",
         "Autocorrelation: 2×2 size panels, the same six fields, from the same input file.", "",
-        "Real-time autocorrelation: $(has_real_time ? "included; linear vertical axis preserves negative values" : "not available").",
+        "Real-time autocorrelation: included; linear vertical axis preserves negative values.",
         "Natural logarithms. Shading = ±1 SEM across independent disorder samples, not a confidence interval.",
         "Gap density = counts / (all samples × bin width); unresolved mass is not renormalized away.",
         "Scaled gap density: transform each sample to x = ln(ΔE)/√L, then histogram with common bin width 0.1 for every L; normalize by all samples.",
         "Imaginary-time mean curves use stored autocorrelation_mean directly, retaining the stored SEM. Real-time curves keep their signs.",
-        "Autocorrelation effective log-log slopes: one curve per L, all $(count(>=(critical_field(data)), data.fields)) fields with h0 >= $(critical_field(data)); absolute unweighted OLS slope of ln(autocorrelation_mean) versus ln(time), with intercept, over all finite positive times and positive finite means.",
+        "Autocorrelation effective log-log slopes: one curve per L, all $(count(>=(1.0), data.fields)) fields with h0 >= $(1.0); absolute unweighted OLS slope of ln(autocorrelation_mean) versus ln(time), with intercept, over all finite positive times and positive finite means.",
         "Slopes are descriptive, not automatically 1/z." *
-            (data.field_distribution == "fixed" ? " Fixed fields are gapped for h0 > $(data.fixed_field_divisor)." : " Uniform fields retain a Griffiths region for all finite h0 > 1."),
+            (data.field_distribution == "fixed" ? " Fixed fields are gapped for h0 > $(exp(1))." : " Uniform fields retain a Griffiths region for all finite h0 > 1."),
         "Mean log spatial correlations are mean(log C), not log(mean C). No resampling.",
         "Time distributions: L=$(maximum(sizes)), fields=$gap_fields, target times=$DISTRIBUTION_TIMES, actual nearest times=$(first(distributions).times); 60 equal-width bins per curve, normalized by all samples.",
         "Collapse minimizes sum over times and quantiles of [ln Q_p(-ln C) - μ ln τ - a_p]^2, with independent intercept a_p and p=0.05:0.05:0.95; only positive quantiles of valid samples enter the fit.",

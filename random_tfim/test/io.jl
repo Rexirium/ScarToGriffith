@@ -8,6 +8,11 @@ using Test
     @test parse_config(["full"]).sizes == (16, 32, 64, 128)
     @test base.field_distribution == :uniform
     @test base.sample_fields == select_sample_fields(base.fields)
+    fixed = parse_config(["demo", "1", "unused.h5", "periodic", "fixed"])
+    @test fixed.fields == base.fields
+    @test fixed.sample_fields ≈ [10.0^x for x in (-0.3, 0.0, 0.18, 0.3, 0.44, 0.48)]
+    @test all(h -> h in fixed.fields, fixed.sample_fields)
+    @test base.fields == 10 .^ range(-1, 1, 101)
     for args in (["bad"], ["demo", "0"], ["demo", "1", "unused.h5", "bad"],
                  ["demo", "1", "unused.h5", "open", "bad"])
         @test_throws ArgumentError parse_config(args)
@@ -78,7 +83,7 @@ using Test
         h5open(output, "r") do file
             @test read(attributes(file)["complete"])
             @test read(attributes(file)["fixed_field_divisor"]) == exp(1)
-            @test length(keys(file["L16"])) == length(base.fields)
+            @test length(keys(file["L16"])) == length(fixed.fields)
             @test all(isnan, read(file["L16/h1.0/autocorrelation_sem"]))
         end
     end

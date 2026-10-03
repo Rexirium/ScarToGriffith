@@ -17,97 +17,53 @@ include(joinpath(@__DIR__, "..", "plot_results.jl"))
     @test values.lower[1] == -2.5 && isnan(values.lower[2])
 end
 
-@testset "Plot reader: parameter arrays and legacy files" begin
+@testset "Plot reader: current HDF5 format" begin
     mktempdir() do directory
         input = joinpath(directory, "ensemble.h5")
-        sizes, fields = [16, 32], [1.0, 1.3]
-        h5open(input, "w") do f
-            HDF5.attributes(f)["complete"] = true
-            HDF5.attributes(f)["boundary"] = "periodic"
-            for L in sizes, h0 in fields
-                g = create_group(f, "L$L/h$h0")
-                average = exp.(-h0 .* (0:L÷2))
-                logaverage = log.(average)
-                # Two identical samples: known means and exactly zero SEM.
-                g["sample_C"], g["sample_logC"] = repeat(average, 1, 2), repeat(logaverage, 1, 2)
-                g["average"], g["mean_log"] = average, logaverage
-                g["sem"], g["log_sem"] = zeros(length(average)), zeros(length(average))
-                g["loggaps"], g["resolved"] = [-1.0, -2.0], [true, true]
+        sizes, fields = [32, 16], [1.3, 1.0]
+        for distribution in ("uniform", "fixed")
+            h5open(input, "w") do f
+                attrs = HDF5.attributes(f)
+                attrs["complete"] = true
+                attrs["boundary"] = "periodic"
+                attrs["field_distribution"] = distribution
+                attrs["nsamples"] = 2
+                distribution == "fixed" && (attrs["fixed_field_divisor"] = exp(1))
+                p = create_group(f, "parameters")
+                p["sizes"], p["fields"], p["sample_fields"] = sizes, fields, [1.0]
+                for L in sizes, h0 in fields
+                    g = create_group(f, "L$L/h$h0")
+                    avg = exp.(-h0 .* (0:div(L, 2)))
+                    g["correlation_mean"], g["log_correlation_mean"] = avg, log.(avg)
+                    g["correlation_sem"], g["log_correlation_sem"] = zeros(length(avg)), zeros(length(avg))
+                    if h0 == 1.0
+                        g["gap_samples"] = [exp(-1.0), -eps(Float64)]
+                        g["gap_resolved"] = [true, false]
+                    end
+                end
             end
-        end
-        legacy = read_plot_data(input)
-        @test legacy.field_distribution == "uniform"
-        @test critical_field(legacy) == 1.0
-        @test legacy.sizes == sizes && legacy.fields == fields
-        h5open(input, "r+") do f
-            p = create_group(f, "parameters")
-            p["sizes"], p["fields"] = reverse(sizes), reverse(fields)
-            for L in sizes, h0 in fields, key in ("sample_C", "sample_logC")
-                HDF5.delete_object(f["L$L/h$h0"], key)
-            end
-        end
-        current = read_plot_data(input)
-        @test current.sizes == reverse(sizes) && current.fields == reverse(fields)
-        @test isequal(current.records, reverse(legacy.records))
-        @test all(d.n == 2 for d in current.records)
-        # New descriptive names must return the same records as both old layouts.
-        h5open(input, "r+") do f
-            for L in sizes, h0 in fields
-                g = f["L$L/h$h0"]
-                for (old, new) in (("loggaps", "log_gap_samples"), ("resolved", "gap_resolved"),
-                    ("average", "correlation_mean"), ("sem", "correlation_sem"),
-                    ("mean_log", "log_correlation_mean"), ("log_sem", "log_correlation_sem"))
-                    g[new] = read(g[old])
-                    HDF5.delete_object(g, old)
+            data = read_plot_data(input)
+            @test data.sizes == sizes && data.fields == fields
+            @test data.sample_fields == [1.0]
+            @test data.field_distribution == distribution
+            @test field_distribution_label(data) == (distribution == "fixed" ? "h = h₀/e" : "h ∼ U(0, h₀)")
+            @test length(data.records) == 4
+            for d in data.records
+                @test d.n == 2
+                @test d.avg ≈ exp.(-d.h0 .* (0:div(d.L, 2)))
+                if d.h0 == 1.0
+                    @test d.gaps[1] == -1.0
+                    @test isnan(d.gaps[2])
+                    @test d.resolved == [true, false]
+                else
+                    @test isempty(d.gaps) && isempty(d.resolved)
                 end
             end
         end
-        renamed = read_plot_data(input)
-        @test isequal(renamed, current)
-        # Reconstruct logs from raw samples, retaining unresolved samples as NaN.
         h5open(input, "r+") do f
-            for L in sizes, h0 in fields
-                g = f["L$L/h$h0"]
-                g["gap_samples"] = [exp(-1.0), -eps(Float64)]
-                HDF5.delete_object(g, "log_gap_samples")
-                write(g["gap_resolved"], [true, false])
-            end
+            HDF5.delete_object(f["parameters"], "sample_fields")
         end
-        raw = read_plot_data(input)
-        for d in raw.records
-            @test d.gaps[1] == -1.0
-            @test isnan(d.gaps[2])
-            @test d.resolved == [true, false]
-        end
-        # Most scan points now contain statistics only.
-        h5open(input, "r+") do f
-            HDF5.attributes(f)["nsamples"] = 2
-            for L in sizes, key in ("gap_samples", "gap_resolved")
-                HDF5.delete_object(f["L$L/h1.3"], key)
-            end
-        end
-        selective = read_plot_data(input)
-        @test length(selective.records) == length(current.records)
-        for d in selective.records
-            @test d.n == 2
-            @test isempty(d.gaps) == isempty(d.resolved) == (d.h0 == 1.3)
-        end
-        h5open(input, "r+") do f
-            HDF5.attributes(f)["field_distribution"] = "fixed"
-        end
-        fixed = read_plot_data(input)
-        @test fixed.field_distribution == "fixed"
-        @test critical_field(fixed) ≈ 2 / exp(1)
-        @test isequal(fixed.records, selective.records)
-        @test occursin("legacy", field_distribution_label(fixed))
-        h5open(input, "r+") do f
-            HDF5.attributes(f)["fixed_field_divisor"] = exp(1)
-        end
-        normalized = read_plot_data(input)
-        @test normalized.fixed_field_divisor == exp(1)
-        @test critical_field(normalized) == 1.0
-        @test field_distribution_label(normalized) == "h = h₀/e"
-        @test isequal(normalized.records, fixed.records)
+        @test_throws KeyError read_plot_data(input)
     end
 end
 

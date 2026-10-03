@@ -48,8 +48,8 @@ julia --threads=4 random_tfim/run.jl full 10000 random_tfim/results/full_fixed.h
 julia --project=@v1.13 random_tfim/plot_results.jl random_tfim/results/full.h5 random_tfim/results/figures
 ```
 
-不传参数时读取 `random_tfim/results/` 下最新的 `full.h5`、`full_uniform.h5`、`full_fixed.h5` 或其带时间戳版本；默认输出到输入文件旁的 `figures/`。
-比较两种模式时请显式指定输入文件和不同输出目录，避免图像互相覆盖。各图和审计报告标注横场模式；旧文件缺少 `field_distribution` 时按 `uniform` 读取。
+不传参数时读取 `random_tfim/results/` 下最新的 `full_uniform_<时间戳>.h5` 或 `full_fixed_<时间戳>.h5`；自定义文件名需显式传入路径。默认输出到输入文件旁的 `figures/`。
+比较两种模式时请显式指定输入文件和不同输出目录，避免图像互相覆盖。各图和审计报告标注横场模式；只支持当前版本生成的 HDF5 格式。
 [plot_results.jl](plot_results.jl) 从同一输入文件绘制九张图（实时间数据缺失时为八张），不重新采样：
 
 - `gap_distribution.png`：2×2 子图，选取 h0≥1 中最接近 1、2、5、10 的四点，各曲线对应不同尺寸。
@@ -216,10 +216,10 @@ only_gaps = disorder_ensemble(L, h0, Float64[]; nsamples=100, boundary, field_di
 本地和 Slurm 脚本均同时保存虚时间和实时间结果。根目录中的 `parameters/sizes`、`parameters/fields`
 记录扫描参数，各参数组命名为 `L16/h1.0` 等。组属性仅保留观测格点 `j` 和随机种子 `seed`。
 根属性为 `boundary`（`open` 或 `periodic`）、`distribution`（`box`，描述耦合分布）、`field_distribution`（`uniform` 或 `fixed`）、`nsamples` 和 `complete`，只有整个扫描完成后才设 `complete=true`。固定模式另存 `fixed_field_divisor=e`，实际横场为 `h0/fixed_field_divisor`。扫描参数和组名中的 `h0` 始终是用户输入的尺度。
-旧 fixed 文件没有 `fixed_field_divisor` 时，绘图按原来的 `h=h0/2` 读取并标注 legacy，其临界点仍为 `2/e`；已有数据不改写，新定义需要重新计算。
+绘图要求固定模式的 `fixed_field_divisor=e`，不再兼容旧横场定义。
 耗时仅打印到运行日志；环境信息和固定的物理、统计定义不再写入属性，相关约定见本文档。
 两个脚本共用 `results_io.jl` 解析运行参数，并写入元数据、统计量和可选样本。
-计算前从 `fields` 中选出最接近 `0.1、0.5、1、2、5、10` 的 6 个值，记录在 `parameters/sample_fields`。
+计算前按横场模式从原对数网格中自动选择 6 个最近点，记录在 `parameters/sample_fields`：`uniform` 的目标为 `0.1、0.5、1、2、5、10`；`fixed` 的目标为 `0.5、1、1.5、2、e、3`。扫描网格不变。绘图直接读取保存的六点；四点分布图使用其中最接近临界点的一点和最大的三点。
 这些值对应索引 `[1, 36, 51, 66, 86, 101]`，约为 `[0.1, 0.501187, 1, 1.995262, 5.011872, 10]`。
 仅这些参数调用 `keep_samples=true` 并保存全部返回的样本；其余参数调用 `keep_samples=false`，只保存统计量和时间网格。
 `imaginary_time` 与 `real_time` 保存相同的网格；两种时间域的自关联统计均保存为 Float64 数组，实时间仅保存实部。
@@ -242,8 +242,7 @@ only_gaps = disorder_ensemble(L, h0, Float64[]; nsamples=100, boundary, field_di
 不保存 `log_gap_samples` 或关联的对数样本数组；对数能隙由后续分析根据 `gap_samples` 和 `gap_resolved` 重算，未分辨样本对应 `NaN`。
 空间关联样本已在有效起点间平均，不能重建逐格点对的分布。
 距离由数组索引恢复：空间统计量第 r+1 个元素对应 r；样本数由根属性 `nsamples` 读取。
-绘图读取器兼容旧字段 `loggaps/resolved/average/sem/mean_log/log_sem` 及没有 `parameters` 的旧文件。
-已有文件不会自动改写，旧实时间数据不能当作虚时间数据使用。
+绘图直接读取当前字段和 `parameters` 元数据，不推断缺失字段或兼容旧字段名。
 
 ## 模型与算法
 
@@ -264,7 +263,7 @@ $$
 临界条件为 `mean(log h)=mean(log J)`，其中 `mean(log J)=-1`。
 若采用 δ=(mean(log h)−mean(log J))/(var(log h)+var(log J))，均匀模式 δ=½ ln h0，固定模式 δ=ln h0。
 `h0=e≈2.718282` 是固定模式 Griffiths 区的边界，不作为严格有隙区处理。上述相区指热力学极限；有限链、有限样本和时间窗口会影响拟合。
-能隙分布仍选取 h0≈1、2、5、10，便于模式间比较；新计算的两种模式均以 h0=1 为临界点。
+随机横场的能隙分布选取 h0≈1、2、5、10，固定横场的新计算选取 h0≈1、2、e、3；两种模式均以 h0=1 为临界点。
 
 ### 能隙与空间关联
 
@@ -399,7 +398,7 @@ julia --startup-file=no random_tfim/test/benchmark.jl
 入口依次启动三个独立 Julia 进程；某组失败仍继续运行其余组，最终返回失败状态。
 `physics.jl` 保留自旋哈密顿量对照、宇称、两种边界、解耦极限、微小尾部、奇异前缀和无序统计测试。
 `io.jl` 自动激活 local 环境，以小链的两个代表场强检查两种横场、两种边界、样本/摘要输出及本地/Slurm 一致性，并只运行一次单样本 demo；不提交 Slurm 作业。
-`plot_io.jl` 使用已有 `@v1.13` 环境，合并绘图读取、旧文件兼容、掩码、斜率和分布缩放测试。
+`plot_io.jl` 使用已有 `@v1.13` 环境，覆盖当前格式的两种横场模式、样本与摘要读取、掩码、斜率和分布缩放测试。
 删除独立尾部对比诊断脚本（核心测试已覆盖相应数值检查）；性能基准仅测当前实现，不再加载旧源码。
 这些小规模验证不代表已完成 full 默认 10000 样本的论文统计精度复现。
 

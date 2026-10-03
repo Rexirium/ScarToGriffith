@@ -21,6 +21,6 @@ export OMP_NUM_THREADS=1
 # Example: sbatch random_tfim/submit.sh full 50_000 random_tfim/results/full_fixed.h5 periodic fixed
 # SlurmClusterManager starts the worker processes; do not add srun here.
 if (($# == 0)); then
-	set -- full 50_000
+	set -- full 50000 random_tfim/results/full_fixed.h5 periodic fixed
 fi
 julia --startup-file=no --threads=2 random_tfim/run_slurm.jl "$@"
