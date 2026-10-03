@@ -12,45 +12,32 @@ function read_plot_data(input)
         n = read(attrs["nsamples"])
 
         records = []
-        for L in sizes, h0 in fields
+        for L in sizes, h0 in sample_fields
             g = f["L$(L)/h$(h0)"]
-            has_samples = h0 in sample_fields
-            resolved = has_samples ? Bool.(read(g["gap_resolved"])) : Bool[]
-            gaps = has_samples ?
-                map((gap, ok) -> ok ? log(gap) : NaN, read(g["gap_samples"]), resolved) : Float64[]
+            resolved = Bool.(read(g["gap_resolved"]))
+            gaps = map((gap, ok) -> ok ? log(gap) : NaN, read(g["gap_samples"]), resolved)
             avg = read(g["correlation_mean"])
             sem = read(g["correlation_sem"])
             logavg = read(g["log_correlation_mean"])
             logsem = read(g["log_correlation_sem"])
 
             @assert length(avg) == length(sem) == length(logavg) == length(logsem) == L ÷ 2 + 1
-            @assert length(resolved) == length(gaps)
-            @assert !has_samples || length(gaps) == n
+            @assert length(resolved) == length(gaps) == n
             @assert all(isfinite, avg) && avg[1] == 1 && logavg[1] == 0
             @assert resolved == isfinite.(gaps)
-            push!(records, (; L, h0, n, gaps, resolved, avg, sem, logavg, logsem,
-                invalid_log=count(!isfinite, logavg), negative_C=count(<(0), avg)))
+            push!(records, (; L, h0, gaps, unresolved=count(!, resolved), avg, sem, logavg, logsem))
         end
         field_distribution = read(attrs["field_distribution"])
         field_distribution in ("uniform", "fixed") || error("Unknown field distribution: $field_distribution")
         if field_distribution == "fixed"
             @assert read(attrs["fixed_field_divisor"]) == exp(1) "Expected h = h₀/e"
         end
-        (; records, sizes, fields, sample_fields, field_distribution, boundary=read(attrs["boundary"]))
+        (; records, sizes, fields, sample_fields, n, field_distribution, boundary=read(attrs["boundary"]))
     end
 end
 
 const PLOT_COLORS = ["#0072B2", "#D55E00", "#009E73", "#CC79A7", "#E69F00", "#000000"]
 const DISTRIBUTION_TIMES = [1.0, 3.0, 10.0, 30.0, 100.0, 300.0]
-
-function representative_fields(fields, targets)
-    available = sort(unique(fields))
-    isempty(available) && error("No fields available for targets $targets")
-    selected = [available[argmin(abs.(available .- h))] for h in targets]
-    length(unique(selected)) == length(targets) ||
-        error("Input needs distinct representative fields for targets $targets; got $selected")
-    selected
-end
 
 field_distribution_label(data) = data.field_distribution == "fixed" ?
     "h = h₀/e" : "h ∼ U(0, h₀)"
@@ -81,11 +68,11 @@ function uncertainty_curve!(ax, x, y, sem, color; positive=false)
     lines!(ax, x, values.center; color, linewidth=2)
 end
 
-function finish_figure!(fig, labels, ncols, note)
-    Legend(fig[3, 1:ncols],
+function finish_figure!(fig, labels, ncols, note; nrows=2)
+    Legend(fig[nrows + 1, 1:ncols],
         [LineElement(color=PLOT_COLORS[k], linewidth=2) for k in eachindex(labels)],
         labels; orientation=:horizontal, framevisible=false)
-    Label(fig[4, 1:ncols], note; fontsize=13)
+    Label(fig[nrows + 2, 1:ncols], note; fontsize=13)
 end
 
 function gap_density(gaps, edges)
@@ -125,8 +112,7 @@ function plot_gap_distributions(data, fields, sizes; scaled=false)
         missing = String[]
         for (j, d) in enumerate(records)
             scatterlines!(ax, centers, gap_density(samples[j], edges); color=PLOT_COLORS[j])
-            nmiss = count(!, d.resolved)
-            nmiss > 0 && push!(missing, "L=$(d.L): $nmiss/$(d.n)")
+            d.unresolved > 0 && push!(missing, "L=$(d.L): $(d.unresolved)/$(data.n)")
         end
         if !isempty(missing)
             text!(ax, 0.03, 0.98; text="Unresolved\n" * join(missing, "\n"),
@@ -195,7 +181,8 @@ function plot_autocorrelation(data, fields, sizes; real_time=false)
     end
     finish_figure!(fig, field_label.(fields), 2,
         "$(basename(data.input)) | $(field_distribution_label(data)) | Shading: ±1 disorder SEM; positive times only" *
-        (real_time ? "; linear vertical axis" : "; stored mean; nonpositive/invalid values omitted"))
+        (real_time ? "; linear vertical axis" : "; stored mean; nonpositive/invalid values omitted");
+        nrows=cld(length(sizes), 2))
     fig
 end
 
@@ -259,11 +246,10 @@ function read_autocorrelation_distributions(data, fields, L)
     h5open(data.input, "r") do f
         map(fields) do h0
             g = f["L$(L)/h$(h0)"]
-            haskey(g, "sample_Ct") || error("Missing sample_Ct for L=$L, h0=$h0")
             grid = read(g["imaginary_time"])
             # 选取指定六个时刻的最近网格点，拟合和图例均使用实际时间。
-            times = representative_fields(filter(t -> isfinite(t) && t > 0, grid), DISTRIBUTION_TIMES)
-            indices = [findfirst(==(t), grid) for t in times]
+            indices = [argmin(abs.(grid .- t)) for t in DISTRIBUTION_TIMES]
+            times = grid[indices]
             C = read(g["sample_Ct"])
             @assert size(C, 1) == length(grid)
             # 直接对每个正样本取负对数；非正值和非有限值不能取对数。
@@ -299,7 +285,7 @@ function plot_autocorrelation_distributions(data, panels; scaled=false)
             edges = range(lo, hi; length=61)
             centers = (edges[1:end-1] .+ edges[2:end]) ./ 2
             scatterlines!(ax, centers, gap_density(values, edges); color=PLOT_COLORS[j],
-                markersize=5, label="τ = $(round(t; sigdigits=4))")
+                markersize=5)
         end
         if !isempty(missing)
             text!(ax, 0.98, 0.98; text="Invalid C\n" * join(missing, "\n"),
@@ -329,12 +315,11 @@ function main(args)
     data = (; read_plot_data(input)..., input)
 
     sizes = sort(data.sizes)
-    length(sizes) == 4 || error("Four size panels require exactly four sizes; got $sizes")
+    length(sizes) in (2, 4) || error("Expected demo or full sizes; got $sizes")
     fields = sort(data.sample_fields)
     length(fields) == 6 || error("Six saved sample fields are required; got $fields")
-    # Keep four distribution panels: nearest critical point and three largest fields.
-    gap_fields = [fields[argmin(abs.(fields .- 1.0))]; fields[end-2:end]]
-    length(unique(gap_fields)) == 4 || error("Distribution panels need four distinct fields")
+    # Writer's sorted uniform/fixed sample fields put the critical point third.
+    gap_fields = fields[3:6]
 
     mkpath(out)
     set_theme!(Theme(fontsize=17, linewidth=2, Axis=(xgridvisible=false, ygridvisible=false,)))
@@ -362,29 +347,27 @@ function main(args)
         "Field distribution: $(data.field_distribution); $(field_distribution_label(data)); critical h0=$(1.0)",
         "Julia: $VERSION; CairoMakie: $(pkgversion(CairoMakie)); HDF5: $(pkgversion(HDF5))",
         "Sizes: $sizes", "Gap fields (2×2): $gap_fields", "Correlation fields (2×3): $fields",
-        "Autocorrelation: 2×2 size panels, the same six fields, from the same input file.", "",
-        "Real-time autocorrelation: included; linear vertical axis preserves negative values.",
-        "Natural logarithms. Shading = ±1 SEM across independent disorder samples, not a confidence interval.",
-        "Gap density = counts / (all samples × bin width); unresolved mass is not renormalized away.",
-        "Scaled gap density: transform each sample to x = ln(ΔE)/√L, then histogram with common bin width 0.1 for every L; normalize by all samples.",
-        "Imaginary-time mean curves use stored autocorrelation_mean directly, retaining the stored SEM. Real-time curves keep their signs.",
-        "Autocorrelation effective log-log slopes: one curve per L, all $(count(>=(1.0), data.fields)) fields with h0 >= $(1.0); absolute unweighted OLS slope of ln(autocorrelation_mean) versus ln(time), with intercept, over all finite positive times and positive finite means.",
-        "Slopes are descriptive, not automatically 1/z." *
-            (data.field_distribution == "fixed" ? " Fixed fields are gapped for h0 > $(exp(1))." : " Uniform fields retain a Griffiths region for all finite h0 > 1."),
-        "Mean log spatial correlations are mean(log C), not log(mean C). No resampling.",
-        "Time distributions: L=$(maximum(sizes)), fields=$gap_fields, target times=$DISTRIBUTION_TIMES, actual nearest times=$(first(distributions).times); 60 equal-width bins per curve, normalized by all samples.",
-        "Collapse minimizes sum over times and quantiles of [ln Q_p(-ln C) - μ ln τ - a_p]^2, with independent intercept a_p and p=0.05:0.05:0.95; only positive quantiles of valid samples enter the fit.",
-        "Times with no valid samples are excluded from collapse fitting; fewer than two valid times gives unavailable (NaN) μ. Empty densities are omitted, with missing counts retained.",
-        "Time distributions use each sample directly in the negative logarithm. Nonpositive/nonfinite samples are omitted; missing mass remains in the density. μ and log-quantile RMS are descriptive fits, not an asymptotic exponent determination.",
-        "Nonfinite means break curves. Invalid SEM/bounds omit shading; log axes also omit nonpositive values/bounds.",
-        "Zero distance is omitted on log-log spatial axes; zero time is omitted on log-log time axes.", "",
-        "| h0 | L | samples | unresolved gaps | nonfinite mean-log distances | negative mean distances |",
-        "|---|---|---|---|---|---|"]
-    report_fields = union(fields, gap_fields)
+        "Autocorrelation: $(cld(length(sizes), 2))×2 size panels, the same six fields, from the same input file.", "",
+        """
+        Real-time autocorrelation: included; linear vertical axis preserves negative values.
+        Natural logarithms. Shading = ±1 SEM across independent disorder samples, not a confidence interval.
+        Gap density = counts / (all samples × bin width); unresolved mass is not renormalized away.
+        Scaled gap density: transform each sample to x = ln(ΔE)/√L, then histogram with common bin width 0.1 for every L; normalize by all samples.
+        Imaginary-time mean curves use stored autocorrelation_mean directly, retaining the stored SEM. Real-time curves keep their signs.
+        Autocorrelation effective log-log slopes: one curve per L, all $(count(>=(1.0), data.fields)) fields with h0 >= $(1.0); absolute unweighted OLS slope of ln(autocorrelation_mean) versus ln(time), with intercept, over all finite positive times and positive finite means.
+        Slopes are descriptive, not automatically 1/z.$(data.field_distribution == "fixed" ? " Fixed fields are gapped for h0 > $(exp(1))." : " Uniform fields retain a Griffiths region for all finite h0 > 1.")
+        Mean log spatial correlations are mean(log C), not log(mean C). No resampling.
+        Time distributions: L=$(maximum(sizes)), fields=$gap_fields, target times=$DISTRIBUTION_TIMES, actual nearest times=$(first(distributions).times); 60 equal-width bins per curve, normalized by all samples.
+        Collapse minimizes sum over times and quantiles of [ln Q_p(-ln C) - μ ln τ - a_p]^2, with independent intercept a_p and p=0.05:0.05:0.95; only positive quantiles of valid samples enter the fit.
+        Times with no valid samples are excluded from collapse fitting; fewer than two valid times gives unavailable (NaN) μ. Empty densities are omitted, with missing counts retained.
+        Time distributions use each sample directly in the negative logarithm. Nonpositive/nonfinite samples are omitted; missing mass remains in the density. μ and log-quantile RMS are descriptive fits, not an asymptotic exponent determination.
+        Nonfinite means break curves. Invalid SEM/bounds omit shading; log axes also omit nonpositive values/bounds.
+        Zero distance is omitted on log-log spatial axes; zero time is omitted on log-log time axes.
+
+        | h0 | L | samples | unresolved gaps | nonfinite mean-log distances | negative mean distances |
+        |---|---|---|---|---|---|"""]
     for d in data.records
-        d.h0 in report_fields || continue
-        unresolved = isempty(d.gaps) ? "not stored" : string(count(!, d.resolved))
-        push!(report, "| $(d.h0) | $(d.L) | $(d.n) | $unresolved | $(d.invalid_log) | $(d.negative_C) |")
+        push!(report, "| $(d.h0) | $(d.L) | $(data.n) | $(d.unresolved) | $(count(!isfinite, d.logavg)) | $(count(<(0), d.avg)) |")
     end
     append!(report, ["", "## Time-distribution collapse", "",
         "| h0 | L | μ | log-quantile RMS before | after | invalid samples at each τ |",

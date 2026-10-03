@@ -1,11 +1,7 @@
 using Test
 include(joinpath(@__DIR__, "..", "plot_results.jl"))
 
-@testset "Plot selection, missing probability, and uncertainty masks" begin
-    fields = [0.1, 0.501, 1.0, 1.995, 5.012, 10.0]
-    @test representative_fields(reverse(fields), [0.1, 0.5, 1, 2, 5, 10]) == fields
-    @test representative_fields(filter(>=(1), fields), [1, 2, 5, 10]) == fields[3:end]
-    @test_throws ErrorException representative_fields([1.0], [1, 2])
+@testset "Missing probability and uncertainty masks" begin
     @test gap_density([-2.0, -1.0, 0.0, NaN], [-2.0, -1.0, 0.0]) == [0.25, 0.5]
     values = uncertainty_values([1.0, 0.1, 0.0, NaN], [0.2, 0.2, 0.1, 0.1]; positive=true)
     @test values.center[1:2] == [1.0, 0.1]
@@ -47,17 +43,14 @@ end
             @test data.sample_fields == [1.0]
             @test data.field_distribution == distribution
             @test field_distribution_label(data) == (distribution == "fixed" ? "h = h₀/e" : "h ∼ U(0, h₀)")
-            @test length(data.records) == 4
+            @test data.n == 2
+            @test length(data.records) == 2
             for d in data.records
-                @test d.n == 2
+                @test d.h0 == 1.0
                 @test d.avg ≈ exp.(-d.h0 .* (0:div(d.L, 2)))
-                if d.h0 == 1.0
-                    @test d.gaps[1] == -1.0
-                    @test isnan(d.gaps[2])
-                    @test d.resolved == [true, false]
-                else
-                    @test isempty(d.gaps) && isempty(d.resolved)
-                end
+                @test d.gaps[1] == -1.0
+                @test isnan(d.gaps[2])
+                @test d.unresolved == 1
             end
         end
         h5open(input, "r+") do f
