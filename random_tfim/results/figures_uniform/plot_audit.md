@@ -1,8 +1,9 @@
 # Plot audit
 
-Input: `C:\Users\徐子浩_物理学院\Documents\myworks\ScarToGriffith\random_tfim\results\full_20260930_001900.h5`
+Input: `D:\Documents\mywork\ScarToGriffith\random_tfim\results\full_uniform_20260930_001900.h5`
 Boundary: periodic
-Julia: 1.13.0; CairoMakie: 0.15.14; HDF5: 0.17.3
+Field distribution: uniform; h ∼ U(0, h₀); critical h0=1.0
+Julia: 1.13.0; CairoMakie: 0.15.15; HDF5: 0.17.4
 Sizes: [16, 32, 64, 128]
 Gap fields (2×2): [1.0, 1.9952623149688795, 5.011872336272722, 10.0]
 Correlation fields (2×3): [0.1, 0.5011872336272722, 1.0, 1.9952623149688795, 5.011872336272722, 10.0]
@@ -13,10 +14,12 @@ Natural logarithms. Shading = ±1 SEM across independent disorder samples, not a
 Gap density = counts / (all samples × bin width); unresolved mass is not renormalized away.
 Scaled gap density: transform each sample to x = ln(ΔE)/√L, then histogram with common bin width 0.1 for every L; normalize by all samples.
 Imaginary-time mean curves use stored autocorrelation_mean directly, retaining the stored SEM. Real-time curves keep their signs.
-Autocorrelation slopes (1/z): one curve per L, all 51 fields with h0 >= 1; absolute unweighted OLS slope of ln(autocorrelation_mean) versus ln(time), with intercept, over all finite positive times and positive finite means.
+Autocorrelation effective log-log slopes: one curve per L, all 51 fields with h0 >= 1.0; absolute unweighted OLS slope of ln(autocorrelation_mean) versus ln(time), with intercept, over all finite positive times and positive finite means.
+Slopes are descriptive, not automatically 1/z. Uniform fields retain a Griffiths region for all finite h0 > 1.
 Mean log spatial correlations are mean(log C), not log(mean C). No resampling.
 Time distributions: L=128, fields=[1.0, 1.9952623149688795, 5.011872336272722, 10.0], target times=[1.0, 3.0, 10.0, 30.0, 100.0, 300.0], actual nearest times=[1.0, 3.019951720402016, 10.0, 30.19951720402016, 100.0, 301.9951720402016]; 60 equal-width bins per curve, normalized by all samples.
 Collapse minimizes sum over times and quantiles of [ln Q_p(-ln C) - μ ln τ - a_p]^2, with independent intercept a_p and p=0.05:0.05:0.95; only positive quantiles of valid samples enter the fit.
+Times with no valid samples are excluded from collapse fitting; fewer than two valid times gives unavailable (NaN) μ. Empty densities are omitted, with missing counts retained.
 Time distributions use each sample directly in the negative logarithm. Nonpositive/nonfinite samples are omitted; missing mass remains in the density. μ and log-quantile RMS are descriptive fits, not an asymptotic exponent determination.
 Nonfinite means break curves. Invalid SEM/bounds omit shading; log axes also omit nonpositive values/bounds.
 Zero distance is omitted on log-log spatial axes; zero time is omitted on log-log time axes.

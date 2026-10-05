@@ -1,6 +1,32 @@
 using Test
 include(joinpath(@__DIR__, "..", "plot_results.jl"))
 
+@testset "Imaginary-time axis floor" begin
+    mktempdir() do directory
+        input = joinpath(directory, "axis_floor.h5")
+        sizes = [16, 32, 64, 128]
+        h5open(input, "w") do f
+            for (L, tail) in zip(sizes, [1e-7, 1e-9, 1e-8, 0.0])
+                g = create_group(f, "L$L/h1.0")
+                # A below-floor point at zero time must not affect the axis.
+                g["imaginary_time"] = g["real_time"] = [0.0, 1.0, 10.0]
+                g["autocorrelation_mean"] = g["real_autocorrelation_mean"] = [1e-10, 1.0, tail]
+                g["autocorrelation_sem"] = g["real_autocorrelation_sem"] = zeros(3)
+            end
+        end
+        data = (; input, field_distribution="uniform")
+        for real_time in (false, true)
+            fig = plot_autocorrelation(data, [1.0], sizes; real_time)
+            for (j, L) in enumerate(sizes)
+                row, col = panel_position(j, 2)
+                ax = content(fig[row, col])
+                expected = !real_time && L == 32 ? (nothing, (1e-8, nothing)) : (nothing, nothing)
+                @test ax.limits[] == expected
+            end
+        end
+    end
+end
+
 @testset "Missing probability and uncertainty masks" begin
     @test gap_density([-2.0, -1.0, 0.0, NaN], [-2.0, -1.0, 0.0]) == [0.25, 0.5]
     values = uncertainty_values([1.0, 0.1, 0.0, NaN], [0.2, 0.2, 0.1, 0.1]; positive=true)

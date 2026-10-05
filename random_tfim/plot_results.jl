@@ -167,6 +167,7 @@ function plot_autocorrelation(data, fields, sizes; real_time=false)
                 xscale=log10, yscale=real_time ? identity : log10,
                 # Gapped tails reach subnormal values; log padding can underflow to zero.
                 yautolimitmargin=real_time ? (0.05, 0.05) : (0.0, 0.0))
+            below_floor = false
             for (k, h0) in enumerate(fields)
                 g = f["L$(L)/h$(h0)"]
                 times = read(g[time_key])
@@ -175,8 +176,10 @@ function plot_autocorrelation(data, fields, sizes; real_time=false)
                 @assert length(times) == length(y) == length(sem)
                 keep = isfinite.(times) .& (times .> 0)
                 @assert any(keep) "No positive times for L=$L, h0=$h0"
+                below_floor |= any(v -> isfinite(v) && 0 < v < 1e-8, y[keep])
                 uncertainty_curve!(ax, times[keep], y[keep], sem[keep], PLOT_COLORS[k]; positive=!real_time)
             end
+            !real_time && below_floor && ylims!(ax, 1e-8, nothing)
         end
     end
     finish_figure!(fig, field_label.(fields), 2,
