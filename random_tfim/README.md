@@ -76,6 +76,54 @@ p=0.05、0.10、…、0.95，每个分位数有独立截距 a_p；拟合与分�
 密度按全部样本数归一化；未分辨的概率质量不重新分配。
 非有限均值处断开曲线，无效 SEM 处不画阴影；对数轴另行省略非正值及跨零误差带。
 
+### 单独绘制虚时间自关联及拟合（full_fixed）
+
+```sh
+# 默认选择最新的 full_fixed_<时间戳>.h5
+julia --project=@v1.13 random_tfim/plot_imaginary_time.jl
+# 可指定输入、输出目录和拟合时间窗口（例如 1 <= tau <= 100）
+julia --project=@v1.13 random_tfim/plot_imaginary_time.jl random_tfim/results/full_fixed_20261003_230245.h5 random_tfim/results/figures_imaginary_time_fixed 1 100
+# 独立拟合检查，无额外包依赖
+julia --startup-file=no random_tfim/test/imaginary_time_fit.jl
+```
+
+图 1 仅绘制 L=128，使用单个双对数子图，含 10 个 h0；`imaginary_time_fits.csv` 同样仅保存 L=128 的拟合。
+在对应区域内选取最接近目标值的已存场强：铁磁区 0.2、0.6；Griffiths 区
+1.1、1.4、1.7、2.1、2.5；有隙顺磁区 3、5、10。固定横场 h=h0/e，分界为 h0=1、e；
+图例和结果表标出实际场强。实线和阴影沿用保存的均值及 ±1 SEM，虚线为选中的拟合。
+
+[fit_autocorrelation.jl](fit_autocorrelation.jl) 比较 `C=A*tau^(-alpha)` 与
+`C=A*exp(-lambda*tau)`（A>0，alpha/lambda≥0，不加常数项）。令 `x=ln(tau)`、`Y=ln(C)`，
+幂律拟合 `Y=logA-alpha*x`，指数模型拟合 `Y=logA-lambda*exp(x)`；两者均对 logA 和衰减率做无权线性回归。
+在相同有效数据点上最小化 `chi_square=sum((Y-Y_fit)^2)`，
+选择 `reduced_chi_square=chi_square/(n-2)` 较小者。结果表沿用字段名，数值为对数残差平方和 SSE
+及 SSE/(n−2)，不是按测量误差归一化的 χ²。
+两模型使用相同数据点、各有两个参数，因此目前与比较 χ² 的选择结果相同。
+图例标作 `1/z=alpha` 或 `1/ξτ=lambda`，A 保留在结果表中。
+指数形式为 `A*exp(-tau/ξτ)`，ξτ 为衰减时间，图例显示其倒数。
+默认使用全部有限正时间和有限正 C；1e-8 仅为图 1 的纵轴显示下限，不再截断拟合数据。
+指定时间窗口仅影响拟合，原始曲线仍显示完整时间范围。SEM 仅用于误差阴影，不参与拟合或点筛选。
+时间网格视为精确值；各时间点共享无序样本，未计时间协方差；结果为描述性拟合，
+铁磁平台和交叉区域未必符合两种模型，选中幂律也不意味着已得到渐近指数。
+
+默认输出到 `results/figures_imaginary_time_fixed/`：PNG、
+`imaginary_time_fits.csv`（每条曲线两种模型的参数、χ²、约化 χ²、有效窗口及选择标志）
+和 `imaginary_time_fit_audit.md`。不修改原始数据。
+
+图 2 `figure2_imaginary_time_fit_parameters.png` 为 2×2 子图，各自图例位于画框内：幂律拟合的 `1/z`、
+指数拟合的 `1/ξτ`、两模型中较小的 `reduced_chi_square`，以及 L=128 的两个模型各自的 `reduced_chi_square`，均随 h0 变化。
+第四子图标出两条曲线的交点：在相邻场强的分数差变号区间内，按 log(h0) 线性插值；不外推。
+精确落在网格点上的交点也保留。交点与左右网格场强保存至 `imaginary_time_model_crossings.csv`，仅表示模型分数相等，不代表相界。
+所有横轴均为对数标度；前三子图纵轴线性，第四子图纵轴对数（非正分数不显示）。前三子图不同颜色对应 L=16、32、64、128。
+与旧斜率图相同，扫描所有 h0≥1 的已存场强；前两子图始终显示各自模型的参数，不按胜出模型筛选。
+拟合沿用图 1 的无权回归及命令行时间窗口。默认使用全部有效数据时，衰减曲线的子图 1 斜率与旧斜率图一致。
+指定时间窗口后只拟合窗口内的数据，旧斜率图仍使用全部有效时间。
+`imaginary_time_field_scan.csv` 保存全部尺寸/场强的两种拟合参数、约化 χ²、最小值、选择结果和有效时间窗口。
+
+两个绘图脚本共享 `fit_autocorrelation.jl`：无权直线回归、幂律/指数拟合、
+`autocorrelation_log_slope` 和分布缩放 `fit_time_collapse` 均集中在此文件；
+后者的分位数匹配算法保持不变，`plot_results.jl` 通过 include 引用共享实现。
+
 ### Slurm 扫描
 
 ```sh
@@ -395,10 +443,11 @@ julia --startup-file=no --threads=2 random_tfim/test/runtests.jl core
 julia --startup-file=no random_tfim/test/benchmark.jl
 ```
 
-入口依次启动三个独立 Julia 进程；某组失败仍继续运行其余组，最终返回失败状态。
+入口依次启动四个独立 Julia 进程；某组失败仍继续运行其余组，最终返回失败状态。
 `physics.jl` 保留自旋哈密顿量对照、宇称、两种边界、解耦极限、微小尾部、奇异前缀和无序统计测试。
 `io.jl` 自动激活 local 环境，以小链的两个代表场强检查两种横场、两种边界、样本/摘要输出及本地/Slurm 一致性，并只运行一次单样本 demo；不提交 Slurm 作业。
 `plot_io.jl` 使用已有 `@v1.13` 环境，覆盖当前格式的两种横场模式、样本与摘要读取、掩码、斜率和分布缩放测试。
+`imaginary_time_fit.jl` 检查无权幂律/指数拟合的参数恢复、模型选择、平台、无效点筛选、微小正尾部保留，以及与旧斜率函数和独立线性回归的一致性。
 删除独立尾部对比诊断脚本（核心测试已覆盖相应数值检查）；性能基准仅测当前实现，不再加载旧源码。
 这些小规模验证不代表已完成 full 默认 10000 样本的论文统计精度复现。
 

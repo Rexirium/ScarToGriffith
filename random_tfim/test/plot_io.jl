@@ -1,5 +1,48 @@
 using Test
-include(joinpath(@__DIR__, "..", "plot_results.jl"))
+include(joinpath(@__DIR__, "..", "plot_imaginary_time.jl"))
+
+@testset "Imaginary-time field scan" begin
+    mktempdir() do directory
+        input = joinpath(directory, "field_scan.h5")
+        sizes, fields = [16, 128], [0.5, 1.0, 2.0]
+        t = exp.(range(log(0.1), log(10.0); length=31))
+        h5open(input, "w") do f
+            f["parameters/fields"] = fields
+            for L in sizes, h0 in fields
+                g = create_group(f, "L$(L)/h$(h0)")
+                predictor = h0 == 1.0 ? log.(t) : t
+                y = (h0 == 1.0 ? 1e-10 : 0.5) .* exp.(-(L/64) .* predictor)
+                g["imaginary_time"] = t
+                g["autocorrelation_mean"] = y
+                g["autocorrelation_sem"] = fill(NaN, length(y))
+            end
+        end
+        scan = plot_imaginary_field_scan(input, sizes; tmin=1.0)
+        @test scan.fields == [1.0, 2.0]
+        @test length(scan.records) == 4
+        for r in scan.records
+            @test r.result.best.model == (r.h0 == 1.0 ? :power : :exponential)
+            @test r.result.best.rate ≈ r.L/64
+            @test r.result.best.reduced_chi_square < 1e-20
+            @test r.result.tmin >= 1.0
+        end
+        @test length(scan.crossings) == 1
+        @test 1 < only(scan.crossings).h0 < 2
+        for k in 1:4
+            ax = content(scan.fig[panel_position(k, 2)...])
+            @test ax.xscale[] === log10
+            @test ax.yscale[] === (k == 4 ? log10 : identity)
+        end
+        full_scan = plot_imaginary_field_scan(input, sizes)
+        h5open(input, "r") do f
+            for r in full_scan.records
+                g = f["L$(r.L)/h$(r.h0)"]
+                @test r.result.n == length(t)
+                @test r.result.power.rate ≈ autocorrelation_log_slope(t, read(g["autocorrelation_mean"]))
+            end
+        end
+    end
+end
 
 @testset "Imaginary-time axis floor" begin
     mktempdir() do directory

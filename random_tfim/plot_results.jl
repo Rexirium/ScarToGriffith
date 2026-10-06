@@ -1,4 +1,5 @@
 using CairoMakie, HDF5, Statistics
+include(joinpath(@__DIR__, "fit_autocorrelation.jl"))
 
 # Run: julia --project=@v1.13 random_tfim/plot_results.jl [input.h5] [output_dir]
 # Stored statistics include the spatial average over all starting sites.
@@ -189,19 +190,6 @@ function plot_autocorrelation(data, fields, sizes; real_time=false)
     fig
 end
 
-function autocorrelation_log_slope(times, y)
-    @assert length(times) == length(y)
-    keep = isfinite.(times) .& (times .> 0) .& isfinite.(y) .& (y .> 0)
-    count(keep) >= 2 || error("Log-log regression needs at least two valid points")
-
-    # 有效斜率仅在渐近幂律窗口内可解释为 1/z。
-    x, z = log.(times[keep]), log.(y[keep])
-    dx = x .- mean(x)
-    denominator = sum(abs2, dx)
-    denominator > 0 || error("Log-log regression needs distinct times")
-    abs(sum(dx .* (z .- mean(z))) / denominator)
-end
-
 function plot_autocorrelation_slopes(data, sizes)
     fig = Figure(size=(1000, 700))
     Label(fig[0, 1], "Imaginary-time autocorrelation slopes", fontsize=25)
@@ -224,25 +212,6 @@ function plot_autocorrelation_slopes(data, sizes)
     Label(fig[2, 1], "$(basename(data.input)) | $(field_distribution_label(data)) | $(length(fields)) fields; log-log fit of stored mean over all valid positive times";
         fontsize=13)
     fig
-end
-
-# 用分位数匹配整条分布；对数差异避免所有曲线缩向零时产生虚假的重合。
-function fit_time_collapse(times, samples)
-    @assert length(times) == length(samples) >= 2
-    @assert all(t -> isfinite(t) && t > 0, times)
-    valid = [any(isfinite, y) for y in samples]
-    count(valid) >= 2 || return (; mu=NaN, rms_before=NaN, rms_after=NaN)
-    times, samples = times[valid], samples[valid]
-    quantiles = hcat([quantile(filter(isfinite, y), 0.05:0.05:0.95) for y in samples]...)
-    keep = vec(all(quantiles .> 0; dims=2))
-    any(keep) || error("Time collapse needs positive quantiles")
-    q = log.(quantiles[keep, :])
-    q .-= mean(q; dims=2)
-    dt = log.(times) .- mean(log.(times))
-    denominator = size(q, 1) * sum(abs2, dt)
-    denominator > 0 || error("Time collapse needs distinct times")
-    mu = sum(q .* dt') / denominator
-    (; mu, rms_before=sqrt(mean(abs2, q)), rms_after=sqrt(mean(abs2, q .- mu .* dt')))
 end
 
 function read_autocorrelation_distributions(data, fields, L)

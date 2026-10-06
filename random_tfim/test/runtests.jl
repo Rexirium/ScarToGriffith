@@ -3,7 +3,7 @@ using Test
 # Isolate modules and environments; report every suite even if one fails.
 mode = isempty(ARGS) ? "all" : only(ARGS)
 mode in ("all", "core") || error("Usage: runtests.jl [all|core]")
-suites = mode == "core" ? ["physics.jl"] : ["physics.jl", "io.jl", "plot_io.jl"]
+suites = mode == "core" ? ["physics.jl"] : ["physics.jl", "io.jl", "plot_io.jl", "imaginary_time_fit.jl"]
 @testset "RandomTFIM" begin
     for suite in suites
         @testset "$suite" begin

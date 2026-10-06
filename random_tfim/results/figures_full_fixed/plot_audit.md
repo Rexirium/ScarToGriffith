@@ -1,6 +1,6 @@
 # Plot audit
 
-Input: `D:\Documents\mywork\ScarToGriffith\random_tfim\results\full_fixed_20261003_230245.h5`
+Input: `C:\Users\徐子浩_物理学院\Documents\myworks\ScarToGriffith\random_tfim\results\full_fixed_20261003_230245.h5`
 Boundary: periodic
 Field distribution: fixed; h = h₀/e; critical h0=1.0
 Julia: 1.13.0; CairoMakie: 0.15.15; HDF5: 0.17.4
