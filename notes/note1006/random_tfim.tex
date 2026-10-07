@@ -1,0 +1,236 @@
+﻿% !TEX program = xelatex
+\documentclass[a4paper,11pt]{article}
+\usepackage[margin=2cm]{geometry}
+\usepackage{amsmath,amssymb,graphicx,caption,microtype,indentfirst}
+\usepackage[hidelinks]{hyperref}
+\graphicspath{{../../random_tfim/results/figures_imaginary_time_fixed/}}
+\captionsetup{font=small,labelfont=bf}
+\setlength{\parskip}{0.35em}
+\title{Imaginary-time Autocorrelation for RTFIM}
+\author{Zihao Xu}
+\date{October 5, 2026}
+\begin{document}
+\maketitle
+\vspace{-2em}
+
+\section{Random transverse-field Ising model}
+We consider a periodic chain of length $L$ with Hamiltonian
+\begin{equation}
+ H=-\sum_{i=1}^{L}J_i\sigma_i^z\sigma_{i+1}^z
+   -h\sum_{i=1}^{L}\sigma_i^x,
+ \qquad J_i\sim U(0,1),\quad h=h_0/e.
+\end{equation}
+The bonds are independent and the transverse field is uniform. The
+thermodynamic critical point satisfies $\overline{\ln J}=\ln h$.
+Since $\overline{\ln J}=\int_0^1\ln J\,dJ=-1$, it occurs at $h_{0,c}=1$.
+For $1<h_0<e$, the system is globally paramagnetic but can contain rare,
+locally ordered segments with very small tunnelling gaps. For $h_0>e$,
+the field exceeds every bond and the system is a gapped disordered
+paramagnet. Thus
+\begin{equation}
+ \begin{cases}
+  \text{Ferromagnetic phase}, & 0<h_0<1,\\
+  \text{Paramagnetic Griffiths region}, & 1<h_0<e,\\
+  \text{Gapped paramagnetic region}, & h_0>e.
+ \end{cases}
+\end{equation}
+Here $h_0=e$ is the endpoint of the Griffiths region set by the bounded
+bond distribution, rather than a second symmetry-breaking transition.
+
+\section{Imaginary-time autocorrelation and numerical results}
+We study the zero-temperature autocorrelation at $j=L/2$,
+\begin{equation}
+ C_j(\tau)=\langle0|e^{\tau H}\sigma_j^z e^{-\tau H}\sigma_j^z|0\rangle,
+ \qquad C_{\rm av}(\tau)=\overline{C_j(\tau)}.
+ \label{eq:c}
+\end{equation}
+The results use $50\,000$ disorder realizations for each $(L,h_0)$.
+We compare $C=A\tau^{-\alpha}$ and $C=Ae^{-\lambda\tau}$ using equal-weight
+least squares in $\ln C$. Both models use the same finite positive data
+at $\tau>0$; the displayed floor $10^{-8}$ does not truncate the fits.
+The labels $1/z$ and $1/\xi_\tau$ in the figures denote $\alpha$ and
+$\lambda$, respectively.
+
+\begin{figure}[htbp]
+ \centering
+ \includegraphics[width=\linewidth]{figure1_imaginary_time_autocorrelation.png}
+ \caption{Average imaginary-time autocorrelation at $L=128$. Colours distinguish fields; solid curves show disorder means, shading indicates one SEM, and dashed curves show the preferred power-law or exponential fit. Legend rates are $1/z=\alpha$ and $1/\xi_\tau=\lambda$. All finite positive data enter the fits; $10^{-8}$ is only the display floor.}
+ \label{fig:c}
+\end{figure}
+
+\subsection{Field dependence and crossover}
+Figure~\ref{fig:c} shows nearly plateau-like behaviour in the ferromagnetic
+region. Its very small fitted power-law rates describe slow decay over
+the available times, rather than paramagnetic Griffiths exponents.
+Just above criticality, at $h_0\simeq1.096$, the curve is approximately
+straight on logarithmic axes and is well described by a power law with
+$\alpha\simeq0.166$. Curvature becomes more pronounced as $h_0$ increases.
+Around $h_0\simeq1.738$ and $2.089$, neither model reproduces the whole
+curve well, although the preferred model changes from power law to
+exponential. At larger fields the exponential is increasingly favoured;
+preference alone, however, does not imply a close fit.
+
+This intermediate regime reflects the coexistence of several decay
+scales. Each sample's autocorrelation is a weighted sum of exponentials.
+A broad distribution of rare-region gaps can produce a power law after
+disorder averaging, but short-time contributions and finite-size effects
+bend the curve away from that asymptote. As $h_0$ approaches $e$ from
+below, the relevant ordered segments become rarer and may be poorly
+represented by a finite ensemble. Fitting early times and very small
+late-time tails together can therefore make both simple models inadequate.
+These are plausible explanations of the observed curvature, rather than
+causes separately verified by the figures.
+
+The accessible data thus evolve from power-law-like to exponential-like
+behaviour with increasing $h_0$. This does not establish an exponential
+thermodynamic asymptote inside $1<h_0<e$: the true Griffiths tail may
+require larger systems, more samples or a later-time fitting window.
+
+\begin{figure}[htbp]
+ \centering
+ \includegraphics[width=\linewidth]{figure2_imaginary_time_fit_parameters.png}
+ \caption{Field dependence of the power-law rate (upper left), exponential rate (upper right), and smaller fit score (lower left), with colours distinguishing system sizes. The lower-right panel compares both models at $L=128$. The scores are unweighted log-space residuals divided by $N-2$; their crossing near $h_0=1.77$ marks a change in model preference, not a phase boundary.}
+ \label{fig:scan}
+\end{figure}
+
+Figure~\ref{fig:scan} shows increasing fitted decay rates with field.
+The minimum residual is largest in the intermediate regime and decreases
+toward large fields, consistent with Fig.~\ref{fig:c}. The four sizes
+show similar trends, but this agreement does not establish convergence
+of the rare-event tail.
+
+\subsection{Weighting and interpretation of the fit scores}
+SEM weighting is not used because the aim is to characterize decay over
+several time decades. In logarithmic coordinates, propagated SEM weights
+are approximately $w=(C/\mathrm{SEM})^2$. For $L=128$, points with
+$\tau<1$ carry about $99.40\%$ of the total weight at $h_0\simeq1.738$
+and $99.56\%$ at $h_0\simeq2.089$. Such weighting gives little influence
+to the long-time behaviour. This dominance depends on field and refers
+to log-coordinate weights, not $1/\mathrm{SEM}^2$ in the original
+coordinate. Equal log-space weights balance the decay more evenly,
+although they do not account for unequal uncertainties or correlations
+between times.
+
+The plotted ``reduced $\chi^2$'' is actually the unweighted log-space
+squared residual divided by $N-2$. Its smaller value identifies the
+better of two approximations on the chosen window; it is not a standard
+error-normalized goodness-of-fit statistic. In particular, a value near
+one has no special statistical meaning.
+
+At $L=128$, the scores cross near $h_0=1.77$, well below the Griffiths
+endpoint $e$. Their relative magnitude therefore cannot determine the
+phase boundary: an exponential can win within the Griffiths region,
+and a power law can win for a ferromagnetic near-plateau curve.
+For this model, $1<h_0<e$ and $h_0>e$ are assigned from the disorder
+distribution. The fits indicate how clearly the available data display
+the expected decay. Identifying asymptotic behaviour additionally requires
+stable long-time slopes and convergence with fitting window, size and
+sample number.
+
+\appendix
+\section{JW, Majorana covariance and Pfaffian method}
+\subsection{Quadratic Hamiltonian and ground-state covariance}
+
+The Jordan--Wigner transformation defines Hermitian Majoranas
+\begin{equation}
+ a_i=\left(\prod_{k<i}\sigma_k^x\right)\sigma_i^z,
+ \qquad b_i=\left(\prod_{k<i}\sigma_k^x\right)\sigma_i^y.
+\end{equation}
+They obey $\{\gamma_m,\gamma_n\}=2\delta_{mn}$ and give
+$\sigma_i^x=i a_i b_i$ and
+$\sigma_j^z=(\prod_{k<j}i a_k b_k)a_j$. The Hamiltonian becomes
+\begin{equation}
+ H_q=-i a^TK_qb,\qquad
+ (K_q)_{ii}=h,\quad (K_q)_{i+1,i}=-J_i,\quad
+ (K_q)_{1L}=-qJ_L.
+\end{equation}
+Here $q=-P$, with spin parity $P=\prod_i\sigma_i^x$; bond contributions
+are added when matrix entries coincide. For the periodic spin chain, the even ground
+state uses antiperiodic fermions ($q=-1$). Inserting $\sigma_j^z$ flips
+parity, so the intermediate evolution uses periodic fermions ($q=+1$).
+This sector change is essential.
+
+A singular-value decomposition $K_q=U_qS_qV_q^T$, with singular values
+$s_{q,\mu}$, determines modes with excitation energies $2s_{q,\mu}$.
+The initial vacuum energy is $E_0=-\sum_\mu s_{-,\mu}$.
+The Gaussian ground
+state is specified by its Majorana covariance matrix,
+\begin{equation}
+ \Gamma_{mn}=\frac{i}{2}\langle[\gamma_m,\gamma_n]\rangle,
+ \qquad \langle\gamma_m\gamma_n\rangle=\delta_{mn}-i\Gamma_{mn}.
+\end{equation}
+In the ordering $\gamma=(a_1,\ldots,a_L,b_1,\ldots,b_L)$, it is
+\begin{equation}
+ \Gamma_0=\begin{pmatrix}0&G_0\\-G_0^T&0\end{pmatrix},
+ \qquad G_0=U_-V_-^T.
+\end{equation}
+
+\subsection{Spin insertion and imaginary-time evolution}
+
+Set $|\psi_j\rangle=\sigma_j^z|0\rangle$. Conjugation by the
+Jordan--Wigner string changes signs of Majoranas and preserves Gaussianity.
+The inserted state's covariance has off-diagonal block
+\begin{equation}
+ G_j=D_aG_0D_b,\qquad
+ (D_a)_{ii}=\begin{cases}-1&i\leq j\\+1&i>j\end{cases},\quad
+ (D_b)_{ii}=\begin{cases}-1&i<j\\+1&i\geq j\end{cases}.
+\end{equation}
+The autocorrelation can therefore be evaluated as the Gaussian overlap
+\begin{equation}
+ C_j(\tau)=e^{E_0\tau}
+ \langle\psi_j|e^{-\tau H_{+}}|\psi_j\rangle.
+\end{equation}
+
+In the periodic-fermion evolution basis, define
+\begin{equation}
+ B=U_+^TG_jV_+,\qquad
+ D=\operatorname{diag}(e^{-2s_{+,\mu}\tau}),\qquad
+ \delta E=\sum_\mu(s_{+,\mu}-s_{-,\mu}).
+\end{equation}
+The code's fast evaluation is the equivalent determinant
+\begin{equation}
+ C_j(\tau)=e^{\delta E\tau}\det R,\qquad
+ R=\frac{I+D}{2}+\frac{I-D}{2}B.
+\end{equation}
+The energy shift accounts for the different vacuum energies of the two
+sectors. When $R$ becomes ill conditioned, the code switches to the
+signed Pfaffian evaluation below to reduce cancellation in small tails.
+
+\subsection{Gaussian-overlap Pfaffian}
+
+Wick's theorem expresses an even product of Majoranas as the Pfaffian
+of an antisymmetric contraction matrix. On the ring, the implementation
+uses its Gaussian-overlap form to retain the change of fermion sector.
+Choose a Fock reference with occupations $r_\mu\in\{0,1\}$ that has
+nonzero overlap with $|\psi_j\rangle$. Relative particle--hole flips
+allow the odd-parity state to be represented by an even Gaussian chart,
+\begin{equation}
+ S_r=\operatorname{diag}(1-2r_\mu),\qquad
+ Z=(I-S_rB)(I+S_rB)^{-1},\qquad Z^T=-Z.
+\end{equation}
+The code selects the reference by sequentially choosing the more probable
+occupation, avoiding a singular choice. Write $d_\mu=e^{-2s_{+,\mu}\tau}$
+and define diagonal matrices
+\begin{equation}
+ (K_r)_{\mu\mu}=\begin{cases}d_\mu&r_\mu=1\\1&r_\mu=0\end{cases},
+ \qquad
+ (Q_r)_{\mu\mu}=\begin{cases}1&r_\mu=1\\d_\mu&r_\mu=0\end{cases}.
+\end{equation}
+Then the required $2L\times2L$ antisymmetric matrix and overlap are
+\begin{equation}
+ W=\begin{pmatrix}Z&-K_r\\K_r&-Q_rZQ_r\end{pmatrix},\qquad
+ C_j(\tau)=(-1)^{L(L+1)/2}
+ \frac{\operatorname{pf}W}{\det(I+Z)}e^{\delta E\tau}.
+\end{equation}
+The denominator normalizes the Gaussian state, and the fixed sign follows
+from the displayed block ordering. Computing only $\sqrt{\det W}$ would
+lose the Pfaffian sign. The implementation tracks the sign and
+$\ln|\operatorname{pf}W|$ separately and combines the normalization and
+energy shift before exponentiation.
+
+Finally, the mean and SEM are computed over independent disorder
+realizations. Checks include $C_j(0)=1$, the decoupled-spin result
+$C_j(\tau)=e^{-2h\tau}$, and agreement with direct spin diagonalization
+for small periodic chains.
+\end{document}
+
