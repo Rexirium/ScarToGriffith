@@ -6,56 +6,27 @@ end
 
 module RandomTFIMSlurm
 
-using Distributed, HDF5, LinearAlgebra, Statistics, Dates
-
-include("RandomTFIM.jl")
-using .RandomTFIM
-
-include("results_io.jl")
-
-function compute_case(job, cfg)
-    BLAS.set_num_threads(1)
-    seconds = @elapsed result = disorder_ensemble(job.L, job.h0, cfg.times; nsamples=cfg.nsamples, seed=job.seed, rmax=job.L ÷ 2,
-        boundary=cfg.boundary, field_distribution=cfg.field_distribution, keep_samples=job.h0 in cfg.sample_fields)
-    return (; L=job.L, h0=job.h0, seed=job.seed, result,
-        worker_id=myid(), seconds)
-end
-
-function write_case(file, data, cfg)
-    group = create_group(file, "L$(data.L)/h$(data.h0)")
-    write_observables(group, data.result, cfg.times)
-    attributes(group)["j"] = data.L ÷ 2
-    attributes(group)["seed"] = data.seed
-
-    println("L=$(data.L) h0=$(data.h0) samples=$(cfg.nsamples) worker=$(data.worker_id)",
-        " time=$(round(data.seconds; digits=3))s")
-    flush(file)
-end
+include("scan_common.jl")
 
 function run_scan(cfg, pids)
     myid() == 1 || error("run_scan must run on the manager process")
     !isempty(pids) && all(pid -> pid != 1 && pid in workers(), pids) ||
         throw(ArgumentError("pids must contain active worker processes"))
-    ispath(cfg.output) && error("Output already exists: $(cfg.output)")
-    mkpath(dirname(cfg.output))
 
     @sync for pid in pids
         @async remotecall_wait(Base.include, pid, Main, abspath(@__FILE__))
     end
     worker_threads = [remotecall_fetch(Threads.nthreads, pid) for pid in pids]
-    all(==(8), worker_threads) || error("Every worker must start with exactly 8 Julia threads; got $worker_threads")
+    all(==(cfg.worker_threads), worker_threads) || error("Every worker must start with $(cfg.worker_threads) Julia threads; got $worker_threads")
     @info "Worker threads" pids worker_threads
 
-    jobs = [(L=L, h0=Float64(h0), seed=1996 + 1000k + L)
-        for (k, h0) in enumerate(cfg.fields) for L in cfg.sizes]
-    job_queue = Channel{Any}(length(jobs))
+    jobs = collect(scan_jobs(cfg))
+    job_queue = Channel{eltype(jobs)}(length(jobs))
     foreach(job -> put!(job_queue, job), jobs)
     close(job_queue)
-    results = Channel{Any}(length(pids))
-    BLAS.set_num_threads(1)
+    results = Channel{NamedTuple}(length(pids))
 
-    h5open(cfg.output, "w") do file
-        write_metadata(file, cfg)
+    return with_results(cfg) do file
         writer = @async try
             for data in results
                 write_case(file, data, cfg)
@@ -63,7 +34,6 @@ function run_scan(cfg, pids)
         finally
             isopen(results) && close(results)
         end
-
         try
             @sync for pid in pids
                 @async for job in job_queue
@@ -77,15 +47,7 @@ function run_scan(cfg, pids)
             wait(writer)
         end
 
-        complete = attributes(file)["complete"]
-        try
-            write(complete, true)
-        finally
-            close(complete)
-        end
     end
-    println("Saved: $(cfg.output)")
-    return cfg.output
 end
 
 end # module
@@ -93,9 +55,10 @@ end # module
 if abspath(PROGRAM_FILE) == @__FILE__
     using Distributed, SlurmClusterManager
 
-    config = RandomTFIMSlurm.parse_config(ARGS)
+    length(ARGS) <= 1 || throw(ArgumentError("Usage: run_slurm.jl [config.toml]"))
+    config = RandomTFIMSlurm.read_config(get(ARGS, 1, joinpath(@__DIR__, "scan.toml")))
     project = dirname(Base.active_project())
-    flags = `--project=$project --threads=8 --startup-file=no`
+    flags = `--project=$project --threads=$(config.worker_threads) --startup-file=no`
     pids = addprocs(SlurmManager(); exeflags=flags)
 
     try

@@ -1,0 +1,19 @@
+# Shared by run.jl and run_slurm.jl. Defaults match the former local demo.
+# For a full scan: sizes = [16, 32, 64, 128], nsamples = 10000.
+sizes = [16, 32]
+nsamples = 20
+seed = 1996
+boundary = "periodic" # open | periodic
+field_distribution = "uniform" # uniform | fixed
+
+# Arrays or ranges; log10 start/stop are base-10 exponents.
+fields = { start = -1, stop = 1, length = 101, scale = "log10" }
+times = { start = -1, stop = 3, length = 101, scale = "log10" }
+
+# Targets snap to the nearest scanned field; [] saves only summary statistics.
+# For fixed fields, consider [0.5, 1.0, 1.5, 2.0, 2.718281828459045, 3.0].
+sample_fields = [0.1, 0.5, 1.0, 2.0, 5.0, 10.0]
+
+worker_threads = 8 # Match Slurm --cpus-per-task; local threads use julia --threads.
+# Relative to this TOML file; a timestamp is appended before the extension.
+output = "results/demo_uniform.h5"

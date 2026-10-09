@@ -20,7 +20,7 @@ function select_imaginary_fields(fields)
     selections
 end
 
-function plot_imaginary_field_scan(input, sizes; tmin=0.0, tmax=Inf)
+function plot_imaginary_field_scan(input, sizes; tmin=1.0, tmax=1e3)
     128 in sizes || error("Figure 2 requires L=128 for the model comparison")
     records = []
     fields = h5open(input, "r") do f
@@ -90,8 +90,8 @@ function imaginary_time_main(args)
         abspath(args[1])
     end
     out = length(args) < 2 ? joinpath(dirname(input), "figures_imaginary_time_fixed") : abspath(args[2])
-    tmin = length(args) < 3 ? 0.0 : parse(Float64, args[3])
-    tmax = length(args) < 4 ? Inf : parse(Float64, args[4])
+    tmin = length(args) < 3 ? 1.0 : parse(Float64, args[3])
+    tmax = length(args) < 4 ? 1e3 : parse(Float64, args[4])
     set_theme!(Theme(fontsize=21, Axis=(xgridvisible=false, ygridvisible=false)))
     rows = String["L,h0,phase,model,A,decay_parameter,chi_square,reduced_chi_square,n,tau_min,tau_max,selected"]
     fig = Figure(size=(1400, 900))
@@ -116,7 +116,7 @@ function imaginary_time_main(args)
                 g = f["L$(L)/h$(h0)"]
                 t, y, sem = read(g["imaginary_time"]), read(g["autocorrelation_mean"]), read(g["autocorrelation_sem"])
                 result = fit_autocorrelation(t, y; tmin, tmax)
-                valid = isfinite.(t) .& (t .> 0)
+                valid = isfinite.(t) .& (t .> 0) .& (t .>= tmin) .& (t .<= tmax)
                 uncertainty_curve!(ax, t[valid], y[valid], sem[valid], IMAGINARY_COLORS[k]; positive=true)
                 ft = exp.(range(log(result.tmin), log(result.tmax); length=300))
                 fy = decay_prediction(result.best, ft)
@@ -133,7 +133,8 @@ function imaginary_time_main(args)
                         fit.reduced_chi_square, result.n, result.tmin, result.tmax, fit.model == best.model), ','))
                 end
             end
-            ylims!(ax, 1e-8, 1.2)
+            xlims!(ax, tmin > 0 ? tmin : nothing, isfinite(tmax) ? tmax : nothing)
+            ylims!(ax, 1e-12, 1.2)
             Legend(cell[1, 2], [LineElement(color=c, linewidth=2) for c in IMAGINARY_COLORS], labels;
                 nbanks=1, labelsize=20, framevisible=false, patchsize=(28, 15),
                 tellwidth=true, tellheight=false)
@@ -168,7 +169,7 @@ function imaginary_time_main(args)
     Selected fields: $(join(["$(s.phase): $(s.h0)" for s in selections], "; ")).
     FM: h0<1; Griffiths: 1<h0<e; gapped PM: h0>e.
     Requested fit window: [$tmin, $tmax]. All finite positive times and finite positive C enter both models.
-    The 1e-8 vertical plot floor does not truncate the fits. SEM only controls uncertainty shading.
+    Plot uses the same time window, with a 1e-12 vertical plot floor that does not truncate the fits. SEM only controls uncertainty shading.
     Actual windows and point counts appear in imaginary_time_fits.csv.
     Models: C=A*tau^(-alpha), C=A*exp(-lambda*tau); A>0, alpha/lambda>=0; no offset.
     Legend notation: 1/z=alpha; 1/xi_tau=lambda; C=A*exp(-tau/xi_tau).

@@ -11,34 +11,37 @@
 [run.jl](run.jl) 自动激活已有的 `julia-env/local` 环境，使用 HDF5 保存结果。
 
 ```sh
-# 小批量试跑，周期边界；输出路径已存在时拒绝覆盖
-julia --threads=4 random_tfim/run.jl demo 2 random_tfim/results/demo_small.h5 periodic
-
-# full 的全部链长，先用少量样本检查
-julia --threads=4 random_tfim/run.jl full 2 random_tfim/results/full_smoke.h5 open
-
-# 完整默认规模
-julia --threads=4 random_tfim/run.jl full
+# 默认读取脚本旁的 random_tfim/scan.toml
+julia --threads=4 random_tfim/run.jl
+# 也可以指定自己的配置文件
+julia --threads=4 random_tfim/run.jl random_tfim/scan.toml
 ```
 
-命令格式为 `run.jl [demo|full] [samples] [output.h5] [open|periodic] [uniform|fixed]`。
-省略参数时使用 `demo`、该模式的默认样本数、`random_tfim/results/<mode>_uniform.h5`、周期边界和 `uniform`。
-输出文件名自动追加时间戳。`uniform` 使用 `h∼U(0,h0)`；`fixed` 使用每个格点相同的 `h=h0/e`，其中 e 为自然常数。
+本地与 Slurm 入口共用 [scan.toml](scan.toml)，命令格式为 `run.jl [config.toml]`，
+不再接受原来的 `demo|full` 等位置参数。相对输出路径以 TOML 所在目录为基准，
+输出文件名自动追加时间戳，已有同名文件时拒绝覆盖。
+
+配置中的 `sizes`、`nsamples`、`seed`、`boundary`、`field_distribution`、`fields`、
+`times`、`sample_fields`、`worker_threads` 和 `output` 分别控制链长、样本数、主种子、
+边界、横场分布、场强网格、时间网格、保存逐样本数据的目标场强、Slurm worker 线程数和输出路径。
+`fields` 和 `times` 可以直接写数组，或写 `{ start = ..., stop = ..., length = ... }` 的线性网格；
+增加 `scale = "log10"` 时，start/stop 表示以 10 为底的指数。
+`sample_fields` 直接写目标数组，目标会匹配到最近的实际扫描点，空数组表示只保存统计量。
+切换 `field_distribution` 时按需手动调整该数组；配置注释提供 fixed 的推荐目标。
+
+`uniform` 使用 `h∼U(0,h0)`；`fixed` 使用每个格点相同的 `h=h0/e`，其中 e 为自然常数。
 两种模式的临界点均为 `h0=1`，耦合均为 `J∼U(0,1)`；平均横场分别为 `h0/2` 和 `h0/e`。
 
-```sh
-julia --threads=4 random_tfim/run.jl full 10000 random_tfim/results/full_uniform.h5 periodic uniform
-julia --threads=4 random_tfim/run.jl full 10000 random_tfim/results/full_fixed.h5 periodic fixed
-```
+默认配置保持原本地 demo 规模：链长 `[16, 32]`、每点 20 个样本。
+完整扫描可将 `sizes` 改为 `[16, 32, 64, 128]`、`nsamples` 改为 `10000`，
+并将 `output` 改为 `results/full_uniform.h5`（固定横场则使用 `results/full_fixed.h5`）。
+Slurm 提交现在也默认使用这份配置，不再隐含 full/50000/fixed 参数。
 
-| 模式 | 每个 `(L,h0)` 的默认样本数 | 链长 L |
-|---|---:|---|
-| `demo` | 20 | 16, 32 |
-| `full` | 10000 | 16, 32, 64, 128 |
-
-两种模式均扫描 `h0 = 10 .^ range(-1, 1, 101)`，计算能隙、`r=0:L÷2` 的空间关联，
+默认扫描 `h0 = 10 .^ range(-1, 1, 101)`，计算能隙、`r=0:L÷2` 的空间关联，
 以及中点 `j=L÷2`、`times=10 .^ range(-1,3,101)`（0.1 到 1000）的虚时间和实时间自关联。
-自定义链长、时间网格或实时间演化时，使用下面的函数接口。
+每个 `(L,h0)` 使用 `seed + 1000k + L`（k 为场强索引），本地和 Slurm 使用相同规则。
+在 Julia 中调用时，先用 `cfg = read_config("path/to/scan.toml")` 读取配置，
+再调用 `main(cfg)`；Slurm 对应 `RandomTFIMSlurm.read_config(path)` 和 `RandomTFIMSlurm.run_scan(cfg, pids)`。
 
 ### 绘制已有数据
 
@@ -128,13 +131,13 @@ julia --startup-file=no random_tfim/test/imaginary_time_fit.jl
 
 ```sh
 sbatch random_tfim/submit.sh
-sbatch random_tfim/submit.sh demo 4 random_tfim/results/demo_slurm.h5 open
-sbatch random_tfim/submit.sh full 50000 random_tfim/results/full_fixed.h5 periodic fixed
+sbatch random_tfim/submit.sh
+sbatch random_tfim/submit.sh random_tfim/scan.toml
 ```
 
-[submit.sh](submit.sh) 默认运行 `full`，参数与本地脚本一致。
+[submit.sh](submit.sh) 默认读取 `scan.toml`，参数与本地脚本一致。
 [run_slurm.jl](run_slurm.jl) 激活 `julia-env/server`，该环境需已安装 HDF5 和 SlurmClusterManager。
-每个 worker 处理一个 `(L,h0)`，固定启动 8 个 Julia 线程；主进程独占 HDF5 写入。
+每个 worker 处理一个 `(L,h0)`，按配置中的 `worker_threads` 启动 Julia 线程（默认 8 个）；主进程独占 HDF5 写入。
 提交前按集群修改账户、分区、工作目录和资源数，使分配的 CPU 与 worker 线程数匹配。
 
 ## 代码结构
@@ -149,6 +152,8 @@ sbatch random_tfim/submit.sh full 50000 random_tfim/results/full_fixed.h5 period
 这些文件共享 `RandomTFIM` 命名空间，由模块入口统一加载；使用时仍只需
 `include("random_tfim/RandomTFIM.jl")` 和 `using .RandomTFIM`。
 命令行运行入口仍为 `run.jl` 和 `run_slurm.jl`。
+两者共用 `scan_common.jl` 的任务生成和单点计算，结果写入与完成标记统一由
+`results_io.jl` 管理；本地入口顺序执行任务，Slurm 入口负责 worker 调度。
 
 ## 函数接口
 
@@ -267,7 +272,7 @@ only_gaps = disorder_ensemble(L, h0, Float64[]; nsamples=100, boundary, field_di
 绘图要求固定模式的 `fixed_field_divisor=e`，不再兼容旧横场定义。
 耗时仅打印到运行日志；环境信息和固定的物理、统计定义不再写入属性，相关约定见本文档。
 两个脚本共用 `results_io.jl` 解析运行参数，并写入元数据、统计量和可选样本。
-计算前按横场模式从原对数网格中自动选择 6 个最近点，记录在 `parameters/sample_fields`：`uniform` 的目标为 `0.1、0.5、1、2、5、10`；`fixed` 的目标为 `0.5、1、1.5、2、e、3`。扫描网格不变。绘图直接读取保存的六点；四点分布图使用其中最接近临界点的一点和最大的三点。
+计算前将配置中的 `sample_fields` 目标匹配到扫描网格的最近点，记录在 `parameters/sample_fields`。默认目标为 `0.1、0.5、1、2、5、10`；fixed 可手动设为 `0.5、1、1.5、2、e、3`。扫描网格不变。现有六面板绘图需要保存六个不同扫描点；四点分布图使用其中最接近临界点的一点和最大的三点。
 这些值对应索引 `[1, 36, 51, 66, 86, 101]`，约为 `[0.1, 0.501187, 1, 1.995262, 5.011872, 10]`。
 仅这些参数调用 `keep_samples=true` 并保存全部返回的样本；其余参数调用 `keep_samples=false`，只保存统计量和时间网格。
 `imaginary_time` 与 `real_time` 保存相同的网格；两种时间域的自关联统计均保存为 Float64 数组，实时间仅保存实部。
@@ -445,7 +450,9 @@ julia --startup-file=no random_tfim/test/benchmark.jl
 
 入口依次启动四个独立 Julia 进程；某组失败仍继续运行其余组，最终返回失败状态。
 `physics.jl` 保留自旋哈密顿量对照、宇称、两种边界、解耦极限、微小尾部、奇异前缀和无序统计测试。
-`io.jl` 自动激活 local 环境，以小链的两个代表场强检查两种横场、两种边界、样本/摘要输出及本地/Slurm 一致性，并只运行一次单样本 demo；不提交 Slurm 作业。
+`io.jl` 自动激活 local 环境，以小链的两个代表场强检查两种横场、两种边界、样本/摘要输出，
+通过临时 TOML 运行小链扫描，并启动一个本地 worker 检查分布式输出与本地结果逐项一致；
+同时检查防覆盖和失败时的未完成标记，不提交 Slurm 作业。
 `plot_io.jl` 使用已有 `@v1.13` 环境，覆盖当前格式的两种横场模式、样本与摘要读取、掩码、斜率和分布缩放测试。
 `imaginary_time_fit.jl` 检查无权幂律/指数拟合的参数恢复、模型选择、平台、无效点筛选、微小正尾部保留，以及与旧斜率函数和独立线性回归的一致性。
 删除独立尾部对比诊断脚本（核心测试已覆盖相应数值检查）；性能基准仅测当前实现，不再加载旧源码。
