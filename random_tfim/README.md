@@ -437,6 +437,27 @@ PBC 使用 2L 维高斯重叠 Pfaffian，端点也遵循同一倒条件数判据
 
 ## 测试与基准
 
+### 带常数背景的虚时拟合
+
+```sh
+julia --project=@v1.13 random_tfim/plot_imaginary_time_offset.jl
+# 可选参数：[full_fixed.h5] [输出目录] [tau_min] [tau_max]
+julia --startup-file=no random_tfim/test/imaginary_time_offset_fit.jl
+```
+
+独立入口 `plot_imaginary_time_offset.jl` 使用 `fit_autocorrelation_offset.jl`，
+比较 `C=A*tau^alpha+B` 与 `C=A*exp(-lambda*tau)+B`，约束
+`A>0, B>=0, alpha<=0, lambda>=0`。沿用原脚本的无权 log(C) 残差，
+用相同数据点的 `log_sse/(N-3)` 选择模型；SEM 仅画误差带。
+默认使用最新 full_fixed 数据和 `[1,1000]` 窗口，结果写入
+`results/figures_imaginary_time_offset_fixed/`。复现 L=128 代表场强关联图、
+四尺寸场强扫描图与 L=128 模型误差交叉点；CSV 记录 A、B、alpha/衰减率、
+双方误差与收敛标记。幂律图显示 `-alpha`，有限窗口下不自动解释成渐近 `1/z`。
+图1的数据与拟合曲线均扣除最佳模型的背景 B，显示 `C-B`；SEM 保留原值，
+不含 B 的拟合不确定度。扣除后非正值不在对数轴上显示，拟合仍使用原始 C。
+原无背景分析脚本和输出不变。误差分数不是按测量误差归一化的卡方；
+平台处参数可能不可辨识，未做自举或时间协方差校正，详见输出审计说明。
+
 ```sh
 # 一条命令运行核心物理、HDF5/运行脚本、绘图测试
 julia --startup-file=no --threads=2 random_tfim/test/runtests.jl
@@ -448,13 +469,14 @@ julia --startup-file=no --threads=2 random_tfim/test/runtests.jl core
 julia --startup-file=no random_tfim/test/benchmark.jl
 ```
 
-入口依次启动四个独立 Julia 进程；某组失败仍继续运行其余组，最终返回失败状态。
+入口依次启动五个独立 Julia 进程；某组失败仍继续运行其余组，最终返回失败状态。
 `physics.jl` 保留自旋哈密顿量对照、宇称、两种边界、解耦极限、微小尾部、奇异前缀和无序统计测试。
 `io.jl` 自动激活 local 环境，以小链的两个代表场强检查两种横场、两种边界、样本/摘要输出，
 通过临时 TOML 运行小链扫描，并启动一个本地 worker 检查分布式输出与本地结果逐项一致；
 同时检查防覆盖和失败时的未完成标记，不提交 Slurm 作业。
 `plot_io.jl` 使用已有 `@v1.13` 环境，覆盖当前格式的两种横场模式、样本与摘要读取、掩码、斜率和分布缩放测试。
 `imaginary_time_fit.jl` 检查无权幂律/指数拟合的参数恢复、模型选择、平台、无效点筛选、微小正尾部保留，以及与旧斜率函数和独立线性回归的一致性。
+`imaginary_time_offset_fit.jl` 检查带背景模型的参数恢复、零背景边界、微小振幅、平台、带噪模型选择与残差分数。
 删除独立尾部对比诊断脚本（核心测试已覆盖相应数值检查）；性能基准仅测当前实现，不再加载旧源码。
 这些小规模验证不代表已完成 full 默认 10000 样本的论文统计精度复现。
 
