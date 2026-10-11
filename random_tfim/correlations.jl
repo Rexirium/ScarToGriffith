@@ -1,19 +1,15 @@
 """C(i,i+r) for distances 0:rmax (default rmax=L/2).
 
-boundary=:periodic (default) allows rmax<=L/2; :open allows rmax<=L-1.
-For :open, only origins 1:L-r exist; other entries are NaN, not wrapped pairs.
-Rows label origins, columns label distance r+1. AP fermions acquire a minus
-sign on crossing the seam, while the spin correlations remain periodic.
+Open chains allow rmax<=L-1. Only origins 1:L-r exist; other entries are NaN.
+Rows label origins, columns label distance r+1.
 Use incremental orthogonal QR updates and log determinants to evaluate all
 distances per origin in O(rmax^3). Returns C::Matrix{Float64}, retaining signed values
 and floating-point underflow. Logarithms and statistics belong to disorder_ensemble.
 """
-function correlations(G::AbstractMatrix{Float64}; boundary::Symbol=:periodic,
-        rmax::Int=size(G, 1) ÷ 2)
-    check_boundary(boundary)
+function correlations(G::AbstractMatrix{Float64}; rmax::Int=size(G, 1) ÷ 2)
     L = size(G, 1)
     size(G, 2) == L || throw(DimensionMismatch("G must be square"))
-    0 <= rmax <= (boundary == :open ? L-1 : L ÷ 2) || throw(ArgumentError("invalid rmax for boundary"))
+    0 <= rmax <= L-1 || throw(ArgumentError("require 0 <= rmax <= L-1"))
     all(isfinite, G) || throw(ArgumentError("G must be finite"))
 
     C = fill(NaN, L, rmax+1)
@@ -23,14 +19,11 @@ function correlations(G::AbstractMatrix{Float64}; boundary::Symbol=:periodic,
     work = Matrix{Float64}(undef, rmax, rmax)
 
     for i in 1:L
-        count = boundary == :open ? min(rmax, L-i) : rmax
+        count = min(rmax, L-i)
         count == 0 && continue
 
-        # Transposed prefix; only periodic pairs can cross the AP seam.
         @inbounds for b in 1:count, a in 1:count
-            row, col = i+b-1, i+a
-            seam = xor(row > L, col > L) ? -1.0 : 1.0
-            work[a, b] = seam * G[row > L ? row-L : row, col > L ? col-L : col]
+            work[a, b] = G[i+b-1, i+a]
         end
 
         leading_correlations!(C, i, work, count)

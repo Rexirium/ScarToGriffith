@@ -32,7 +32,7 @@ using Test
         @test occursin(r"demo_uniform_\d{8}_\d{6}\.h5$", fixed.output)
         for (key, value) in (("nsamples", 0), ("boundary", "bad"),
                 ("field_distribution", "bad"), ("seed", -1), ("worker_threads", 0),
-                ("sizes", [3]), ("sizes", [4, 4]), ("fields", [1.0, 1.0]),
+                ("sizes", [1]), ("sizes", [4, 4]), ("fields", [1.0, 1.0]),
                 ("fields", [0.0]), ("times", [-1.0]), ("sample_fields", [-1.0]),
                 ("sample_fields", Dict("uniform" => [1.0])),
                 ("fields", Dict("start" => 0, "stop" => 1, "length" => 0)),
@@ -40,8 +40,8 @@ using Test
             save_config(merge(defaults, Dict(key => value)))
             @test_throws ArgumentError read_config(path)
         end
-        save_config(merge(defaults, Dict("sizes" => [4, 6], "nsamples" => 1,
-            "seed" => 72, "boundary" => "open", "field_distribution" => "fixed",
+        save_config(merge(defaults, Dict("sizes" => [4, 5], "nsamples" => 1,
+            "seed" => 72, "field_distribution" => "fixed",
             "fields" => [0.5, 1.0], "sample_fields" => [0.6],
             "times" => Dict("start" => 0.0, "stop" => 1.0, "length" => 3))))
         cfg = read_config(path)
@@ -65,6 +65,7 @@ using Test
             @test read(attributes(file)["fixed_field_divisor"]) == exp(1)
             @test length(keys(file["L4"])) == 2
             @test read(attributes(file["L4/h0.5"])["seed"]) == 72 + 1000 + 4
+            @test read(attributes(file["L5/h0.5"])["j"]) == 3
             @test all(isnan, read(file["L4/h1.0/autocorrelation_sem"]))
             @test haskey(file["L4/h0.5"], "gap_samples")
             @test !haskey(file["L4/h1.0"], "gap_samples")
@@ -103,8 +104,8 @@ using Test
         @test isempty(read_config(path).sample_fields)
     end
 
-    for boundary in (:open, :periodic), field_distribution in (:uniform, :fixed)
-        cfg = (; base..., boundary, field_distribution, nsamples=3, times=[0.0, 0.3, 1.7])
+    for field_distribution in (:uniform, :fixed)
+        cfg = (; base..., field_distribution, nsamples=3, times=[0.0, 0.3, 1.7])
         mktempdir() do directory
             path = joinpath(directory, "ensemble.h5")
             expected = Dict()
@@ -113,7 +114,7 @@ using Test
                 # Selected and summary-only points cover both output layouts.
                 for h0 in (base.sample_fields[3], base.fields[2])
                     data = RandomTFIMSlurm.compute_case((; L=6, h0, seed=72), cfg)
-                    expected[h0] = disorder_ensemble(6, h0, cfg.times; boundary,
+                    expected[h0] = disorder_ensemble(6, h0, cfg.times;
                         field_distribution, nsamples=3, seed=72, keep_samples=h0 in cfg.sample_fields)
                     @test isequal(data.result, expected[h0])
                     redirect_stdout(devnull) do
@@ -124,7 +125,7 @@ using Test
             h5open(path, "r") do file
                 @test !read(attributes(file)["complete"])
                 @test read(attributes(file)["field_distribution"]) == string(field_distribution)
-                @test read(attributes(file)["boundary"]) == string(boundary)
+                @test read(attributes(file)["boundary"]) == "open"
                 @test read(file["parameters/sample_fields"]) == cfg.sample_fields
                 if field_distribution == :fixed
                     @test read(attributes(file)["fixed_field_divisor"]) == exp(1)

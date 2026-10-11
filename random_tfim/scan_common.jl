@@ -12,7 +12,7 @@ scan_jobs(cfg) = ((L=L, h0=h0, seed=case_seed(cfg, k, L))
 function compute_case(job, cfg)
     BLAS.set_num_threads(1)
     seconds = @elapsed result = disorder_ensemble(job.L, job.h0, cfg.times; nsamples=cfg.nsamples, seed=job.seed, rmax=job.L ÷ 2,
-        boundary=cfg.boundary, field_distribution=cfg.field_distribution, keep_samples=job.h0 in cfg.sample_fields)
+        field_distribution=cfg.field_distribution, keep_samples=job.h0 in cfg.sample_fields)
     return (; L=job.L, h0=job.h0, seed=job.seed, result,
         worker_id=myid(), seconds)
 end

@@ -3,7 +3,6 @@
 sizes = [16, 32]
 nsamples = 20
 seed = 1996
-boundary = "periodic" # open | periodic
 field_distribution = "uniform" # uniform | fixed
 
 # Arrays or ranges; log10 start/stop are base-10 exponents.

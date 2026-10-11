@@ -54,7 +54,7 @@ end
     return time_domain == :imaginary ? 1.0 : 1.0im
 end
 
-"""Zero-temperature longitudinal autocorrelation; boundary=:open or :periodic.
+"""Zero-temperature longitudinal autocorrelation of an open chain.
 
 Returns C::Vector{Float64} containing the real part of
 <sigma_z(j,times[n]) sigma_z(j,0)>.
@@ -64,31 +64,30 @@ sigma_z(j,t)=exp(im*t*H)*sigma_z(j)*exp(-im*t*H) and returns only the real part,
 equivalently <{sigma_z(j,t), sigma_z(j,0)}> / 2. Real times may be negative.
 This also equals the connected correlation: the finite-chain parity ground
 state has <sigma_z(j)> = 0. Thermal and nonstationary initial states are not supported.
-J has L-1 (:open) or L (:periodic) bonds, h has L fields; require even L >= 2.
-Default j=L/2 is the left midpoint. For both boundaries and time domains, estimate
+J has L-1 bonds, h has L fields; require L >= 2.
+Default j=cld(L,2) is the midpoint (left midpoint for even L).
+Endpoints use a direct spectral sum. At interior sites, estimate
 the reciprocal 1-norm condition number of the L-dimensional scaled matrix R
 using its LU factors. Use the determinant when rcond(R) > rcond_tol. Otherwise,
-open chains use a JW-string Pfaffian of dimension 4min(j,L+1-j)-2 (reflecting
-right-half sites); periodic chains use a 2L-dimensional Gaussian-overlap
-Pfaffian preserving the change of fermion parity sector.
-rcond_tol defaults to sqrt(eps(Float64)); 0 forces the determinant and 1 forces
-the Pfaffian. The threshold is a numerical heuristic, not an error guarantee.
-Periodic chains switch fermion parity sectors in both algorithms. Extremely
-small tails can still underflow or require higher-precision validation.
+use a JW-string Pfaffian of dimension 4min(j,L+1-j)-2 (reflecting
+right-half sites).
+rcond_tol defaults to sqrt(eps(Float64)); at interior sites, 0 forces the determinant
+and 1 forces the Pfaffian. Endpoints always use the spectral sum.
+The threshold is a numerical heuristic, not an error guarantee.
+Extremely small tails can still underflow or require higher-precision validation.
 """
 Base.@constprop :aggressive function autocorrelation(J::AbstractVector{<:Real}, h::AbstractVector{<:Real},
-        times::AbstractVector{<:Real}; j::Int=length(h) ÷ 2, boundary::Symbol=:open,
+        times::AbstractVector{<:Real}; j::Int=cld(length(h), 2),
         time_domain::Symbol=:imaginary, rcond_tol::Real=sqrt(eps(Float64)))
     L = length(h)
-    check_chain(J, h, boundary)
+    check_chain(J, h)
     1 <= j <= L || throw(ArgumentError("require 1 <= j <= L"))
     scale = time_scale(times, time_domain)
     check_rcond_tol(rcond_tol)
     isempty(times) && return Float64[]
 
-    initial = svd!(fermion_matrix(J, h, Val(boundary)))
-    evolution = boundary == :open ? initial : svd!(fermion_matrix(J, h, 1))
-    return autocorrelation(initial, evolution, times, j, scale; rcond_tol)
+    F = svd!(fermion_matrix(J, h))
+    return autocorrelation(F, times, j, scale; rcond_tol)
 end
 
 # OBC fallback: evaluate all selected times together to reuse the JW workspace.
@@ -96,7 +95,7 @@ function string_autocorrelation(F, times, j, reflected, scale=1.0)
     L = length(F.S)
     N = 2j-1
     U, V = F.U, F.V
-    M = Matrix{ComplexF64}(undef, N, L)
+    M = Matrix{typeof(scale)}(undef, N, L)
 
     # K of the reflected chain is reverse(K', dims=(1,2)), so U and V swap.
     @inbounds for mu in 1:L
@@ -104,19 +103,19 @@ function string_autocorrelation(F, times, j, reflected, scale=1.0)
             M[2a-1, mu] = reflected ? V[L+1-a, mu] : U[a, mu]
         end
         for a in 1:j-1
-            M[2a, mu] = 1im * (reflected ? U[L+1-a, mu] : V[a, mu])
+            M[2a, mu] = reflected ? U[L+1-a, mu] : V[a, mu]
         end
     end
 
     equal_time = M * M'
-    # Same-sublattice contractions vanish exactly; avoid SVD roundoff there.
+    # Remove the fixed i on even Majoranas; its Pfaffian phase cancels the JW sign.
     for b in 1:N, a in 1:N
-        iseven(a-b) && (equal_time[a, b] = 0)
+        equal_time[a, b] = iseven(a-b) ? 0.0 : (isodd(b) ? 1 : -1)*equal_time[a, b]
     end
 
-    phased = similar(M)
-    Q = Matrix{ComplexF64}(undef, N, N)
-    W = Matrix{ComplexF64}(undef, 2N, 2N)
+    phased = Matrix{typeof(scale)}(undef, N, L)
+    Q = Matrix{typeof(scale)}(undef, N, N)
+    W = Matrix{typeof(scale)}(undef, 2N, 2N)
     C = Vector{Float64}(undef, length(times))
 
     for (n, t) in enumerate(times)
@@ -132,129 +131,94 @@ function string_autocorrelation(F, times, j, reflected, scale=1.0)
         mul!(Q, phased, M')
         @inbounds for b in 1:N, a in 1:N
             W[a, b] = W[N+a, N+b] = equal_time[a, b]
-            W[a, N+b] = Q[a, b]
-            W[N+b, a] = -Q[a, b]
+            W[a, N+b] = (isodd(b) ? 1 : -1)*Q[a, b]
+            W[N+b, a] = -W[a, N+b]
         end
         logabs, phase = logabspfaffian!(W)
-        C[n] = real((-1)^(j-1) * phase * exp(logabs))
+        C[n] = real(phase * exp(logabs))
     end
 
     return C
 end
 
-# Choose a nonzero Fock reference by sequentially conditioning occupations.
-# At each mode, choose the outcome with probability >= 1/2; the update's
-# denominator has magnitude >= 1. Particle-hole flips then give an even
-# Thouless chart Z=(I-S*B)/(I+S*B), with real skew-symmetric Z.
-function pfaffian_chart(B, ::Type{T}) where {T}
-    L = size(B, 1)
-    conditional = copy(B)
-    signs = ones(L)
-    for k in 1:L
-        signs[k] = conditional[k, k] >= 0 ? 1.0 : -1.0
-        denominator = conditional[k, k] + signs[k]
-        for b in k+1:L, a in k+1:L
-            conditional[a, b] -= conditional[a, k]*conditional[k, b]/denominator
+function endpoint_autocorrelation(F, times, j, scale)
+    modes = j == 1 ? F.U : F.V
+    weights = abs2.(@view modes[j, :])
+    C = Vector{Float64}(undef, length(times))
+    for (n, t) in enumerate(times)
+        value = 0.0
+        for mu in eachindex(F.S)
+            angle = 2 * F.S[mu] * t
+            isfinite(angle) || throw(ArgumentError("time-frequency product overflows Float64"))
+            value += weights[mu] * (scale isa Real ? exp(-angle) : cos(angle))
         end
+        C[n] = value
     end
-    transformed = signs .* B
-    Z = (I - transformed) / (I + transformed)
-    # Enforce the exact antisymmetry: forbidden-parity weights must stay zero.
-    Z = (Z - transpose(Z)) / 2
-    lognormalization = -first(logabsdet(I + Z))
-    return (; Z, occupied=signs .< 0, lognormalization,
-        work=zeros(T, 2L, 2L), q=Vector{T}(undef, L))
+    return C
 end
 
-# Signed Gaussian overlap, not a Pfaffian embedding of the ill-conditioned R.
-# For reference occupations r, let k_i=d_i if r_i=1 else 1, and
-# q_i=1 if r_i=1 else d_i. Row/column scaling of the Thouless-overlap Pfaffian
-# gives W=[Z -diag(k); diag(k) -diag(q)*Z*diag(q)], using only decays/phases.
-# C = (-1)^(L(L+1)/2) pf(W) / det(I+Z) * exp(energy_shift*scale*t).
-function gaussian_pfaffian!(chart, decays, exponent)
-    Z, occupied, W, q = chart.Z, chart.occupied, chart.work, chart.q
-    L = length(decays)
-    fill!(W, 0)
-    q .= ifelse.(occupied, one(eltype(decays)), decays)
-    @inbounds for b in 1:L
-        for a in 1:b-1
-            W[a, b] = Z[a, b]
-            W[b, a] = -W[a, b]
-            W[L+a, L+b] = -q[a] * Z[a, b] * q[b]
-            W[L+b, L+a] = -W[L+a, L+b]
-        end
-        W[b, L+b] = occupied[b] ? -decays[b] : -one(eltype(decays))
-        W[L+b, b] = -W[b, L+b]
+# In one OBC mode basis, B=(I-2u'u)(I-2v'v); no site-basis covariance is needed.
+function spin_flip_covariance(F, j)
+    L = length(F.S)
+    depth = min(j, L+1-j)
+    u = j <= cld(L, 2) ? view(F.U, 1:depth, :) : view(F.V, L-depth+1:L, :)
+    v = j <= cld(L, 2) ? view(F.V, 1:depth-1, :) : view(F.U, L-depth+2:L, :)
+    B = u' * u
+    B .*= -2
+    for a in 1:L
+        B[a, a] += 1
     end
-    logabs, phase = logabspfaffian!(W)
-    return real((-1)^(L*(L+1) ÷ 2) * phase *
-        exp(logabs + chart.lognormalization + exponent))
+    mul!(B, B * v', v, -2.0, 1.0)
+    return B
 end
 
-# sigma_z(j) is a product of the first 2j-1 Majoranas. Conjugation changes
-# the odd/even covariance to D_odd * Gamma_oe * D_even. Its state is Gaussian
-# with odd parity; no cyclic relabeling or extra SVD is needed.
-function autocorrelation(initial, evolution, times, j, scale;
-        rcond_tol::Real=sqrt(eps(Float64)))
+function autocorrelation(F, times, j, scale;
+        rcond_tol::Real=sqrt(eps(Float64)), B=nothing)
     isempty(times) && return Float64[]
-    L = length(initial.S)
-    Gamma_oe = initial.U * initial.V'
-    @views Gamma_oe[1:j, :] .*= -1
-    @views Gamma_oe[:, 1:j-1] .*= -1
-    B = evolution.U' * Gamma_oe * evolution.V
+    L = length(F.S)
+    (j == 1 || j == L) && return endpoint_autocorrelation(F, times, j, scale)
+    depth = min(j, L+1-j)
+    rcond_tol == 1 && return string_autocorrelation(F, times, depth, j > cld(L, 2), scale)
+    isnothing(B) && (B = spin_flip_covariance(F, j))
 
-    diagonal = diag(B)
-    half_B = B / 2
-    chart = nothing
     jw_indices = Int[]
 
     block = Matrix{typeof(scale)}(undef, L, L)
     decays = Vector{typeof(scale)}(undef, L)
     row_factors = similar(decays)
     C = Vector{Float64}(undef, length(times))
-    # E0 + sum(evolution.S); exactly zero for OBC. Sum differences for PBC.
-    energy_shift = initial === evolution ? 0.0 : sum(evolution.S .- initial.S)
 
     for (n, t) in enumerate(times)
-        isfinite(energy_shift*t) || throw(ArgumentError("time-energy product overflows Float64"))
         for a in 1:L
-            angle = 2 * evolution.S[a] * t
+            angle = 2 * F.S[a] * t
             isfinite(angle) || throw(ArgumentError("time-frequency product overflows Float64"))
             decays[a] = scale isa Real ? exp(-angle) : cis(-angle)
-            row_factors[a] = 1 - decays[a]
+            row_factors[a] = (1 - decays[a])/2
         end
 
-        # Forced Pfaffian needs neither R nor its LU/condition estimate.
-        if rcond_tol != 1
-            # Keep diagonal terms separate to retain tiny decoupled-spin tails.
-            @inbounds for b in 1:L
-                @simd for a in 1:L
-                    block[a, b] = row_factors[a]*half_B[a, b]
-                end
-                block[b, b] = (1 + diagonal[b])/2 + decays[b]*((1 - diagonal[b])/2)
+        # Keep diagonal terms separate to retain tiny decoupled-spin tails.
+        @inbounds for b in 1:L
+            @simd for a in 1:L
+                block[a, b] = row_factors[a]*B[a, b]
             end
-            matrix_norm = rcond_tol == 0 ? 0.0 : opnorm(block, 1)
-            factors = lu!(block; check=false)
-            reciprocal_condition = rcond_tol == 0 ? 1.0 :
-                issuccess(factors) ? LAPACK.gecon!('1', factors.factors, matrix_norm) : 0.0
-            if isfinite(reciprocal_condition) && reciprocal_condition > rcond_tol
-                logabs, phase = logabsdet(factors)
-                C[n] = real(phase * exp(logabs + scale*(energy_shift*t)))
-                continue
-            end
+            diagonal = B[b, b]
+            block[b, b] = (1 + diagonal)/2 + decays[b]*((1 - diagonal)/2)
         end
-        if initial === evolution # OBC shares the initial/evolution SVD.
-            push!(jw_indices, n)
-        else
-            isnothing(chart) && (chart = pfaffian_chart(B, typeof(scale)))
-            C[n] = gaussian_pfaffian!(chart, decays, scale*(energy_shift*t))
+        matrix_norm = rcond_tol == 0 ? 0.0 : opnorm(block, 1)
+        factors = lu!(block; check=false)
+        reciprocal_condition = rcond_tol == 0 ? 1.0 :
+            issuccess(factors) ? LAPACK.gecon!('1', factors.factors, matrix_norm) : 0.0
+        if isfinite(reciprocal_condition) && reciprocal_condition > rcond_tol
+            logabs, phase = logabsdet(factors)
+            C[n] = real(phase * exp(logabs))
+            continue
         end
+        push!(jw_indices, n)
     end
     if !isempty(jw_indices)
         # Batch only the selected points: build the short-string workspace once,
         # and preserve arbitrary time ordering and repeated times.
-        depth = min(j, L+1-j)
-        C[jw_indices] = string_autocorrelation(initial, times[jw_indices], depth, j > L ÷ 2, scale)
+        C[jw_indices] = string_autocorrelation(F, times[jw_indices], depth, j > cld(L, 2), scale)
     end
 
     return C

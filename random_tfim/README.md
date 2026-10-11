@@ -1,7 +1,7 @@
 ﻿# 随机横场 Ising 链
 
 计算有限链零温能隙、纵向空间关联，以及实时间/虚时间自关联。
-核心采用自由费米子 SVD，支持开边界和周期边界；无序样本可按 Julia 线程并行。
+核心采用自由费米子 SVD，统一使用开放边界条件（OBC）；无序样本可按 Julia 线程并行。
 模型与论文对照见 [Young & Rieger (1996)](../papers/Young_Rieger_1996_Numerical_study_random_transverse_field_Ising_chain.md)
 和[模型卡](../.knowledge/models/transverse-field-ising/MODEL.md)。
 
@@ -21,9 +21,9 @@ julia --threads=4 random_tfim/run.jl random_tfim/scan.toml
 不再接受原来的 `demo|full` 等位置参数。相对输出路径以 TOML 所在目录为基准，
 输出文件名自动追加时间戳，已有同名文件时拒绝覆盖。
 
-配置中的 `sizes`、`nsamples`、`seed`、`boundary`、`field_distribution`、`fields`、
+配置中的 `sizes`、`nsamples`、`seed`、`field_distribution`、`fields`、
 `times`、`sample_fields`、`worker_threads` 和 `output` 分别控制链长、样本数、主种子、
-边界、横场分布、场强网格、时间网格、保存逐样本数据的目标场强、Slurm worker 线程数和输出路径。
+横场分布、场强网格、时间网格、保存逐样本数据的目标场强、Slurm worker 线程数和输出路径。
 `fields` 和 `times` 可以直接写数组，或写 `{ start = ..., stop = ..., length = ... }` 的线性网格；
 增加 `scale = "log10"` 时，start/stop 表示以 10 为底的指数。
 `sample_fields` 直接写目标数组，目标会匹配到最近的实际扫描点，空数组表示只保存统计量。
@@ -38,7 +38,7 @@ julia --threads=4 random_tfim/run.jl random_tfim/scan.toml
 Slurm 提交现在也默认使用这份配置，不再隐含 full/50000/fixed 参数。
 
 默认扫描 `h0 = 10 .^ range(-1, 1, 101)`，计算能隙、`r=0:L÷2` 的空间关联，
-以及中点 `j=L÷2`、`times=10 .^ range(-1,3,101)`（0.1 到 1000）的虚时间和实时间自关联。
+以及中点 `j=cld(L,2)`、`times=10 .^ range(-1,3,101)`（0.1 到 1000）的虚时间和实时间自关联。
 每个 `(L,h0)` 使用 `seed + 1000k + L`（k 为场强索引），本地和 Slurm 使用相同规则。
 在 Julia 中调用时，先用 `cfg = read_config("path/to/scan.toml")` 读取配置，
 再调用 `main(cfg)`；Slurm 对应 `RandomTFIMSlurm.read_config(path)` 和 `RandomTFIMSlurm.run_scan(cfg, pids)`。
@@ -165,32 +165,32 @@ using .RandomTFIM, Random, LinearAlgebra
 BLAS.set_num_threads(1)
 
 L, h0 = 32, 1.0
-boundary = :periodic                 # 改为 :open 可切换整套计算
 field_distribution = :uniform        # 改为 :fixed 使用 h=h0/e
-J, h = sample_disorder(Xoshiro(1996), L, h0; boundary, field_distribution)
-state = ground_state(J, h; boundary) # gap、resolved 和 G
-pair = correlations(state.G; boundary, rmax=L÷2)
+J, h = sample_disorder(Xoshiro(1996), L, h0; field_distribution)
+state = ground_state(J, h) # gap、resolved 和 G
+pair = correlations(state.G; rmax=L÷2)
 
 times = collect(0.0:0.2:20.0)
-imaginary = autocorrelation(J, h, times; boundary, time_domain=:imaginary)
-realtime = autocorrelation(J, h, times; boundary, time_domain=:real)
+imaginary = autocorrelation(J, h, times; time_domain=:imaginary)
+realtime = autocorrelation(J, h, times; time_domain=:real)
 ```
 
-要求偶数 `L≥2`、有限的 `J≥0` 和 `h>0`。`h` 长度为 L；开边界的 `J` 长度为 L−1，周期边界为 L。
-**`autocorrelation` 默认开边界，其余公开接口默认周期边界**，建议像示例一样显式传递 `boundary`。
-相同 seed 在两种边界下生成相同的横场和内部键，开链仅去掉接缝键。
-两种横场模式消耗相同的随机数，因此同一 seed 的逐样本耦合也相同；默认均匀模式保持原有随机序列。
+要求整数 `L≥2`、有限的 `J≥0` 和 `h>0`。奇数链长也支持；`h` 长度为 L，`J` 长度为 L−1。
+所有公开计算接口均为 OBC，不再接受 `boundary` 参数；扫描配置也应删除该项。
+采样仅生成 L−1 条键，因此相同 seed 的样本与旧版本不同。
+两种横场模式消耗相同的随机数，因此同一 seed 的逐样本耦合相同。
+已有结果文件未重算；其边界条件以文件自身的 `boundary` 属性为准，不能视作新 OBC 结果。
 
 | 函数 | 返回值 |
 |---|---|
-| `sample_disorder(rng, L, h0; boundary, field_distribution=:uniform)` | 命名元组 `(J, h)` |
-| `energy_gap(J, h; boundary)` | 命名元组 `(gap, resolved)` |
-| `ground_state(J, h; boundary)` | 命名元组 `(gap, resolved, G)` |
-| `correlations(G; boundary, rmax)` | 直接返回 `Matrix{Float64}`，形状 `L×(rmax+1)` |
-| `autocorrelation(J, h, times; boundary, j, time_domain)` | 直接返回 `Vector{Float64}`，长度 `length(times)` |
+| `sample_disorder(rng, L, h0; field_distribution=:uniform)` | 命名元组 `(J, h)` |
+| `energy_gap(J, h)` | 命名元组 `(gap, resolved)` |
+| `ground_state(J, h)` | 命名元组 `(gap, resolved, G)` |
+| `correlations(G; rmax)` | 直接返回 `Matrix{Float64}`，形状 `L×(rmax+1)` |
+| `autocorrelation(J, h, times; j, time_domain)` | 直接返回 `Vector{Float64}`，长度 `length(times)` |
 
 空间关联中 `C[i,r+1]=⟨σz(i)σz(i+r)⟩`，`r=0` 列为 1。
-默认 `rmax=L÷2`；周期链最多取 L÷2，开链可取 L−1。
+默认 `rmax=L÷2`，允许 `0≤rmax≤L−1`。
 开链仅 `i+r≤L` 的位置有效，越界位置为 `NaN`。
 `resolved` 仅保留在能隙接口及无序样本能隙中。
 
@@ -208,7 +208,7 @@ $$
 | `:imaginary`（默认） | τ | 有限、非负 | `Float64` |
 | `:real` | it | 有限，可为负 | `Float64`，仅返回实部 |
 
-`times` 可为空、乱序或含重复点；`j` 默认 L÷2，开链取左中点。
+`times` 可为空、乱序或含重复点；`j` 默认 `cld(L,2)`，偶数链取左中点，奇数链取正中点。
 零时间也执行完整计算，结果在舍入误差内满足 `C(0)≈1`。
 实时间返回 `Re C_j(it)=⟨{σz(j,t),σz(j,0)}⟩/2`，即对称化关联，内部仍保留复数演化。
 精确算术下，虚时间关联在 [0,1] 内且单调不增；返回的实时间关联满足 `C(-t)=C(t)`，可为负。
@@ -217,10 +217,10 @@ $$
 
 ### 无序平均
 
-沿用上例的 `L`、`h0`、`boundary` 和 `times`：
+沿用上例的 `L`、`h0` 和 `times`：
 
 ```julia
-ensemble = disorder_ensemble(L, h0, times; nsamples=100, seed=1996, boundary, field_distribution, keep_samples=true)
+ensemble = disorder_ensemble(L, h0, times; nsamples=100, seed=1996, field_distribution, keep_samples=true)
 
 average = ensemble.C_mean
 mean_log = ensemble.logC_mean
@@ -229,7 +229,7 @@ time_average = ensemble.Ct_mean
 real_time_average = ensemble.real_Ct_mean
 
 # 只保留能隙结果：显式传入空 times，再设置 rmax=0
-only_gaps = disorder_ensemble(L, h0, Float64[]; nsamples=100, boundary, field_distribution, rmax=0)
+only_gaps = disorder_ensemble(L, h0, Float64[]; nsamples=100, field_distribution, rmax=0)
 ```
 
 | 返回字段 | 内容 / 形状 |
@@ -252,7 +252,7 @@ only_gaps = disorder_ensemble(L, h0, Float64[]; nsamples=100, boundary, field_di
 默认 `nsamples=100`、`seed=1996`、`rmax=L÷2`、`keep_samples=false`。
 `times` 是第三个必需位置参数，必须有限且非负；两种时间域共用该网格并同时计算。
 显式传入空 `times` 时返回空时间统计；`rmax=0` 跳过非平凡空间关联。
-先逐样本计算，再平均：空间关联先平均同一样本内的有效起点（周期 L 个、开链 L−r 个），
+先逐样本计算，再平均：空间关联先平均同一样本内的有效起点（L−r 个），
 随后在无序样本间求均值和 SEM。同一样本的能隙与各关联数组使用相同构型。
 随机数在并行前顺序生成，构型顺序与 Julia 线程数无关。
 
@@ -268,7 +268,7 @@ only_gaps = disorder_ensemble(L, h0, Float64[]; nsamples=100, boundary, field_di
 
 本地和 Slurm 脚本均同时保存虚时间和实时间结果。根目录中的 `parameters/sizes`、`parameters/fields`
 记录扫描参数，各参数组命名为 `L16/h1.0` 等。组属性仅保留观测格点 `j` 和随机种子 `seed`。
-根属性为 `boundary`（`open` 或 `periodic`）、`distribution`（`box`，描述耦合分布）、`field_distribution`（`uniform` 或 `fixed`）、`nsamples` 和 `complete`，只有整个扫描完成后才设 `complete=true`。固定模式另存 `fixed_field_divisor=e`，实际横场为 `h0/fixed_field_divisor`。扫描参数和组名中的 `h0` 始终是用户输入的尺度。
+根属性为 `boundary`（固定为 `open`）、`distribution`（`box`，描述耦合分布）、`field_distribution`（`uniform` 或 `fixed`）、`nsamples` 和 `complete`，只有整个扫描完成后才设 `complete=true`。固定模式另存 `fixed_field_divisor=e`，实际横场为 `h0/fixed_field_divisor`。扫描参数和组名中的 `h0` 始终是用户输入的尺度。
 绘图要求固定模式的 `fixed_field_divisor=e`，不再兼容旧横场定义。
 耗时仅打印到运行日志；环境信息和固定的物理、统计定义不再写入属性，相关约定见本文档。
 两个脚本共用 `results_io.jl` 解析运行参数，并写入元数据、统计量和可选样本。
@@ -299,13 +299,13 @@ only_gaps = disorder_ensemble(L, h0, Float64[]; nsamples=100, boundary, field_di
 
 ## 模型与算法
 
-采用 Pauli 矩阵约定，周期自旋链的哈密顿量为
+采用 Pauli 矩阵约定，开放自旋链的哈密顿量为
 
 $$
-H=-\sum_{i=1}^{L}J_i\sigma_i^z\sigma_{i+1}^z-\sum_{i=1}^{L}h_i\sigma_i^x.
+H=-\sum_{i=1}^{L-1}J_i\sigma_i^z\sigma_{i+1}^z-\sum_{i=1}^{L}h_i\sigma_i^x.
 $$
 
-开链的键求和到 L−1；周期链的 `J[L]` 是接缝键，L=2 时仍保留两条键。
+键只连接相邻格点，L=2 时只有一条键。
 耦合采用箱形分布 `J∼U(0,1)`，实现排除零值。横场由 `field_distribution` 选择：
 
 | 模式 | 横场 | 临界 h0 | 顺磁侧 |
@@ -320,74 +320,54 @@ $$
 
 ### 能隙与空间关联
 
-费米子矩阵 K 的对角元为 $h_i$、次对角元为 $-J_i$；周期费米子接缝为 $-J_L$，反周期为 $+J_L$。
-对 `K=U diag(ε) Vᵀ` 做 SVD，单准粒子能量为 2ε，`G=−VUᵀ`。
-开链使用双对角结构，能隙为 `2minimum(ε)`；周期自旋链基态取反周期费米子扇区：
-
-$$
-E_0=-\sum_\mu\epsilon_\mu^{ap},\qquad
-E_1=-\sum_\mu\epsilon_\mu^p+
-\begin{cases}2\epsilon_{\min}^p,&\prod_i h_i\ge\prod_i J_i,\\0,&\prod_i h_i<\prod_i J_i.\end{cases}
-$$
-
-代码比较对数乘积判定每个样本的真空宇称，不能用总体 h0 代替；相等时零模使占据修正为零。
+费米子矩阵 K 为下双对角矩阵，对角元为 $h_i$、次对角元为 $-J_i$。
+对 `K=U diag(ε) Vᵀ` 做一次 SVD，单准粒子能量为 2ε，`G=−VUᵀ`。
+基态能量为 `−sum(ε)`，能隙为 `2minimum(ε)`。
 对 i<j，空间关联为
 
 $$C_{ij}=\det G_{i:j-1,\ i+1:j}.$$
 
-周期链跨接缝时按反周期符号延拓 G。每个起点仅提取一次最大子矩阵，
+每个有效起点仅提取一次最大子矩阵，
 用 Givens 正交旋转逐步更新各距离的 QR 因子，从对角元累加行列式对数并保留符号。
 算法不除以小主元，允许奇异前缀后再次出现非奇异前缀。
 
 ### 自关联的两个计算路径
 
-初态 SVD 记为 `U_g, ε_g, V_g`；演化 SVD 记为 `U_e, ε_e, V_e`。
-开链二者相同；周期链插入 σz 后切换宇称，初态用反周期扇区，演化用周期扇区。
-将 `Γ_oe=U_g V_gᵀ` 的前 j 行和前 j−1 列分别取负，得到插入 σz 后的协方差块 Γᵠ。
-令 `B=U_eᵀ Γᵠ V_e`，在上文统一时间变量 z 下：
+初态和演化共用同一次 SVD：`U, ε, V`。
+端点自关联直接计算 `Σμ wμ exp(−2εμ z)`，左端权重为 `U[1,μ]^2`，右端为 `V[L,μ]^2`，
+实时间直接取余弦；无需构造矩阵、估计条件数或计算 Pfaffian。
+体内格点取较短一侧的字符串，右半链先反射并交换 U、V。
+记 `u=U[1:d,:]`、`v=V[1:d−1,:]`，直接在同一模态基底中构造
+`B=(I−2uᵀu)(I−2vᵀv)`，无需经过格点协方差的来回变换。
+联合计算的实、虚时间共用 B。在上文统一时间变量 z 下：
 
 $$
 R_{ab}(z)=\frac{\delta_{ab}+B_{ab}}2+
- e^{-2\epsilon_a^e z}\frac{\delta_{ab}-B_{ab}}2,\qquad
-C_j(z)=e^{z\sum_a(\epsilon_a^e-\epsilon_a^g)}\det R(z).
+ e^{-2\epsilon_a z}\frac{\delta_{ab}-B_{ab}}2,\qquad
+C_j(z)=\det R(z).
 $$
 
-两种边界、所有观测位置均先构造这一 L×L 缩放矩阵；开链的外部指数系数直接设为零。
-虚时间矩阵为实数，实时间为复数。通过 `logabsdet` 与外部指数合并恢复结果，
-不构造增长的双曲函数，也不使用 `sqrt(det)`。
+体内格点的行列式路径使用这一 L×L 缩放矩阵。
+虚时间矩阵为实数，实时间为复数，通过 `logabsdet` 恢复结果。
 非对角元共享行因子；对角上的常数项和衰减项分开计算，以保留解耦极限的微小尾部。
 
 每个时间点在 LU 分解前计算矩阵一范数，再复用 LU 因子调用 `LAPACK.gecon!`，
 估计 `rcond₁(R)=1/(‖R‖₁‖R⁻¹‖₁)`。若估计值大于 `rcond_tol`，使用行列式；
-否则 OBC 使用较短一侧的 JW 字符串 Pfaffian，PBC 使用保留宇称结构的高斯态重叠 Pfaffian。
+否则使用较短一侧的 JW 字符串 Pfaffian。
 实时间监测完整的复矩阵 R，
 不根据关联实部是否为负切换。时间点可乱序，每点独立判断。
 
 `autocorrelation` 和 `disorder_ensemble` 均接受 `rcond_tol`，默认 `sqrt(eps(Float64))≈1.49e-8`。
-有效范围为 [0,1]：0 强制行列式，1 强制 Pfaffian，便于交叉验证。
+有效范围为 [0,1]：体内格点的 0 强制行列式，1 强制 Pfaffian，便于交叉验证；端点始终直接求和。
 这是数值稳定性的启发式阈值，不是严格的相对误差保证；更大的阈值会更早切换。
 
-PBC 后备算法在演化模式基底中，逐模式选择条件概率不小于 1/2 的参考占据态 r，
-令 `S=diag(1−2r)`、`Z=(I−SB)/(I+SB)`，并显式保持 Z 的反对称性。
-记 `dₐ=exp(−2εₐᵉz)`，`kₐ=rₐ ? dₐ : 1`，`qₐ=rₐ ? 1 : dₐ`，则
-
-$$
-W(z)=\begin{pmatrix}Z&-\operatorname{diag}(k)\\
-\operatorname{diag}(k)&-\operatorname{diag}(q)Z\operatorname{diag}(q)\end{pmatrix},\qquad
-C_j(z)=\frac{(-1)^{L(L+1)/2}\operatorname{Pf}W(z)}{\det(I+Z)}
-e^{z\sum_a(\epsilon_a^e-\epsilon_a^g)}.
-$$
-
-这是 2L×2L 的高斯重叠公式，不是把病态 R 嵌入反对称矩阵。
-矩阵仅使用衰减指数或单位模相位；Pfaffian 的对数幅值与归一化、扇区能量补偿合并后恢复结果。
-参考占据态及工作空间只在首次切换时建立，后续复用。
-PBC 虚时间 Pfaffian 使用 Float64 工作区，实时间使用 ComplexF64；每点的 q 因子预计算到复用缓冲区。
-强制 Pfaffian 时跳过 R 的构造、LU 和倒条件数估计；强制行列式时跳过倒条件数估计。
+强制 Pfaffian 时直接进入字符串计算，跳过 B、R、衰减缓冲区的重复构造、LU 和倒条件数估计；强制行列式时跳过倒条件数估计。
 
 OBC 后备算法使用 Jordan–Wigner 字符串 Pfaffian。令 `d=min(j,L+1-j)`，
 矩阵维数为 `4d−2`；右半链通过反射并交换 U、V 处理。
 仅收集倒条件数不达标的时间点，批量计算并写回原位置，工作区只建立一次；
-两种时间模式均使用 ComplexF64 收缩矩阵。取 Majorana 约定
+实现解析消去偶数 Majorana 的固定 i 相位及外部 JW 符号；虚时间使用 Float64 工作区，实时间使用 ComplexF64。
+以下公式保留原始 Majorana 相位约定，便于说明：
 $\gamma_{2k-1}=(\prod_{\ell<k}\sigma_\ell^x)\sigma_k^z$、
 $\gamma_{2k}=(\prod_{\ell<k}\sigma_\ell^x)\sigma_k^y$，则
 $\sigma_j^z=i^{j-1}\gamma_1\cdots\gamma_{2j-1}$。在左端字符串 S=1:2j−1 上，
@@ -406,8 +386,7 @@ $$
 
 ### 未分辨结果
 
-- **能隙：** 周期链的阈值为 `64eps(Float64)*max(abs(E0),abs(E1),1)`，
-  开链为 `64eps(Float64)*max(sum(ε),1)`；不超过阈值时 `resolved=false`，原始 gap 不裁剪。
+- **能隙：** 阈值为 `64eps(Float64)*max(sum(ε),1)`；不超过阈值时 `resolved=false`，原始 gap 不裁剪。
   `energy_gap`、`ground_state` 和 `disorder_ensemble` 统一使用完整 SVD 的奇异值，
   避免不同 SVD 路径的舍入差异使阈值附近的标记不一致；单独计算能隙也会计算奇异向量。
 - **空间关联：** `correlations` 仅返回原始有符号 `C`，不再返回 `logC/resolved`，也不再接受 `logtol`。
@@ -423,9 +402,9 @@ $$
 
 空间关联的总成本约为 `O(L*rmax^3)`。
 时间关联约为 `O(L^3+Nt*L^3)`，工作矩阵占 `O(L^2)`。
-每点复用 LU 估计倒条件数；切换后 OBC 使用 `4min(j,L+1-j)−2` 维 JW-Pfaffian，
-PBC 使用 2L 维高斯重叠 Pfaffian，端点也遵循同一倒条件数判据。
-联合计算复用 SVD，核心不修改输入，也不使用全局可变状态。
+每点复用 LU 估计倒条件数；切换后使用 `4min(j,L+1-j)−2` 维 JW-Pfaffian，
+端点在 SVD 后仅需 `O(Nt*L)` 的模态求和。
+联合计算复用 SVD 和体内格点的 B，核心不修改输入，也不使用全局可变状态。
 
 运行脚本固定单 BLAS 线程，用 Julia 线程并行不同样本；直接调用时也建议 `BLAS.set_num_threads(1)`。
 即使 `keep_samples=false`，内部仍分配关联样本数组来计算统计量，内存随样本数增长。
@@ -433,7 +412,7 @@ PBC 使用 2L 维高斯重叠 Pfaffian，端点也遵循同一倒条件数判据
 默认 HDF5 的关联统计量大小不随样本数增长，逐样本能隙数据除外。
 
 性能以 [benchmark.jl](test/benchmark.jl) 在当前机器上的结果为准：固定种子、单 BLAS 线程、
-预热后七次中位数，覆盖两种边界、两种时间模式、端点和强场空间关联。
+预热后七次中位数，覆盖 OBC 下两种时间模式、端点和强场空间关联。
 
 ## 测试与基准
 
@@ -470,8 +449,8 @@ julia --startup-file=no random_tfim/test/benchmark.jl
 ```
 
 入口依次启动五个独立 Julia 进程；某组失败仍继续运行其余组，最终返回失败状态。
-`physics.jl` 保留自旋哈密顿量对照、宇称、两种边界、解耦极限、微小尾部、奇异前缀和无序统计测试。
-`io.jl` 自动激活 local 环境，以小链的两个代表场强检查两种横场、两种边界、样本/摘要输出，
+`physics.jl` 保留自旋哈密顿量对照、OBC、解耦极限、微小尾部、奇异前缀和无序统计测试。
+`io.jl` 自动激活 local 环境，以小链的两个代表场强检查两种横场、OBC、样本/摘要输出，
 通过临时 TOML 运行小链扫描，并启动一个本地 worker 检查分布式输出与本地结果逐项一致；
 同时检查防覆盖和失败时的未完成标记，不提交 Slurm 作业。
 `plot_io.jl` 使用已有 `@v1.13` 环境，覆盖当前格式的两种横场模式、样本与摘要读取、掩码、斜率和分布缩放测试。
@@ -482,7 +461,7 @@ julia --startup-file=no random_tfim/test/benchmark.jl
 
 ## 论文图与数据需求
 
-以下对照采用周期边界。所有对数均为自然对数。
+以下列出论文图所需观测量；当前计算统一使用 OBC，有限尺寸比较须考虑边界效应。所有对数均为自然对数。
 
 | 论文图 | 所需数据 / 处理 |
 |---|---|

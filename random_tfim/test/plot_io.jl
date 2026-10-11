@@ -33,7 +33,7 @@ include(joinpath(@__DIR__, "..", "plot_imaginary_time.jl"))
             @test ax.xscale[] === log10
             @test ax.yscale[] === (k == 4 ? log10 : identity)
         end
-        full_scan = plot_imaginary_field_scan(input, sizes)
+        full_scan = plot_imaginary_field_scan(input, sizes; tmin=0.0, tmax=Inf)
         h5open(input, "r") do f
             for r in full_scan.records
                 g = f["L$(r.L)/h$(r.h0)"]
@@ -90,7 +90,7 @@ end
             h5open(input, "w") do f
                 attrs = HDF5.attributes(f)
                 attrs["complete"] = true
-                attrs["boundary"] = "periodic"
+                attrs["boundary"] = "open"
                 attrs["field_distribution"] = distribution
                 attrs["nsamples"] = 2
                 distribution == "fixed" && (attrs["fixed_field_divisor"] = exp(1))

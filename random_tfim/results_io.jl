@@ -15,8 +15,7 @@ end
 """Read scan parameters; resolve relative output paths against the TOML directory."""
 function read_config(path=joinpath(@__DIR__, "scan.toml"))
     params = TOML.parsefile(path)
-    boundary = Symbol(params["boundary"])
-    RandomTFIM.check_boundary(boundary)
+    haskey(params, "boundary") && throw(ArgumentError("remove boundary: scans use open chains only"))
     field_distribution = Symbol(params["field_distribution"])
     RandomTFIM.check_field_distribution(field_distribution)
     nsamples, seed, worker_threads = params["nsamples"], params["seed"], params["worker_threads"]
@@ -24,8 +23,8 @@ function read_config(path=joinpath(@__DIR__, "scan.toml"))
     seed isa Integer && seed >= 0 || throw(ArgumentError("seed must be a nonnegative integer"))
     worker_threads isa Integer && worker_threads > 0 || throw(ArgumentError("worker_threads must be a positive integer"))
     sizes = params["sizes"]
-    !isempty(sizes) && allunique(sizes) && all(L -> L isa Integer && L >= 2 && iseven(L), sizes) ||
-        throw(ArgumentError("sizes must be distinct even integers >= 2"))
+    !isempty(sizes) && allunique(sizes) && all(L -> L isa Integer && L >= 2, sizes) ||
+        throw(ArgumentError("sizes must be distinct integers >= 2"))
     fields, times = config_grid(params["fields"]), config_grid(params["times"])
     !isempty(fields) && allunique(fields) && all(h -> isfinite(h) && h > 0, fields) ||
         throw(ArgumentError("fields must be distinct finite positive values"))
@@ -38,7 +37,7 @@ function read_config(path=joinpath(@__DIR__, "scan.toml"))
     stem, ext = splitext(output)
     output = stem * "_" * Dates.format(now(), "yyyymmdd_HHMMSS") * ext
     ispath(output) && throw(ArgumentError("output already exists: $output"))
-    return (; nsamples, seed, worker_threads, output, boundary, field_distribution, sizes, fields, sample_fields, times)
+    return (; nsamples, seed, worker_threads, output, field_distribution, sizes, fields, sample_fields, times)
 end
 
 # Mark completion only after all computation and writes succeed.
@@ -62,7 +61,7 @@ end
 function write_case(file, data, cfg)
     group = create_group(file, "L$(data.L)/h$(data.h0)")
     write_observables(group, data.result, cfg.times)
-    attributes(group)["j"] = data.L ÷ 2
+    attributes(group)["j"] = cld(data.L, 2)
     attributes(group)["seed"] = data.seed
 
     println("L=$(data.L) h0=$(data.h0) samples=$(cfg.nsamples) worker=$(data.worker_id)",
@@ -77,7 +76,7 @@ function write_metadata(file, cfg)
     attributes(file)["distribution"] = "box"
     attributes(file)["field_distribution"] = string(cfg.field_distribution)
     cfg.field_distribution == :fixed && (attributes(file)["fixed_field_divisor"] = exp(1))
-    attributes(file)["boundary"] = string(cfg.boundary)
+    attributes(file)["boundary"] = "open"
 
     parameters = create_group(file, "parameters")
     parameters["sizes"] = collect(cfg.sizes)
