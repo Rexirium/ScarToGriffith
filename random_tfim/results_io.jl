@@ -1,7 +1,5 @@
 using TOML, Dates
 
-case_seed(cfg, k, L) = cfg.seed + 1000k + L
-
 function config_grid(value)
     value isa AbstractVector && return Float64.(value)
     scale = get(value, "scale", "linear")
@@ -29,15 +27,11 @@ function read_config(path=joinpath(@__DIR__, "scan.toml"))
     !isempty(fields) && allunique(fields) && all(h -> isfinite(h) && h > 0, fields) ||
         throw(ArgumentError("fields must be distinct finite positive values"))
     all(t -> isfinite(t) && t >= 0, times) || throw(ArgumentError("times must be finite and nonnegative"))
-    targets = params["sample_fields"]
-    targets isa AbstractVector && all(h -> h isa Real && isfinite(h) && h > 0, targets) ||
-        throw(ArgumentError("sample_fields must be an array of finite positive values"))
-    sample_fields = select_sample_fields(fields, targets)
     output = normpath(joinpath(dirname(abspath(path)), params["output"]))
     stem, ext = splitext(output)
     output = stem * "_" * Dates.format(now(), "yyyymmdd_HHMMSS") * ext
     ispath(output) && throw(ArgumentError("output already exists: $output"))
-    return (; nsamples, seed, worker_threads, output, field_distribution, sizes, fields, sample_fields, times)
+    return (; nsamples, seed, worker_threads, output, field_distribution, sizes, fields, times)
 end
 
 # Mark completion only after all computation and writes succeed.
@@ -60,7 +54,12 @@ end
 
 function write_case(file, data, cfg)
     group = create_group(file, "L$(data.L)/h$(data.h0)")
-    write_observables(group, data.result, cfg.times)
+    for (key, value) in pairs(data.result)
+        group[string(key)] = value
+    end
+    group["imaginary_time"] = cfg.times
+    group["real_time"] = cfg.times
+    group["subsystem_sizes"] = collect(1:data.L-1)
     attributes(group)["j"] = cld(data.L, 2)
     attributes(group)["seed"] = data.seed
 
@@ -70,6 +69,8 @@ function write_case(file, data, cfg)
 end
 
 function write_metadata(file, cfg)
+    attributes(file)["format_version"] = 2
+    attributes(file)["offset"] = true
     attributes(file)["complete"] = false
     attributes(file)["nsamples"] = cfg.nsamples
     attributes(file)["master_seed"] = cfg.seed
@@ -81,43 +82,4 @@ function write_metadata(file, cfg)
     parameters = create_group(file, "parameters")
     parameters["sizes"] = collect(cfg.sizes)
     parameters["fields"] = collect(cfg.fields)
-    parameters["sample_fields"] = cfg.sample_fields
-end
-
-# Select existing scan points nearest the configured representative fields.
-function select_sample_fields(fields, targets)
-    return unique([fields[argmin(abs.(fields .- h))] for h in targets])
-end
-
-function write_correlations(group, result, times)
-    group["correlation_mean"] = result.C_mean
-    group["correlation_sem"] = result.C_sem
-    group["log_correlation_mean"] = result.logC_mean
-    group["log_correlation_sem"] = result.logC_sem
-    group["imaginary_time"] = times
-    group["real_time"] = times
-    # Both time domains provide real-valued sample means and SEM upstream.
-    group["autocorrelation_mean"] = result.Ct_mean
-    group["autocorrelation_sem"] = result.Ct_sem
-    group["log_autocorrelation_mean"] = result.logCt_mean
-    group["log_autocorrelation_sem"] = result.logCt_sem
-    group["real_autocorrelation_mean"] = result.real_Ct_mean
-    group["real_autocorrelation_sem"] = result.real_Ct_sem
-    group["real_log_autocorrelation_mean"] = result.real_logCt_mean
-    group["real_log_autocorrelation_sem"] = result.real_logCt_sem
-end
-
-
-function write_observables(group, result, times)
-    for field in (:gap_mean, :gap_sem, :log_gap_mean, :log_gap_sem)
-        group[string(field)] = getproperty(result, field)
-    end
-    write_correlations(group, result, times)
-    if hasproperty(result, :gaps)
-        group["gap_samples"] = result.gaps
-        group["gap_resolved"] = result.resolved
-        for field in (:sample_C, :sample_Ct, :sample_real_Ct)
-            group[string(field)] = getproperty(result, field)
-        end
-    end
 end

@@ -8,6 +8,7 @@ module RandomTFIMSlurm
 
 include("scan_common.jl")
 
+"""Scan (L, h0) on workers; write only the four observable summaries on the manager."""
 function run_scan(cfg, pids)
     myid() == 1 || error("run_scan must run on the manager process")
     !isempty(pids) && all(pid -> pid != 1 && pid in workers(), pids) ||
@@ -24,29 +25,16 @@ function run_scan(cfg, pids)
     job_queue = Channel{eltype(jobs)}(length(jobs))
     foreach(job -> put!(job_queue, job), jobs)
     close(job_queue)
-    results = Channel{NamedTuple}(length(pids))
-
     return with_results(cfg) do file
-        writer = @async try
-            for data in results
-                write_case(file, data, cfg)
-            end
-        finally
-            isopen(results) && close(results)
-        end
-        try
-            @sync for pid in pids
-                @async for job in job_queue
-                    isopen(results) || break
-                    data = remotecall_fetch(compute_case, pid, job, cfg)
-                    put!(results, data)
+        write_lock = ReentrantLock()
+        @sync for pid in pids
+            @async for job in job_queue
+                data = remotecall_fetch(compute_case, pid, job, cfg)
+                lock(write_lock) do
+                    write_case(file, data, cfg)
                 end
             end
-        finally
-            isopen(results) && close(results)
-            wait(writer)
         end
-
     end
 end
 

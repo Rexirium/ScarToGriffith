@@ -22,12 +22,11 @@ julia --threads=4 random_tfim/run.jl random_tfim/scan.toml
 输出文件名自动追加时间戳，已有同名文件时拒绝覆盖。
 
 配置中的 `sizes`、`nsamples`、`seed`、`field_distribution`、`fields`、
-`times`、`sample_fields`、`worker_threads` 和 `output` 分别控制链长、样本数、主种子、
-横场分布、场强网格、时间网格、保存逐样本数据的目标场强、Slurm worker 线程数和输出路径。
+`times`、`worker_threads` 和 `output` 分别控制链长、样本数、主种子、
+横场分布、场强网格、时间网格、Slurm worker 线程数和输出路径。
 `fields` 和 `times` 可以直接写数组，或写 `{ start = ..., stop = ..., length = ... }` 的线性网格；
 增加 `scale = "log10"` 时，start/stop 表示以 10 为底的指数。
-`sample_fields` 直接写目标数组，目标会匹配到最近的实际扫描点，空数组表示只保存统计量。
-切换 `field_distribution` 时按需手动调整该数组；配置注释提供 fixed 的推荐目标。
+所有扫描点只保存汇总统计；`sample_fields` 已移除。
 
 `uniform` 使用 `h∼U(0,h0)`；`fixed` 使用每个格点相同的 `h=h0/e`，其中 e 为自然常数。
 两种模式的临界点均为 `h0=1`，耦合均为 `J∼U(0,1)`；平均横场分别为 `h0/2` 和 `h0/e`。
@@ -37,13 +36,17 @@ julia --threads=4 random_tfim/run.jl random_tfim/scan.toml
 并将 `output` 改为 `results/full_uniform.h5`（固定横场则使用 `results/full_fixed.h5`）。
 Slurm 提交现在也默认使用这份配置，不再隐含 full/50000/fixed 参数。
 
-默认扫描 `h0 = 10 .^ range(-1, 1, 101)`，计算能隙、`r=0:L÷2` 的空间关联，
-以及中点 `j=cld(L,2)`、`times=10 .^ range(-1,3,101)`（0.1 到 1000）的虚时间和实时间自关联。
+默认扫描 `h0 = 10 .^ range(-1, 1, 101)`，计算能隙、所有切分 `A=1:ℓ`（`ℓ=1:L-1`）的二分纠缠熵，
+以及中点 `j=cld(L,2)`、`times=10 .^ range(-1,3,101)`（0.1 到 1000）的虚时间和实时间自关联（均固定 `offset=true`）。
+每种观测量保存均值、SEM、逐样本自然对数的均值和 SEM；扫描不计算空间关联，也不保留逐样本结果。
 每个 `(L,h0)` 使用 `seed + 1000k + L`（k 为场强索引），本地和 Slurm 使用相同规则。
 在 Julia 中调用时，先用 `cfg = read_config("path/to/scan.toml")` 读取配置，
 再调用 `main(cfg)`；Slurm 对应 `RandomTFIMSlurm.read_config(path)` 和 `RandomTFIMSlurm.run_scan(cfg, pids)`。
 
 ### 绘制已有数据
+
+以下 `plot_results.jl` 图集用于旧的含样本和空间关联的文件，不适用于新的汇总扫描格式。
+新格式仍保留虚时、实时统计字段，独立时间关联分析脚本可以读取这些字段。
 
 绘图使用共享 `@v1.13` 环境中的 CairoMakie 和 HDF5：
 
@@ -189,7 +192,7 @@ realtime = autocorrelation(J, h, times; time_domain=:real)
 | `ground_state(J, h)` | 命名元组 `(gap, resolved, G)` |
 | `correlations(G; rmax)` | 直接返回 `Matrix{Float64}`，形状 `L×(rmax+1)` |
 | `entanglement_entropy(J, h; cut=L÷2)` 或 `entanglement_entropy(G; cut=L÷2)` | `Float64`，基态 von Neumann 熵（自然对数） |
-| `autocorrelation(J, h, times; j, time_domain)` | 直接返回 `Vector{Float64}`，长度 `length(times)` |
+| `autocorrelation(J, h, times; j, time_domain, offset=false)` | 直接返回 `Vector{Float64}`，长度 `length(times)` |
 
 空间关联中 `C[i,r+1]=⟨σz(i)σz(i+r)⟩`，`r=0` 列为 1。
 默认 `rmax=L÷2`，允许 `0≤rmax≤L−1`。
@@ -242,11 +245,35 @@ $$
 | `:real` | it | 有限，可为负 | `Float64`，仅返回实部 |
 
 `times` 可为空、乱序或含重复点；`j` 默认 `cld(L,2)`，偶数链取左中点，奇数链取正中点。
-零时间也执行完整计算，结果在舍入误差内满足 `C(0)≈1`。
+默认 `offset=false` 保持原有实现，零时间也执行完整计算，结果在舍入误差内满足 `C(0)≈1`。
 实时间返回 `Re C_j(it)=⟨{σz(j,t),σz(j,0)}⟩/2`，即对称化关联，内部仍保留复数演化。
 精确算术下，虚时间关联在 [0,1] 内且单调不增；返回的实时间关联满足 `C(-t)=C(t)`，可为负。
 有限链的确定宇称基态有 `⟨σz⟩=0`，因此结果同时等于 connected correlation。
 接口适用于零温平稳基态，不包含热态、quench 初态或破缺对称态。
+
+设置 `offset=true` 时，返回扣除最低奇宇称基态跃迁后的关联：
+
+$$
+C_j^{\mathrm{offset}}(z)=C_j(z)-w_j e^{-\Delta z},\qquad
+w_j=|\langle GS_-|\sigma_j^z|GS_+\rangle|^2,\qquad
+\Delta=E_--E_+=2\min_\mu\epsilon_\mu.
+$$
+
+这里 `GS_+` 是偶宇称全局基态，`GS_-` 是奇宇称基态。虚时间扣除
+`w_j*exp(-Delta*tau)`；实时间仍仅返回实部，因此扣除 `w_j*cos(Delta*t)`。
+扣除后 `C(0)≈1-w_j`，这与通常扣除 `⟨σz⟩²` 的 connected correlation 不同，
+也不是拟合脚本中的常数背景 B。
+
+```julia
+imaginary_offset = autocorrelation(J, h, times; offset=true)
+realtime_offset = autocorrelation(J, h, times; time_domain=:real, offset=true)
+```
+
+权重复用同一次 SVD，以最低能单准粒子和较短 JW 字符串的 Wick 收缩行列式计算，
+不通过长时间拟合估计。端点直接使用最低模态的 `U[1,mu]^2` 或 `V[L,mu]^2`。
+若最低模态简并（例如某些断链构型），按 SVD 的 `argmin` 选择其中一个奇宇称基态，
+不扣除整个简并子空间。极小能隙沿用 Float64 SVD；两个相近量相减可能使剩余关联
+失去相对精度，结果不裁剪、不取绝对值，非正值的对数仍记为 NaN。
 
 ### 无序平均
 
@@ -283,6 +310,9 @@ only_gaps = disorder_ensemble(L, h0, Float64[]; nsamples=100, field_distribution
 不返回对数样本数组；需要时由后续计算重新取对数。空间对数统计仍按逐对取 log 后平均，不能用 `log.(sample_C)` 重建。
 
 默认 `nsamples=100`、`seed=1996`、`rmax=L÷2`、`keep_samples=false`。
+`disorder_ensemble(...; offset=true)` 在每个样本内对两种时间域扣除上述跃迁，
+然后计算均值、SEM 和对数统计；默认 `offset=false`，能隙和空间关联不受影响。
+当前 TOML/本地和 Slurm 扫描入口沿用默认值；此选项通过 Julia 函数接口设置。
 `times` 是第三个必需位置参数，必须有限且非负；两种时间域共用该网格并同时计算。
 显式传入空 `times` 时返回空时间统计；`rmax=0` 跳过非平凡空间关联。
 先逐样本计算，再平均：空间关联先平均同一样本内的有效起点（L−r 个），
@@ -297,38 +327,31 @@ only_gaps = disorder_ensemble(L, h0, Float64[]; nsamples=100, field_distribution
 `logC_mean/logCt_mean` 是先取对数再平均，不是均值的对数；非正或非有限实数（实时间取实部）产生的 `NaN` 会传播到对数统计，
 不会通过删除格点或样本重新平均。`exp.(logC_mean)` 是典型关联；将对数均值 ±1 SEM 指数映射得到的范围不是指定置信水平的置信区间。
 
-## HDF5 输出
+## HDF5 output
 
-本地和 Slurm 脚本均同时保存虚时间和实时间结果。根目录中的 `parameters/sizes`、`parameters/fields`
-记录扫描参数，各参数组命名为 `L16/h1.0` 等。组属性仅保留观测格点 `j` 和随机种子 `seed`。
-根属性为 `boundary`（固定为 `open`）、`distribution`（`box`，描述耦合分布）、`field_distribution`（`uniform` 或 `fixed`）、`nsamples` 和 `complete`，只有整个扫描完成后才设 `complete=true`。固定模式另存 `fixed_field_divisor=e`，实际横场为 `h0/fixed_field_divisor`。扫描参数和组名中的 `h0` 始终是用户输入的尺度。
-绘图要求固定模式的 `fixed_field_divisor=e`，不再兼容旧横场定义。
-耗时仅打印到运行日志；环境信息和固定的物理、统计定义不再写入属性，相关约定见本文档。
-两个脚本共用 `results_io.jl` 解析运行参数，并写入元数据、统计量和可选样本。
-计算前将配置中的 `sample_fields` 目标匹配到扫描网格的最近点，记录在 `parameters/sample_fields`。默认目标为 `0.1、0.5、1、2、5、10`；fixed 可手动设为 `0.5、1、1.5、2、e、3`。扫描网格不变。现有六面板绘图需要保存六个不同扫描点；四点分布图使用其中最接近临界点的一点和最大的三点。
-这些值对应索引 `[1, 36, 51, 66, 86, 101]`，约为 `[0.1, 0.501187, 1, 1.995262, 5.011872, 10]`。
-仅这些参数调用 `keep_samples=true` 并保存全部返回的样本；其余参数调用 `keep_samples=false`，只保存统计量和时间网格。
-`imaginary_time` 与 `real_time` 保存相同的网格；两种时间域的自关联统计均保存为 Float64 数组，实时间仅保存实部。
+The local and Slurm entry points share `scan_common.jl` and `results_io.jl`.
+Format version 2 stores only summary statistics for each `L16/h1.0` group.
+Root attributes include `format_version=2`, `offset=true`, `boundary=open`,
+`distribution=box`, `field_distribution`, `nsamples`, `master_seed`, and `complete`.
+Fixed fields also record `fixed_field_divisor=e`. Completion is marked only after all writes succeed.
+`parameters/sizes` and `parameters/fields` store the scan grid; group attributes store `j` and `seed`.
 
-| 数据集 | 内容 / 形状 |
+| Dataset prefix | Shape / meaning |
 |---|---|
-| `gap_samples, gap_resolved` | 仅特殊参数组：逐样本能隙及分辨标记，长度 nsamples |
-| `sample_C` | 仅特殊参数组：空间关联样本，形状 `(rmax+1)×nsamples` |
-| `sample_Ct, sample_real_Ct` | 仅特殊参数组：虚时间、实时间关联样本，形状 `length(times)×nsamples` |
-| `gap_mean, gap_sem` | 能隙均值和标准误，标量 |
-| `log_gap_mean, log_gap_sem` | 对数能隙均值和标准误，标量 |
-| `correlation_mean, correlation_sem` | 空间关联均值和标准误，长度 rmax+1 |
-| `log_correlation_mean, log_correlation_sem` | 空间关联对数的均值和标准误，长度 rmax+1 |
-| `imaginary_time, real_time` | 共用的时间网格 |
-| `autocorrelation_mean, autocorrelation_sem` | 虚时间自关联均值和标准误，与时间网格等长 |
-| `log_autocorrelation_mean, log_autocorrelation_sem` | 虚时间自关联对数的均值和标准误，与时间网格等长 |
-| `real_autocorrelation_mean, real_autocorrelation_sem` | 实时间自关联实部的均值和标准误 |
-| `real_log_autocorrelation_mean, real_log_autocorrelation_sem` | 实时间自关联实部对数的均值和标准误 |
+| `gap`, `log_gap` | Scalar gap and sample log-gap statistics |
+| `autocorrelation`, `log_autocorrelation` | Imaginary-time offset correlation, length `length(times)` |
+| `real_autocorrelation`, `real_log_autocorrelation` | Real part of real-time offset correlation, length `length(times)` |
+| `entanglement_entropy`, `log_entanglement_entropy` | Entropy of `A=1:l`, length `L-1` |
 
-不保存 `log_gap_samples` 或关联的对数样本数组；对数能隙由后续分析根据 `gap_samples` 和 `gap_resolved` 重算，未分辨样本对应 `NaN`。
-空间关联样本已在有效起点间平均，不能重建逐格点对的分布。
-距离由数组索引恢复：空间统计量第 r+1 个元素对应 r；样本数由根属性 `nsamples` 读取。
-绘图直接读取当前字段和 `parameters` 元数据，不推断缺失字段或兼容旧字段名。
+Each prefix has `_mean` and `_sem` datasets. `imaginary_time` and `real_time`
+store the time grid; `subsystem_sizes=1:L-1` labels the entropy entries.
+SEM uses the corrected variance across disorder realizations and is `NaN` for one sample.
+Logs are natural logarithms taken before averaging, not logs of the mean.
+Nonpositive/nonfinite observables and unresolved gaps produce `NaN` log statistics;
+no samples are filtered or replaced by absolute values.
+The scan accumulates running moments, retaining no individual observable results.
+Spatial correlations, sample arrays, and `parameters/sample_fields` are absent.
+The core `disorder_ensemble` API remains available separately for legacy analyses.
 
 ## 模型与算法
 
@@ -483,6 +506,8 @@ julia --startup-file=no random_tfim/test/benchmark.jl
 
 入口依次启动五个独立 Julia 进程；某组失败仍继续运行其余组，最终返回失败状态。
 `physics.jl` 保留自旋哈密顿量对照、OBC、解耦极限、微小尾部、奇异前缀和无序统计测试。
+`offset` 测试显式核对基态宇称、跃迁权重与扣除后的自旋谱求和，覆盖两种时间域、
+全部格点、强制行列式/Pfaffian 与自动路径，并检查默认兼容、解耦极限及无序统计。
 `io.jl` 自动激活 local 环境，以小链的两个代表场强检查两种横场、OBC、样本/摘要输出，
 通过临时 TOML 运行小链扫描，并启动一个本地 worker 检查分布式输出与本地结果逐项一致；
 同时检查防覆盖和失败时的未完成标记，不提交 Slurm 作业。

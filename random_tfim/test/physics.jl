@@ -144,6 +144,64 @@ function spin_autocorrelation(exact, j, times, scale=1.0)
     return (; C, magnetization=sum(z .* abs2.(psi)))
 end
 
+@testset "Odd ground-state offset vs spin spectral sum" begin
+    rng = Xoshiro(812)
+    for L in 2:7, h0 in (0.5, 1.0, 2.5)
+        J = 0.5 .+ rand(rng, L-1)
+        h = h0 .* (0.7 .+ rand(rng, L))
+        exact = spin_oracle(J, h)
+        even, odd = exact.vectors[:, 1], exact.vectors[:, 2]
+        # Global spin flip is reversal in the sigma-z product basis.
+        @test reverse(even) ≈ even atol=1e-9
+        @test reverse(odd) ≈ -odd atol=1e-9
+        gap = exact.E1 - exact.E0
+        Jcopy, hcopy = copy(J), copy(h)
+        for j in 1:L, time_domain in (:imaginary, :real)
+            times = time_domain == :imaginary ? [0.7, 0.0, 2.3, 0.7] : [0.7, 0.0, -2.3, -0.7]
+            scale = time_domain == :imaginary ? 1.0 : 1im
+            weights = abs2.(exact.vectors' * (exact.Z[:, j] .* even))
+            weight = abs2(dot(odd, exact.Z[:, j] .* even))
+            weights[2] = 0.0
+            expected = [real(sum(weights .* exp.(-scale .* (exact.energies .- exact.E0) .* t))) for t in times]
+            original = autocorrelation(J, h, times; j, time_domain)
+            @test original == autocorrelation(J, h, times; j, time_domain, offset=false)
+            for rcond_tol in (0.0, sqrt(eps(Float64)), 1.0)
+                actual = @inferred autocorrelation(J, h, times; j, time_domain, rcond_tol, offset=true)
+                @test actual ≈ expected atol=2e-10
+                @test original - actual ≈ weight .* real.(exp.(-scale .* gap .* times)) atol=2e-10
+                @test actual[2] ≈ 1-weight atol=2e-10
+            end
+        end
+        @test J == Jcopy && h == hcopy
+    end
+    # A unique lowest decoupled spin carries either all or none of the weight.
+    h = [1.3, 0.4, 1.7, 0.9]
+    for j in 1:4, time_domain in (:imaginary, :real)
+        times = [0.0, 0.3, 2.0]
+        expected = j == 2 ? zeros(3) : autocorrelation(zeros(3), h, times; j, time_domain)
+        @test autocorrelation(zeros(3), h, times; j, time_domain, offset=true) ≈ expected atol=1e-14
+        @test isempty(autocorrelation(zeros(3), h, Float64[]; j, time_domain, offset=true))
+    end
+    times = [0.0, 0.4, 1.2]
+    kwargs = (; nsamples=3, seed=812, keep_samples=true)
+    original = disorder_ensemble(6, 1.0, times; kwargs...)
+    unchanged = disorder_ensemble(6, 1.0, times; kwargs..., offset=false)
+    @test isequal(original, unchanged)
+    result = disorder_ensemble(6, 1.0, times; kwargs..., offset=true)
+    rng = Xoshiro(kwargs.seed)
+    for n in 1:kwargs.nsamples
+        J, h = sample_disorder(rng, 6, 1.0)
+        @test result.sample_Ct[:, n] ≈ autocorrelation(J, h, times; offset=true)
+        @test result.sample_real_Ct[:, n] ≈ autocorrelation(J, h, times; offset=true, time_domain=:real)
+    end
+    @test result.gaps == original.gaps
+    @test result.sample_C == original.sample_C
+    @test result.Ct_mean ≈ vec(mean(result.sample_Ct; dims=2))
+    @test result.Ct_sem ≈ vec(std(result.sample_Ct; dims=2)) / sqrt(kwargs.nsamples)
+    @test result.logCt_mean ≈ vec(mean(RandomTFIM.correlation_log.(result.sample_Ct); dims=2)) nans=true
+    @test result.real_Ct_mean ≈ vec(mean(result.sample_real_Ct; dims=2))
+end
+
 @testset "Optimized kernels: decay, singular prefixes and short strings" begin
     rng = Xoshiro(3209)
     # Independent Pfaffian oracle: expansion along the first row.

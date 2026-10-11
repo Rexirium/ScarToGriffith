@@ -62,8 +62,14 @@ Default time_domain=:imaginary uses sigma_z(j,tau)=exp(tau*H)*sigma_z(j)*exp(-ta
 with tau >= 0. time_domain=:real uses
 sigma_z(j,t)=exp(im*t*H)*sigma_z(j)*exp(-im*t*H) and returns only the real part,
 equivalently <{sigma_z(j,t), sigma_z(j,0)}> / 2. Real times may be negative.
-This also equals the connected correlation: the finite-chain parity ground
+With offset=false (default), this also equals the connected correlation: the finite-chain parity ground
 state has <sigma_z(j)> = 0. Thermal and nonstationary initial states are not supported.
+offset=true subtracts |<GS_-|sigma_z(j)|GS_+>|^2 * exp(-Delta*z),
+where GS_+ is the even ground state, GS_- the lowest odd state,
+Delta=E_--E_+=2minimum(F.S), and z=tau or im*t (only the real part is returned).
+The matrix element uses the lowest SVD mode; if it is degenerate, this selects
+one odd ground state, not the whole degenerate subspace. Subtraction can lose
+relative precision when the remaining correlation is small; values are not clipped.
 J has L-1 bonds, h has L fields; require L >= 2.
 Default j=cld(L,2) is the midpoint (left midpoint for even L).
 Endpoints use a direct spectral sum. At interior sites, estimate
@@ -78,7 +84,8 @@ Extremely small tails can still underflow or require higher-precision validation
 """
 Base.@constprop :aggressive function autocorrelation(J::AbstractVector{<:Real}, h::AbstractVector{<:Real},
         times::AbstractVector{<:Real}; j::Int=cld(length(h), 2),
-        time_domain::Symbol=:imaginary, rcond_tol::Real=sqrt(eps(Float64)))
+        time_domain::Symbol=:imaginary, rcond_tol::Real=sqrt(eps(Float64)),
+        offset::Bool=false)
     L = length(h)
     check_chain(J, h)
     1 <= j <= L || throw(ArgumentError("require 1 <= j <= L"))
@@ -87,7 +94,7 @@ Base.@constprop :aggressive function autocorrelation(J::AbstractVector{<:Real}, 
     isempty(times) && return Float64[]
 
     F = svd!(fermion_matrix(J, h))
-    return autocorrelation(F, times, j, scale; rcond_tol)
+    return autocorrelation(F, times, j, scale; rcond_tol, offset)
 end
 
 # OBC fallback: evaluate all selected times together to reuse the JW workspace.
@@ -172,9 +179,31 @@ function spin_flip_covariance(F, j)
     return B
 end
 
+# Wick contractions of the short JW string with the lowest quasiparticle.
+function ground_transition_weight(F, j)
+    L = length(F.S)
+    mu = argmin(F.S)
+    j == 1 && return abs2(F.U[1, mu])
+    j == L && return abs2(F.V[L, mu])
+    depth = min(j, L+1-j)
+    u = j <= cld(L, 2) ? view(F.U, 1:depth, :) : view(F.V, L-depth+1:L, :)
+    v = j <= cld(L, 2) ? view(F.V, 1:depth-1, :) : view(F.U, L-depth+2:L, :)
+    logabs, _ = logabsdet(hcat(u * v', u[:, mu]))
+    return exp(2logabs)
+end
+
 function autocorrelation(F, times, j, scale;
-        rcond_tol::Real=sqrt(eps(Float64)), B=nothing)
+        rcond_tol::Real=sqrt(eps(Float64)), B=nothing, offset::Bool=false)
     isempty(times) && return Float64[]
+    if offset
+        C = autocorrelation(F, times, j, scale; rcond_tol, B)
+        weight = ground_transition_weight(F, j)
+        gap = 2minimum(F.S)
+        for (n, t) in enumerate(times)
+            C[n] -= weight * (scale isa Real ? exp(-gap*t) : cos(gap*t))
+        end
+        return C
+    end
     L = length(F.S)
     (j == 1 || j == L) && return endpoint_autocorrelation(F, times, j, scale)
     depth = min(j, L+1-j)

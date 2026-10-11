@@ -40,6 +40,8 @@ Open-chain sample means use only the L-r valid origins.
 Select field_distribution=:uniform (default) or :fixed (h=h0/e); J remains uniform.
 The rcond_tol keyword is forwarded to both imaginary- and real-time
 autocorrelations; it has the same meaning and default as in autocorrelation.
+offset=false preserves the full correlation; offset=true subtracts each sample's
+lowest odd-ground-state transition before computing temporal statistics.
 Logarithms are taken per pair/time before averaging. Nonpositive or nonfinite
 values give NaN, which propagates through
 sample and ensemble statistics without dropping sites or realizations.
@@ -48,7 +50,7 @@ Base.@constprop :aggressive function disorder_ensemble(L::Int, h0::Real,
         times::AbstractVector{<:Real}; nsamples::Int=100, seed::Int=1996,
         rmax::Int=L ÷ 2, keep_samples::Bool=false,
         j::Int=cld(L, 2), rcond_tol::Real=sqrt(eps(Float64)),
-        field_distribution::Symbol=:uniform)
+        field_distribution::Symbol=:uniform, offset::Bool=false)
     nsamples > 0 || throw(ArgumentError("nsamples must be positive"))
     1 <= j <= L || throw(ArgumentError("require 1 <= j <= L"))
     time_scale(times, :imaginary)
@@ -88,8 +90,8 @@ Base.@constprop :aggressive function disorder_ensemble(L::Int, h0::Real,
         end
 
         B = !isempty(times) && 1 < j < L && rcond_tol != 1 ? spin_flip_covariance(F, j) : nothing
-        sample_Ct[:, n] = autocorrelation(F, times, j, 1.0; rcond_tol, B)
-        sample_real_Ct[:, n] = autocorrelation(F, times, j, 1.0im; rcond_tol, B)
+        sample_Ct[:, n] = autocorrelation(F, times, j, 1.0; rcond_tol, B, offset)
+        sample_real_Ct[:, n] = autocorrelation(F, times, j, 1.0im; rcond_tol, B, offset)
     end
 
     sample_logCt = correlation_log.(sample_Ct)

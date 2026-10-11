@@ -8,7 +8,6 @@ using Test
     @test base.seed == 1996
     @test base.worker_threads == 8
     @test base.field_distribution == :uniform
-    @test base.sample_fields == select_sample_fields(base.fields, [0.1, 0.5, 1.0, 2.0, 5.0, 10.0])
     @test base.fields == 10 .^ range(-1, 1, 101)
     @test base.times == 10 .^ range(-1, 3, 101)
     @test RandomTFIMSlurm.read_config().fields == base.fields
@@ -24,29 +23,23 @@ using Test
         fixed_params = merge(defaults, Dict("field_distribution" => "fixed"))
         save_config(fixed_params)
         fixed = read_config(path)
-        @test fixed.sample_fields == base.sample_fields
-        save_config(merge(fixed_params, Dict("sample_fields" => [0.5, 1.0, 1.5, 2.0, exp(1), 3.0])))
-        fixed = read_config(path)
-        @test fixed.sample_fields ≈ [10.0^x for x in (-0.3, 0.0, 0.18, 0.3, 0.44, 0.48)]
         @test dirname(fixed.output) == joinpath(directory, "results")
         @test occursin(r"demo_uniform_\d{8}_\d{6}\.h5$", fixed.output)
         for (key, value) in (("nsamples", 0), ("boundary", "bad"),
                 ("field_distribution", "bad"), ("seed", -1), ("worker_threads", 0),
+                ("fields", [0.0]), ("times", [-1.0]),
                 ("sizes", [1]), ("sizes", [4, 4]), ("fields", [1.0, 1.0]),
-                ("fields", [0.0]), ("times", [-1.0]), ("sample_fields", [-1.0]),
-                ("sample_fields", Dict("uniform" => [1.0])),
                 ("fields", Dict("start" => 0, "stop" => 1, "length" => 0)),
                 ("times", Dict("start" => 0, "stop" => 1, "length" => 2, "scale" => "bad")))
             save_config(merge(defaults, Dict(key => value)))
             @test_throws ArgumentError read_config(path)
         end
-        save_config(merge(defaults, Dict("sizes" => [4, 5], "nsamples" => 1,
+        save_config(merge(defaults, Dict("sizes" => [4, 5], "nsamples" => 65,
             "seed" => 72, "field_distribution" => "fixed",
-            "fields" => [0.5, 1.0], "sample_fields" => [0.6],
+            "fields" => [0.5, 1.0],
             "times" => Dict("start" => 0.0, "stop" => 1.0, "length" => 3))))
         cfg = read_config(path)
         @test cfg.times == [0.0, 0.5, 1.0]
-        @test cfg.sample_fields == [0.5]
         @test cfg.seed == 72
         output = redirect_stdout(devnull) do
             main(cfg)
@@ -66,13 +59,13 @@ using Test
             @test length(keys(file["L4"])) == 2
             @test read(attributes(file["L4/h0.5"])["seed"]) == 72 + 1000 + 4
             @test read(attributes(file["L5/h0.5"])["j"]) == 3
-            @test all(isnan, read(file["L4/h1.0/autocorrelation_sem"]))
-            @test haskey(file["L4/h0.5"], "gap_samples")
+            @test all(isfinite, read(file["L4/h1.0/autocorrelation_sem"]))
+            @test !haskey(file["L4/h0.5"], "gap_samples")
             @test !haskey(file["L4/h1.0"], "gap_samples")
         end
         # Exercise actual worker scheduling and compare every saved value with the local run.
         project = dirname(Base.active_project())
-        pids = addprocs(1; exeflags=`--project=$project --threads=2 --startup-file=no`)
+        pids = addprocs(2; exeflags=`--project=$project --threads=2 --startup-file=no`)
         try
             distributed_cfg = merge(cfg, (; worker_threads=2, output=joinpath(directory, "distributed.h5")))
             redirect_stdout(devnull) do
@@ -97,68 +90,67 @@ using Test
                     compare_results(local_file, distributed_file)
                 end
             end
+            for (name, overrides) in (("compute_failure", (; nsamples=0)),
+                    ("write_failure", (; fields=[0.5, 0.5])))
+                failed_cfg = merge(distributed_cfg, overrides,
+                    (; output=joinpath(directory, "$name.h5")))
+                @test_throws CompositeException RandomTFIMSlurm.run_scan(failed_cfg, pids)
+                h5open(failed_cfg.output, "r") do file
+                    @test !read(attributes(file)["complete"])
+                end
+            end
         finally
             rmprocs(pids)
         end
-        save_config(merge(defaults, Dict("sample_fields" => [])))
-        @test isempty(read_config(path).sample_fields)
     end
 
-    for field_distribution in (:uniform, :fixed)
-        cfg = (; base..., field_distribution, nsamples=3, times=[0.0, 0.3, 1.7])
-        mktempdir() do directory
-            path = joinpath(directory, "ensemble.h5")
-            expected = Dict()
-            h5open(path, "w") do file
-                write_metadata(file, cfg)
-                # Selected and summary-only points cover both output layouts.
-                for h0 in (base.sample_fields[3], base.fields[2])
-                    data = RandomTFIMSlurm.compute_case((; L=6, h0, seed=72), cfg)
-                    expected[h0] = disorder_ensemble(6, h0, cfg.times;
-                        field_distribution, nsamples=3, seed=72, keep_samples=h0 in cfg.sample_fields)
-                    @test isequal(data.result, expected[h0])
-                    redirect_stdout(devnull) do
-                        RandomTFIMSlurm.write_case(file, data, cfg)
-                    end
-                end
+    for field_distribution in (:uniform, :fixed), nsamples in (1, 3, 65)
+        times = [0.0, 0.3, 1.7]
+        cfg = (; base..., field_distribution, nsamples, times)
+        L, h0, seed = 4, 1.8, 72
+        rng = Xoshiro(seed)
+        samples = [sample_disorder(rng, L, h0; field_distribution) for _ in 1:nsamples]
+        gaps = [energy_gap(J, h) for (J, h) in samples]
+        observations = (
+            gap=[g.gap for g in gaps],
+            autocorrelation=hcat([autocorrelation(J, h, times; offset=true) for (J, h) in samples]...),
+            real_autocorrelation=hcat([autocorrelation(J, h, times; offset=true, time_domain=:real) for (J, h) in samples]...),
+            entanglement_entropy=hcat([[entanglement_entropy(J, h; cut) for cut in 1:L-1] for (J, h) in samples]...))
+        data = compute_case((; L, h0, seed), cfg)
+        @test length(data.result) == 16
+        for (name, values) in pairs(observations)
+            logs = RandomTFIM.correlation_log.(values)
+            name == :gap && (logs[.!getproperty.(gaps, :resolved)] .= NaN)
+            for (prefix, x) in (("", values), ("log_", logs))
+                stats = RandomTFIM.mean_sem(x)
+                key = replace(prefix * string(name), "log_real_" => "real_log_")
+                @test isapprox(getproperty(data.result, Symbol(key, "_mean")), stats.average; nans=true, atol=1e-13)
+                @test isapprox(getproperty(data.result, Symbol(key, "_sem")), stats.sem; nans=true, atol=1e-13)
             end
-            h5open(path, "r") do file
-                @test !read(attributes(file)["complete"])
-                @test read(attributes(file)["field_distribution"]) == string(field_distribution)
-                @test read(attributes(file)["boundary"]) == "open"
-                @test read(file["parameters/sample_fields"]) == cfg.sample_fields
-                if field_distribution == :fixed
-                    @test read(attributes(file)["fixed_field_divisor"]) == exp(1)
-                end
-                for (h0, result) in expected
-                    g = file["L6/h$h0"]
-                    @test read(g["imaginary_time"]) == read(g["real_time"]) == cfg.times
-                    for (prefix, mean_key, sem_key) in (("correlation", :C_mean, :C_sem),
-                            ("log_correlation", :logC_mean, :logC_sem),
-                            ("autocorrelation", :Ct_mean, :Ct_sem),
-                            ("log_autocorrelation", :logCt_mean, :logCt_sem),
-                            ("real_autocorrelation", :real_Ct_mean, :real_Ct_sem),
-                            ("real_log_autocorrelation", :real_logCt_mean, :real_logCt_sem))
-                        @test isequal(read(g[prefix * "_mean"]), getproperty(result, mean_key))
-                        @test isequal(read(g[prefix * "_sem"]), getproperty(result, sem_key))
-                    end
-                    for key in (:gap_mean, :gap_sem, :log_gap_mean, :log_gap_sem)
-                        @test isequal(read(g[string(key)]), getproperty(result, key))
-                    end
-                    keep = h0 in cfg.sample_fields
-                    for key in ("gap_samples", "gap_resolved", "sample_C", "sample_Ct", "sample_real_Ct")
-                        @test haskey(g, key) == keep
-                    end
-                    if keep
-                        @test read(g["gap_samples"]) == result.gaps
-                        @test read(g["gap_resolved"]) == result.resolved
-                        for key in (:sample_C, :sample_Ct, :sample_real_Ct)
-                            @test read(g[string(key)]) == getproperty(result, key)
-                        end
-                    end
+        end
+        mktempdir() do directory
+            output = joinpath(directory, "summary.h5")
+            with_results(merge(cfg, (; output))) do file
+                write_case(file, data, cfg)
+            end
+            h5open(output, "r") do file
+                @test read(attributes(file)["offset"])
+                @test read(attributes(file)["format_version"]) == 2
+                @test Set(keys(file["parameters"])) == Set(["sizes", "fields"])
+                group = file["L4/h1.8"]
+                @test Set(keys(group)) == union(Set(string.(keys(data.result))),
+                    Set(["imaginary_time", "real_time", "subsystem_sizes"]))
+                @test read(group["subsystem_sizes"]) == [1, 2, 3]
+                @test read(group["imaginary_time"]) == read(group["real_time"]) == times
+                for (key, value) in pairs(data.result)
+                    @test isequal(read(group[string(key)]), value)
                 end
             end
         end
     end
-
+    empty_time = scan_observables(2, 1.0, Float64[];
+        nsamples=1, seed=1, field_distribution=:uniform)
+    @test isempty(empty_time.autocorrelation_mean)
+    @test isempty(empty_time.real_autocorrelation_mean)
+    @test length(empty_time.entanglement_entropy_mean) == 1
 end
