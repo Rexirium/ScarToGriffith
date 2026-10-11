@@ -96,6 +96,45 @@ function spin_oracle(J, h)
     return (; E0=F.values[1], E1=F.values[2], C, Z, energies=F.values, vectors=F.vectors)
 end
 
+@testset "Majorana bipartite entropy vs spin ED" begin
+    rng = Xoshiro(7026)
+    for L in 2:7, h0 in (0.7, 1.0, 2.5), random in (false, true)
+        J, h = random ? sample_disorder(rng, L, h0) : (ones(L-1), fill(h0, L))
+        exact = spin_oracle(J, h)
+        G = ground_state(J, h).G
+        saved = copy(G)
+        Jcopy, hcopy = copy(J), copy(h)
+        @test (@inferred entanglement_entropy(J, h)) ≈ entanglement_entropy(G)
+        for cut in 0:L
+            # Schmidt weights from the spin wavefunction, independent of JW/SVD of K.
+            psi = reshape(exact.vectors[:, 1], 2^cut, 2^(L-cut))
+            weights = abs2.(svdvals(psi))
+            expected = -sum(p*log(p) for p in weights if p > 0)
+            actual = @inferred entanglement_entropy(G; cut)
+            @test actual ≈ expected atol=2e-10
+            @test 0 <= actual <= min(cut, L-cut)*log(2) + 1e-12
+            @test actual ≈ entanglement_entropy(reverse(J), reverse(h); cut=L-cut) atol=2e-12
+        end
+        @test G == saved && J == Jcopy && h == hcopy
+    end
+    for cut in 0:6
+        @test entanglement_entropy(zeros(5), collect(0.5:0.5:3.0); cut) == 0.0
+    end
+    # The ordered parity ground state approaches a cat state with entropy ln(2).
+    @test entanglement_entropy(ones(5), fill(1e-3, 6)) ≈ log(2) atol=2e-6
+    # A severed bond factorizes the two halves.
+    @test entanglement_entropy([0.8, 1.1, 0.0, 0.7, 0.9], ones(6)) ≈ 0 atol=1e-12
+    @test_throws DimensionMismatch entanglement_entropy(zeros(3, 4))
+    @test_throws DimensionMismatch entanglement_entropy(ones(4), ones(4))
+    @test_throws ArgumentError entanglement_entropy(ones(3), zeros(4))
+    @test_throws ArgumentError entanglement_entropy(fill(NaN, 4, 4))
+    @test_throws ArgumentError entanglement_entropy(2.0 .* Matrix{Float64}(I, 4, 4))
+    for cut in (-1, 5)
+        @test_throws ArgumentError entanglement_entropy(ones(3), ones(4); cut)
+        @test_throws ArgumentError entanglement_entropy(-Matrix{Float64}(I, 4, 4); cut)
+    end
+end
+
 # Independent spectral sum, shared by imaginary, real and near-zero-time checks.
 function spin_autocorrelation(exact, j, times, scale=1.0)
     psi, z = @view(exact.vectors[:, 1]), @view(exact.Z[:, j])

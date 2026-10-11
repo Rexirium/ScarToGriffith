@@ -7,8 +7,8 @@ function plot_imaginary_offset_field_scan(input, sizes; tmin=1.0, tmax=1e3)
     128 in sizes || error("Figure 2 requires L=128 for the model comparison")
     records = []
     fields = h5open(input, "r") do f
-        fields = sort(filter(>=(1.0), read(f["parameters/fields"])))
-        isempty(fields) && error("No fields h0 >= 1 for Figure 2")
+        fields = sort(filter(h -> 0.1 <= h <= 10.0, read(f["parameters/fields"])))
+        isempty(fields) && error("No fields 0.1 <= h0 <= 10 for Figure 2")
         for L in sizes, h0 in fields
             g = f["L$(L)/h$(h0)"]
             result = fit_autocorrelation_offset(read(g["imaginary_time"]),
@@ -19,7 +19,7 @@ function plot_imaginary_offset_field_scan(input, sizes; tmin=1.0, tmax=1e3)
     end
     fig = Figure(size=(1600, 1100))
     Label(fig[0, 1:2], "Figure 2: Imaginary-time fit parameters versus field"; fontsize=28)
-    titles = ["Power-law + B fit", "Exponential + B fit", "Best-model log SSE/(N-3)"]
+    titles = ["Power-law + B fit (|α| ≤ 1)", "Exponential + B fit", "Best-model log SSE/(N-3)"]
     ylabels = [L"-\alpha", L"\lambda=1/\xi_{\tau}", L"\min(\mathrm{SSE}_{\log C})/(N-3)"]
     axes = [Axis(fig[panel_position(k, 2)...]; title=titles[k], xlabel=L"h_0", ylabel=ylabels[k],
         xscale=log10, yscale=identity, width=560, height=360,
@@ -33,7 +33,7 @@ function plot_imaginary_offset_field_scan(input, sizes; tmin=1.0, tmax=1e3)
         end
     end
     for ax in axes
-        xlims!(ax, first(fields), last(fields))
+        xlims!(ax, 0.1, 10.0)
         axislegend(ax; position=:lt, framevisible=false, labelsize=20)
     end
     comparison = Axis(fig[2, 2]; title="Model comparison (L = 128)", xlabel=L"h_0",
@@ -54,9 +54,9 @@ function plot_imaginary_offset_field_scan(input, sizes; tmin=1.0, tmax=1e3)
     end
     isempty(crossings) && text!(comparison, 0.97, 0.95; text="No crossing in scanned range",
         space=:relative, align=(:right, :top), fontsize=16)
-    xlims!(comparison, first(fields), last(fields))
+    xlims!(comparison, 0.1, 10.0)
     axislegend(comparison; position=:rt, framevisible=false, labelsize=20)
-    Label(fig[3, 1:2], "$(basename(input)) | h = h₀/e | $(length(fields)) fields, h₀ ≥ 1\n" *
+    Label(fig[3, 1:2], "$(basename(input)) | h = h₀/e | $(length(fields)) fields, 0.1 ≤ h₀ ≤ 10\n" *
         "Unweighted log-space fits; all finite C > 0; τ ∈ [$tmin, $tmax]\nCrossings: linear interpolation in log(h₀), no extrapolation";
         fontsize=18)
     (; fig, records, fields, crossings)
@@ -150,12 +150,12 @@ function imaginary_time_offset_main(args)
     # Imaginary-time fits with a constant background
 
     Input: `$input`; h=h0/e; sizes=$sizes; samples=$n.
-    Figure 1: L=128, representative FM/Griffiths/PM fields; Figure 2: all sizes, h0>=1.
+    Figure 1: L=128, representative FM/Griffiths/PM fields; Figure 2: all sizes, 0.1<=h0<=10.
     Figure 1 subtracts the selected model's B from the stored mean and fitted curve.
     SEM is unchanged and excludes uncertainty in fitted B; nonpositive shifted values are masked on the log axis.
     Background subtraction is for display only; fitting and model selection still use the original C.
     Models: C=A*tau^alpha+B, C=A*exp(-lambda*tau)+B.
-    Constraints: A>0, B>=0, alpha<=0, lambda>=0. Power rate=-alpha; exponential rate=lambda.
+    Constraints: A>0, B>=0, -1<=alpha<=0, lambda>=0. Power rate=-alpha; exponential rate=lambda.
     Window: [$tmin, $tmax]; identical finite positive times and C for both models.
     Minimize sum((log(C)-log(C_fit))^2), retaining the original script's unweighted log-space objective.
     SEM is used only for plot shading. Tiny positive tails remain in the fit; plot floor is 1e-12.

@@ -6,10 +6,12 @@ using Statistics
 
 export sample_disorder, energy_gap, ground_state, correlations, disorder_ensemble
 export autocorrelation
+export entanglement_entropy
 
 # Implementation files share the RandomTFIM namespace.
 include("model.jl")
 include("correlations.jl")
+include("entanglement.jl")
 include("autocorrelation.jl")
 include("ensemble.jl")
 

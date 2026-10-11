@@ -32,9 +32,31 @@ include(joinpath(@__DIR__, "..", "fit_autocorrelation_offset.jl"))
         result = fit_autocorrelation_offset(t, y)
         @test result.best.model == model
         for fit in (result.power, result.exponential)
-            @test fit.chi_square <= fit_decay(t, y, fit.model).chi_square + 1e-12
+            base = fit_decay(t, y, fit.model)
+            rate = fit.model == :power ? min(base.rate, 1.0) : base.rate
+            predictor = fit.model == :power ? log.(t) : t
+            logA = mean(log.(y) .+ rate .* predictor)
+            @test fit.chi_square <= sum(abs2, log.(y) .- (logA .- rate .* predictor)) + 1e-12
             @test fit.B >= 0 && fit.rate >= 0
             @test fit.reduced_chi_square ≈ sum(abs2, log.(y) .- log.(offset_prediction(fit, t)))/(length(t)-3)
         end
     end
+end
+
+@testset "Power-law exponent bound" begin
+    t = exp.(range(log(0.1), log(100.0); length=101))
+    for B in (0.0, 0.03), exponent in (1.0, 1.7)
+        y = 0.7 .* t.^(-exponent) .+ B
+        fit = fit_autocorrelation_offset(t, y).power
+        @test -1 <= fit.alpha <= 0
+        @test fit.rate ≈ 1.0 atol=1e-6
+        @test fit.converged
+        @test fit.chi_square ≈ sum(abs2, log.(y) .- log.(offset_prediction(fit, t))) atol=1e-12
+        if B == 0
+            @test fit.B == 0
+            @test fit.logA ≈ mean(log.(y) .+ log.(t)) atol=1e-10
+        end
+    end
+    fit = fit_autocorrelation_offset(t, 0.7 .* exp.(-1.7 .* t) .+ 0.03).exponential
+    @test fit.rate ≈ 1.7 rtol=1e-5
 end

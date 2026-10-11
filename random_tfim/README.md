@@ -1,6 +1,6 @@
 ﻿# 随机横场 Ising 链
 
-计算有限链零温能隙、纵向空间关联，以及实时间/虚时间自关联。
+计算有限链零温能隙、纵向空间关联、基态二分纠缠熵，以及实时间/虚时间自关联。
 核心采用自由费米子 SVD，统一使用开放边界条件（OBC）；无序样本可按 Julia 线程并行。
 模型与论文对照见 [Young & Rieger (1996)](../papers/Young_Rieger_1996_Numerical_study_random_transverse_field_Ising_chain.md)
 和[模型卡](../.knowledge/models/transverse-field-ising/MODEL.md)。
@@ -146,6 +146,7 @@ sbatch random_tfim/submit.sh random_tfim/scan.toml
 
 - [model.jl](model.jl)：链参数校验、无序采样、费米子矩阵、能隙与基态。
 - [correlations.jl](correlations.jl)：空间关联及增量 QR 计算。
+- [entanglement.jl](entanglement.jl)：Majorana 协方差谱与基态二分纠缠熵。
 - [autocorrelation.jl](autocorrelation.jl)：实时间/虚时间自关联及 Pfaffian 后备算法。
 - [ensemble.jl](ensemble.jl)：无序样本并行计算、均值与标准误。
 
@@ -187,12 +188,44 @@ realtime = autocorrelation(J, h, times; time_domain=:real)
 | `energy_gap(J, h)` | 命名元组 `(gap, resolved)` |
 | `ground_state(J, h)` | 命名元组 `(gap, resolved, G)` |
 | `correlations(G; rmax)` | 直接返回 `Matrix{Float64}`，形状 `L×(rmax+1)` |
+| `entanglement_entropy(J, h; cut=L÷2)` 或 `entanglement_entropy(G; cut=L÷2)` | `Float64`，基态 von Neumann 熵（自然对数） |
 | `autocorrelation(J, h, times; j, time_domain)` | 直接返回 `Vector{Float64}`，长度 `length(times)` |
 
 空间关联中 `C[i,r+1]=⟨σz(i)σz(i+r)⟩`，`r=0` 列为 1。
 默认 `rmax=L÷2`，允许 `0≤rmax≤L−1`。
 开链仅 `i+r≤L` 的位置有效，越界位置为 `NaN`。
 `resolved` 仅保留在能隙接口及无序样本能隙中。
+
+### 基态二分纠缠熵
+
+```julia
+S_half = entanglement_entropy(J, h)          # 默认 A=1:L÷2
+S_cut = entanglement_entropy(state.G; cut=7) # 复用基态 G，不重复求全链 SVD
+S_bits = S_cut / log(2)
+S_profile = [entanglement_entropy(state.G; cut=l) for l in 0:L]
+```
+
+切分为 `A=1:cut`、`B=cut+1:L`，允许 `0≤cut≤L`，两端返回零。
+沿用模型的 Pauli 约定和有限链确定宇称基态，要求 `J≥0`、`h>0`；
+不支持严格零场下任意简并基态的选择。铁磁极限返回猫态的纠缠熵，而非对称性破缺乘积态的熵。
+
+使用下文相同的 Majorana 定义，将所有奇数 Majorana 排在偶数之前，定义
+`Γ_ab=(i/2)⟨[γ_a,γ_b]⟩`，则 `Γ=[0 -Gᵀ; G 0]`。
+限制到 A 后，`iΓ_A` 的本征值成对为 `±ν_k`，其中 `ν_k` 等于 `G[A,A]` 的奇异值。
+因此只需对该子块做 SVD，按每对模式一次求和：
+
+$$
+S_A=-\sum_{k=1}^{\mathrm{cut}}[p_k\ln p_k+(1-p_k)\ln(1-p_k)],
+\qquad p_k=\frac{1-\nu_k}{2}.
+$$
+
+计算中取 `0 ln 0=0`，仅容许舍入量级的 `ν>1` 并裁剪回物理区间；显著越界会报错。
+矩阵接口要求输入为 `ground_state` 返回的 G，不用于一般混态或不连续自旋子系统。
+复用 G 后，每个切点的耗时为 `O(cut³)`、额外内存为 `O(cut²)`。
+极小能隙时继承已有 Float64 SVD 的基态选择；`state.resolved` 是能隙分辨标志，
+并非纠缠熵的误差估计。无序扫描及 HDF5 输出目前不自动计算或保存该观测量。
+方法参考 [Peschel 与 Eisler 的自由模型纠缠熵综述](https://arxiv.org/abs/0906.1663)。
+`test/physics.jl` 用小链自旋波函数的 Schmidt 谱逐切点核对，并检查解耦和铁磁极限。
 
 ### 实时间与虚时间
 
@@ -426,7 +459,7 @@ julia --startup-file=no random_tfim/test/imaginary_time_offset_fit.jl
 
 独立入口 `plot_imaginary_time_offset.jl` 使用 `fit_autocorrelation_offset.jl`，
 比较 `C=A*tau^alpha+B` 与 `C=A*exp(-lambda*tau)+B`，约束
-`A>0, B>=0, alpha<=0, lambda>=0`。沿用原脚本的无权 log(C) 残差，
+`A>0, B>=0, -1<=alpha<=0, lambda>=0`。沿用原脚本的无权 log(C) 残差，
 用相同数据点的 `log_sse/(N-3)` 选择模型；SEM 仅画误差带。
 默认使用最新 full_fixed 数据和 `[1,1000]` 窗口，结果写入
 `results/figures_imaginary_time_offset_fixed/`。复现 L=128 代表场强关联图、
