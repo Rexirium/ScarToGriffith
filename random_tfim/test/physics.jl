@@ -124,10 +124,20 @@ end
     @test entanglement_entropy(ones(5), fill(1e-3, 6)) ≈ log(2) atol=2e-6
     # A severed bond factorizes the two halves.
     @test entanglement_entropy([0.8, 1.1, 0.0, 0.7, 0.9], ones(6)) ≈ 0 atol=1e-12
+    # The smaller complement is the right block, not a shorter left block.
+    asymmetric = ground_state([1.0, 1.0, 1.0, 0.0, 1.0], ones(6)).G
+    @test entanglement_entropy(asymmetric; cut=4) ≈ 0 atol=1e-12
+    @test entanglement_entropy(asymmetric; cut=2) > 0.1
     @test_throws DimensionMismatch entanglement_entropy(zeros(3, 4))
     @test_throws DimensionMismatch entanglement_entropy(ones(4), ones(4))
     @test_throws ArgumentError entanglement_entropy(ones(3), zeros(4))
     @test_throws ArgumentError entanglement_entropy(fill(NaN, 4, 4))
+    # Validation also applies to empty/whole partitions and outside the chosen block.
+    for cut in (0, 3, 4), value in (NaN, Inf)
+        invalid = -Matrix{Float64}(I, 4, 4)
+        invalid[1, 1] = value
+        @test_throws ArgumentError entanglement_entropy(invalid; cut)
+    end
     @test_throws ArgumentError entanglement_entropy(2.0 .* Matrix{Float64}(I, 4, 4))
     for cut in (-1, 5)
         @test_throws ArgumentError entanglement_entropy(ones(3), ones(4); cut)

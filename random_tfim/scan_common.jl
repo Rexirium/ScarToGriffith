@@ -39,8 +39,10 @@ function scan_observables(L, h0, times; nsamples, seed, field_distribution, offs
             values[1] = gap.gap
             values[2:1+nt] = RandomTFIM.autocorrelation(F, times, j, 1.0; B, offset)
             values[2+nt:1+2nt] = RandomTFIM.autocorrelation(F, times, j, 1.0im; B, offset)
+            # G is L-by-L and entropy_cuts produces valid cuts; check finiteness once.
+            all(isfinite, G) || throw(ArgumentError("G must be finite"))
             for (i, cut) in enumerate(cuts)
-                values[1+2nt+i] = entanglement_entropy(G; cut)
+                values[1+2nt+i] = RandomTFIM.entanglement_entropy_unchecked(G, cut)
             end
             for i in 1:width
                 values[width+i] = RandomTFIM.correlation_log(values[i])

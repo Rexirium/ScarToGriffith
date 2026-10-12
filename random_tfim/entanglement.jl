@@ -14,7 +14,8 @@ Gamma[a,b] = (im/2)<[gamma_a,gamma_b]> = [0 -G'; G 0].
 Restricting to A=1:cut gives eigenvalues +/-nu of im*Gamma_A, where
 nu = svdvals(G[A,A]). Each pair contributes one binary entropy with
 p=(1-nu)/2. This evaluates the covariance spectrum without forming a
-2cut-by-2cut matrix or double-counting Majorana pairs.
+2cut-by-2cut matrix or double-counting Majorana pairs. For cut > L/2,
+use B=cut+1:L instead, since the pure state has S(A)=S(B).
 
 Uses the finite-chain parity ground state selected by the existing SVD,
 including when its gap is numerically unresolved; not a symmetry-broken state.
@@ -24,9 +25,17 @@ function entanglement_entropy(G::AbstractMatrix{Float64}; cut::Int=size(G, 1) ÷
     size(G, 2) == L || throw(DimensionMismatch("G must be square"))
     0 <= cut <= L || throw(ArgumentError("require 0 <= cut <= L"))
     all(isfinite, G) || throw(ArgumentError("G must be finite"))
+    return entanglement_entropy_unchecked(G, cut)
+end
+
+# Caller guarantees square, finite G and 0 <= cut <= L; spectrum checks remain here.
+function entanglement_entropy_unchecked(G::AbstractMatrix{Float64}, cut::Int)
+    L = size(G, 1)
     (cut == 0 || cut == L) && return 0.0
 
-    nu = svdvals(G[1:cut, 1:cut])
+    inds = cut <= L ÷ 2 ? (1:cut) : (cut+1:L)
+    # Indexing creates a copy, so the in-place SVD leaves G unchanged.
+    nu = svdvals!(G[inds, inds])
     # Only roundoff excursions above one may be clipped to the physical interval.
     maximum(nu) <= 1 + 64eps(Float64)*L ||
         throw(ArgumentError("restricted covariance singular values must not exceed one"))
