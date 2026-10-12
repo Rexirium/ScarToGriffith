@@ -5,7 +5,7 @@ include("scan_common.jl")
 
 """Run an ensemble from read_config(path); save portable HDF5 data.
 
-Save means and SEMs of gaps, offset autocorrelations and bipartite entropy,
+Save means and SEMs of gaps, autocorrelations and bipartite entropy,
 and their sample logarithms. No spatial correlations or individual samples.
 Usage: julia random_tfim/run.jl [config.toml] (default: scan.toml beside this script)
 Output filenames receive a _yyyymmdd_HHMMSS timestamp before the extension.

@@ -4,12 +4,14 @@ using Test
 
 @testset "Scan configuration and HDF5 round trip" begin
     base = read_config()
-    @test base.sizes == [16, 32]
+    defaults = TOML.parsefile(joinpath(@__DIR__, "..", "scan.toml"))
+    @test base.sizes == defaults["sizes"]
     @test base.seed == 1996
     @test base.worker_threads == 8
-    @test base.field_distribution == :uniform
+    @test base.field_distribution == Symbol(defaults["field_distribution"])
+    @test base.offset == defaults["offset"]
     @test base.fields == 10 .^ range(-1, 1, 101)
-    @test base.times == 10 .^ range(-1, 3, 101)
+    @test base.times == config_grid(defaults["times"])
     @test RandomTFIMSlurm.read_config().fields == base.fields
 
     mktempdir() do directory
@@ -26,7 +28,7 @@ using Test
         @test dirname(fixed.output) == joinpath(directory, "results")
         @test occursin(r"demo_uniform_\d{8}_\d{6}\.h5$", fixed.output)
         for (key, value) in (("nsamples", 0), ("boundary", "bad"),
-                ("field_distribution", "bad"), ("seed", -1), ("worker_threads", 0),
+                ("field_distribution", "bad"), ("offset", "true"), ("offset", 1), ("seed", -1), ("worker_threads", 0),
                 ("fields", [0.0]), ("times", [-1.0]),
                 ("sizes", [1]), ("sizes", [4, 4]), ("fields", [1.0, 1.0]),
                 ("fields", Dict("start" => 0, "stop" => 1, "length" => 0)),
@@ -35,12 +37,13 @@ using Test
             @test_throws ArgumentError read_config(path)
         end
         save_config(merge(defaults, Dict("sizes" => [4, 5], "nsamples" => 65,
-            "seed" => 72, "field_distribution" => "fixed",
+            "seed" => 72, "field_distribution" => "fixed", "offset" => false,
             "fields" => [0.5, 1.0],
             "times" => Dict("start" => 0.0, "stop" => 1.0, "length" => 3))))
         cfg = read_config(path)
         @test cfg.times == [0.0, 0.5, 1.0]
         @test cfg.seed == 72
+        @test !cfg.offset
         output = redirect_stdout(devnull) do
             main(cfg)
         end
@@ -104,18 +107,18 @@ using Test
         end
     end
 
-    for field_distribution in (:uniform, :fixed), nsamples in (1, 3, 65)
+    for L in (4, 16), field_distribution in (:uniform, :fixed), nsamples in (1, 3, 65), offset in (false, true)
         times = [0.0, 0.3, 1.7]
-        cfg = (; base..., field_distribution, nsamples, times)
-        L, h0, seed = 4, 1.8, 72
+        cfg = (; base..., field_distribution, nsamples, times, offset)
+        h0, seed = 1.8, 72
         rng = Xoshiro(seed)
         samples = [sample_disorder(rng, L, h0; field_distribution) for _ in 1:nsamples]
         gaps = [energy_gap(J, h) for (J, h) in samples]
         observations = (
             gap=[g.gap for g in gaps],
-            autocorrelation=hcat([autocorrelation(J, h, times; offset=true) for (J, h) in samples]...),
-            real_autocorrelation=hcat([autocorrelation(J, h, times; offset=true, time_domain=:real) for (J, h) in samples]...),
-            entanglement_entropy=hcat([[entanglement_entropy(J, h; cut) for cut in 1:L-1] for (J, h) in samples]...))
+            autocorrelation=hcat([autocorrelation(J, h, times; offset) for (J, h) in samples]...),
+            real_autocorrelation=hcat([autocorrelation(J, h, times; offset, time_domain=:real) for (J, h) in samples]...),
+            entanglement_entropy=hcat([[entanglement_entropy(J, h; cut) for cut in floor.(Int, (0:8) .* (L / 8))] for (J, h) in samples]...))
         data = compute_case((; L, h0, seed), cfg)
         @test length(data.result) == 16
         for (name, values) in pairs(observations)
@@ -134,13 +137,17 @@ using Test
                 write_case(file, data, cfg)
             end
             h5open(output, "r") do file
-                @test read(attributes(file)["offset"])
+                @test read(attributes(file)["offset"]) == offset
                 @test read(attributes(file)["format_version"]) == 2
                 @test Set(keys(file["parameters"])) == Set(["sizes", "fields"])
-                group = file["L4/h1.8"]
+                group = file["L$L/h1.8"]
                 @test Set(keys(group)) == union(Set(string.(keys(data.result))),
                     Set(["imaginary_time", "real_time", "subsystem_sizes"]))
-                @test read(group["subsystem_sizes"]) == [1, 2, 3]
+                @test read(group["subsystem_sizes"]) == (L == 4 ? [0, 0, 1, 1, 2, 2, 3, 3, 4] : collect(0:2:16))
+                for prefix in ("entanglement_entropy", "log_entanglement_entropy"), suffix in ("_mean", "_sem")
+                    @test length(read(group[prefix * suffix])) == 9
+                end
+                @test read(group["entanglement_entropy_mean"])[[1, 9]] == [0.0, 0.0]
                 @test read(group["imaginary_time"]) == read(group["real_time"]) == times
                 for (key, value) in pairs(data.result)
                     @test isequal(read(group[string(key)]), value)
@@ -152,5 +159,5 @@ using Test
         nsamples=1, seed=1, field_distribution=:uniform)
     @test isempty(empty_time.autocorrelation_mean)
     @test isempty(empty_time.real_autocorrelation_mean)
-    @test length(empty_time.entanglement_entropy_mean) == 1
+    @test length(empty_time.entanglement_entropy_mean) == 9
 end

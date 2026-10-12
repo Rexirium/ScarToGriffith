@@ -37,7 +37,7 @@ julia --threads=4 random_tfim/run.jl random_tfim/scan.toml
 Slurm 提交现在也默认使用这份配置，不再隐含 full/50000/fixed 参数。
 
 默认扫描 `h0 = 10 .^ range(-1, 1, 101)`，计算能隙、所有切分 `A=1:ℓ`（`ℓ=1:L-1`）的二分纠缠熵，
-以及中点 `j=cld(L,2)`、`times=10 .^ range(-1,3,101)`（0.1 到 1000）的虚时间和实时间自关联（均固定 `offset=true`）。
+以及中点 `j=cld(L,2)` 的虚时间和实时间自关联，时间网格由 `scan.toml` 的 `times` 设置；两者均使用配置中的 `offset`。
 每种观测量保存均值、SEM、逐样本自然对数的均值和 SEM；扫描不计算空间关联，也不保留逐样本结果。
 每个 `(L,h0)` 使用 `seed + 1000k + L`（k 为场强索引），本地和 Slurm 使用相同规则。
 在 Julia 中调用时，先用 `cfg = read_config("path/to/scan.toml")` 读取配置，
@@ -312,7 +312,7 @@ only_gaps = disorder_ensemble(L, h0, Float64[]; nsamples=100, field_distribution
 默认 `nsamples=100`、`seed=1996`、`rmax=L÷2`、`keep_samples=false`。
 `disorder_ensemble(...; offset=true)` 在每个样本内对两种时间域扣除上述跃迁，
 然后计算均值、SEM 和对数统计；默认 `offset=false`，能隙和空间关联不受影响。
-当前 TOML/本地和 Slurm 扫描入口沿用默认值；此选项通过 Julia 函数接口设置。
+本地和 Slurm 扫描通过 `scan.toml` 的 `offset = true/false` 设置；默认 `true` 扣除上述跃迁，`false` 返回完整自关联。旧配置省略该项时按 `true` 处理。
 `times` 是第三个必需位置参数，必须有限且非负；两种时间域共用该网格并同时计算。
 显式传入空 `times` 时返回空时间统计；`rmax=0` 跳过非平凡空间关联。
 先逐样本计算，再平均：空间关联先平均同一样本内的有效起点（L−r 个），
@@ -331,7 +331,7 @@ only_gaps = disorder_ensemble(L, h0, Float64[]; nsamples=100, field_distribution
 
 The local and Slurm entry points share `scan_common.jl` and `results_io.jl`.
 Format version 2 stores only summary statistics for each `L16/h1.0` group.
-Root attributes include `format_version=2`, `offset=true`, `boundary=open`,
+Root attributes include `format_version=2`, `offset` (from the scan configuration), `boundary=open`,
 `distribution=box`, `field_distribution`, `nsamples`, `master_seed`, and `complete`.
 Fixed fields also record `fixed_field_divisor=e`. Completion is marked only after all writes succeed.
 `parameters/sizes` and `parameters/fields` store the scan grid; group attributes store `j` and `seed`.
@@ -339,12 +339,14 @@ Fixed fields also record `fixed_field_divisor=e`. Completion is marked only afte
 | Dataset prefix | Shape / meaning |
 |---|---|
 | `gap`, `log_gap` | Scalar gap and sample log-gap statistics |
-| `autocorrelation`, `log_autocorrelation` | Imaginary-time offset correlation, length `length(times)` |
-| `real_autocorrelation`, `real_log_autocorrelation` | Real part of real-time offset correlation, length `length(times)` |
-| `entanglement_entropy`, `log_entanglement_entropy` | Entropy of `A=1:l`, length `L-1` |
+| `autocorrelation`, `log_autocorrelation` | Imaginary-time correlation (configured `offset`), length `length(times)` |
+| `real_autocorrelation`, `real_log_autocorrelation` | Real part of real-time correlation (configured `offset`), length `length(times)` |
+| `entanglement_entropy`, `log_entanglement_entropy` | Entropy of `A=1:l`, length 9 |
 
 Each prefix has `_mean` and `_sem` datasets. `imaginary_time` and `real_time`
-store the time grid; `subsystem_sizes=1:L-1` labels the entropy entries.
+store the time grid; `subsystem_sizes=[k*L÷8 for k in 0:8]` labels the nine entropy entries.
+Cuts include 0 and L, where entropy is zero. For L not divisible by 8, cuts round down;
+repeated cuts are retained so all four entropy summary vectors always have length 9.
 SEM uses the corrected variance across disorder realizations and is `NaN` for one sample.
 Logs are natural logarithms taken before averaging, not logs of the mean.
 Nonpositive/nonfinite observables and unresolved gaps produce `NaN` log statistics;

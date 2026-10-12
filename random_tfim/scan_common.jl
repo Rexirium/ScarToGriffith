@@ -6,18 +6,21 @@ end
 using .RandomTFIM
 include("results_io.jl")
 
+entropy_cuts(L) = [k * L ÷ 8 for k in 0:8]
+
 scan_jobs(cfg) = ((L=L, h0=h0, seed=cfg.seed + 1000k + L)
     for (k, h0) in enumerate(cfg.fields) for L in cfg.sizes)
 
 # Fixed chunks keep reductions reproducible across local and worker thread counts.
 # Only running moments survive each sample; no sample observables are retained.
-function scan_observables(L, h0, times; nsamples, seed, field_distribution)
+function scan_observables(L, h0, times; nsamples, seed, field_distribution, offset::Bool=true)
     nsamples > 0 || throw(ArgumentError("nsamples must be positive"))
     RandomTFIM.time_scale(times, :imaginary)
     rng = Xoshiro(seed)
     samples = [sample_disorder(rng, L, h0; field_distribution) for _ in 1:nsamples]
     nt = length(times)
-    width = 2nt + L
+    cuts = entropy_cuts(L)
+    width = 1 + 2nt + length(cuts)
     j = cld(L, 2)
     nchunks = min(nsamples, 32)
     chunks = [k:nchunks:nsamples for k in 1:nchunks]
@@ -34,10 +37,10 @@ function scan_observables(L, h0, times; nsamples, seed, field_distribution)
             G = -(F.V * F.U')
             B = !isempty(times) && 1 < j < L ? RandomTFIM.spin_flip_covariance(F, j) : nothing
             values[1] = gap.gap
-            values[2:1+nt] = RandomTFIM.autocorrelation(F, times, j, 1.0; B, offset=true)
-            values[2+nt:1+2nt] = RandomTFIM.autocorrelation(F, times, j, 1.0im; B, offset=true)
-            for cut in 1:L-1
-                values[1+2nt+cut] = entanglement_entropy(G; cut)
+            values[2:1+nt] = RandomTFIM.autocorrelation(F, times, j, 1.0; B, offset)
+            values[2+nt:1+2nt] = RandomTFIM.autocorrelation(F, times, j, 1.0im; B, offset)
+            for (i, cut) in enumerate(cuts)
+                values[1+2nt+i] = entanglement_entropy(G; cut)
             end
             for i in 1:width
                 values[width+i] = RandomTFIM.correlation_log(values[i])
@@ -73,7 +76,7 @@ end
 function compute_case(job, cfg)
     BLAS.set_num_threads(1)
     seconds = @elapsed result = scan_observables(job.L, job.h0, cfg.times;
-        nsamples=cfg.nsamples, seed=job.seed, field_distribution=cfg.field_distribution)
+        nsamples=cfg.nsamples, seed=job.seed, field_distribution=cfg.field_distribution, offset=cfg.offset)
     return (; L=job.L, h0=job.h0, seed=job.seed, result,
         worker_id=myid(), seconds)
 end

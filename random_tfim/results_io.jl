@@ -16,6 +16,8 @@ function read_config(path=joinpath(@__DIR__, "scan.toml"))
     haskey(params, "boundary") && throw(ArgumentError("remove boundary: scans use open chains only"))
     field_distribution = Symbol(params["field_distribution"])
     RandomTFIM.check_field_distribution(field_distribution)
+    offset = get(params, "offset", true)
+    offset isa Bool || throw(ArgumentError("offset must be true or false"))
     nsamples, seed, worker_threads = params["nsamples"], params["seed"], params["worker_threads"]
     nsamples isa Integer && nsamples > 0 || throw(ArgumentError("nsamples must be a positive integer"))
     seed isa Integer && seed >= 0 || throw(ArgumentError("seed must be a nonnegative integer"))
@@ -31,7 +33,7 @@ function read_config(path=joinpath(@__DIR__, "scan.toml"))
     stem, ext = splitext(output)
     output = stem * "_" * Dates.format(now(), "yyyymmdd_HHMMSS") * ext
     ispath(output) && throw(ArgumentError("output already exists: $output"))
-    return (; nsamples, seed, worker_threads, output, field_distribution, sizes, fields, times)
+    return (; nsamples, seed, worker_threads, output, field_distribution, offset, sizes, fields, times)
 end
 
 # Mark completion only after all computation and writes succeed.
@@ -59,7 +61,7 @@ function write_case(file, data, cfg)
     end
     group["imaginary_time"] = cfg.times
     group["real_time"] = cfg.times
-    group["subsystem_sizes"] = collect(1:data.L-1)
+    group["subsystem_sizes"] = entropy_cuts(data.L)
     attributes(group)["j"] = cld(data.L, 2)
     attributes(group)["seed"] = data.seed
 
@@ -70,7 +72,7 @@ end
 
 function write_metadata(file, cfg)
     attributes(file)["format_version"] = 2
-    attributes(file)["offset"] = true
+    attributes(file)["offset"] = cfg.offset
     attributes(file)["complete"] = false
     attributes(file)["nsamples"] = cfg.nsamples
     attributes(file)["master_seed"] = cfg.seed
