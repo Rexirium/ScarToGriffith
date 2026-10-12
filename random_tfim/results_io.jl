@@ -65,9 +65,10 @@ function write_case(file, data, cfg)
     attributes(group)["j"] = cld(data.L, 2)
     attributes(group)["seed"] = data.seed
 
-    println("L=$(data.L) h0=$(data.h0) samples=$(cfg.nsamples) worker=$(data.worker_id)",
-        " time=$(round(data.seconds; digits=3))s")
     flush(file)
+    println("Saved: L=$(data.L) h0=$(data.h0) samples=$(cfg.nsamples) worker=$(data.worker_id)",
+        " time=$(round(data.seconds; digits=3))s")
+    flush(stdout)
 end
 
 function write_metadata(file, cfg)

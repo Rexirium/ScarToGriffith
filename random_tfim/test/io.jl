@@ -22,11 +22,12 @@ using Test
                 TOML.print(io, params)
             end
         end
-        fixed_params = merge(defaults, Dict("field_distribution" => "fixed"))
+        fixed_params = merge(defaults, Dict("field_distribution" => "fixed",
+            "output" => "results/test_fixed.h5"))
         save_config(fixed_params)
         fixed = read_config(path)
         @test dirname(fixed.output) == joinpath(directory, "results")
-        @test occursin(r"demo_uniform_\d{8}_\d{6}\.h5$", fixed.output)
+        @test occursin(r"test_fixed_\d{8}_\d{6}\.h5$", fixed.output)
         for (key, value) in (("nsamples", 0), ("boundary", "bad"),
                 ("field_distribution", "bad"), ("offset", "true"), ("offset", 1), ("seed", -1), ("worker_threads", 0),
                 ("fields", [0.0]), ("times", [-1.0]),

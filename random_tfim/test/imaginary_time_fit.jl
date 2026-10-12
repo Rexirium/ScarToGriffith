@@ -61,3 +61,13 @@ end
     @test plateau.best.A ≈ 0.5
     @test_throws ErrorException fit_autocorrelation([1., 2.], [0.5, 0.4])
 end
+
+@testset "Autocorrelation log slope" begin
+    times = [0.1, 1.0, 10.0, 100.0]
+    @test autocorrelation_log_slope(times, 3 .* times .^ (-0.7)) ≈ 0.7
+    @test autocorrelation_log_slope(times, [3 * times[1]^(-0.7), -100.0, 3 * times[3]^(-0.7), -0.001]) ≈ 0.7
+    @test autocorrelation_log_slope([0.0; times; Inf; 5.0],
+        [1.0; 3 .* times .^ (-0.7); 1.0; 0.0]) ≈ 0.7
+    @test_throws ErrorException autocorrelation_log_slope([1.0, 1.0], [1.0, 2.0])
+    @test_throws ErrorException autocorrelation_log_slope([0.0, 1.0], [1.0, 1.0])
+end
