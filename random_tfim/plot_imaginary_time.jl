@@ -1,5 +1,5 @@
 # julia --project=@v1.13 random_tfim/plot_imaginary_time.jl [Lmax256_fixed_YYYYMMDD_HHMMSS.h5] [output_dir] [tau_min] [tau_max]
-# Default fit and plot window: 1 <= tau <= 1e3.
+# Default fit and plot window: 0.1 <= tau <= 1e3.
 include(joinpath(@__DIR__, "plot_results.jl"))
 using Printf
 
@@ -21,47 +21,51 @@ function select_imaginary_fields(fields)
     selections
 end
 
-function plot_imaginary_field_scan(input, sizes; tmin=1.0, tmax=1e3)
+function plot_imaginary_field_scan(input, sizes; tmin=0.1, tmax=1e3, fitter=fit_autocorrelation, background=false)
     comparison_size = maximum(sizes)
     records = []
     fields, offset = h5open(input, "r") do f
-        fields = sort(filter(>=(1.0), read(f["parameters/fields"])))
-        isempty(fields) && error("No fields h0 >= 1 for Figure 2")
+        fields = sort(filter(h -> 0.1 <= h <= 10.0, read(f["parameters/fields"])))
+        isempty(fields) && error("No fields in [0.1, 10] for Figure 2")
         for L in sizes, h0 in fields
+            haskey(f, "L$(L)/h$(h0)") || continue
             g = f["L$(L)/h$(h0)"]
             (; t, y) = read_imaginary_autocorrelation(g)
-            result = fit_autocorrelation(t, y; tmin, tmax)
+            result = fitter(t, y; tmin, tmax)
             push!(records, (; L, h0, result))
         end
         fields, read(HDF5.attributes(f)["offset"])
     end
     fig = Figure(size=(1600, 1100))
-    Label(fig[0, 1:2], "Figure 2: Imaginary-time fit parameters versus field"; fontsize=28)
+    Label(fig[0, 1:2], "Figure 2: Imaginary-time fit parameters versus field" * (background ? " (+B)" : ""); fontsize=28)
     titles = ["Power-law fit", "Exponential fit", "Best-model reduced χ²"]
     ylabels = [L"1/z", L"\lambda=1/\xi_{\tau}", L"\min(\chi^2_{\mathrm{red,power}},\chi^2_{\mathrm{red,exp}})"]
     axes = [Axis(fig[panel_position(k, 2)...]; title=titles[k], xlabel=L"h_0", ylabel=ylabels[k],
         xscale=log10, yscale=(k == 2 ? log10 : identity), width=560, height=360,
         titlesize=23, xlabelsize=23, ylabelsize=23, xticklabelsize=20, yticklabelsize=20) for k in 1:3]
     for (j, L) in enumerate(sizes)
-        results = [r.result for r in records if r.L == L]
-        values = ([r.power.rate for r in results], [r.exponential.rate for r in results],
-            [r.best.reduced_chi_square for r in results])
+        by_field = Dict(r.h0 => r.result for r in records if r.L == L)
+        results = [get(by_field, h0, nothing) for h0 in fields]
+        values = ([isnothing(r) ? NaN : r.power.rate for r in results],
+            [isnothing(r) ? NaN : r.exponential.rate for r in results],
+            [isnothing(r) ? NaN : r.best.reduced_chi_square for r in results])
         for k in 1:3
             plotted = k == 2 ? [v > 0 ? v : NaN for v in values[k]] : values[k]
             lines!(axes[k], fields, plotted; color=PLOT_COLORS[j], linewidth=2, label="L = $L")
         end
     end
     for ax in axes
-        xlims!(ax, first(fields), last(fields))
+        xlims!(ax, 0.1, 10.0)
         axislegend(ax; position=:lt, framevisible=false, labelsize=20)
     end
     comparison = Axis(fig[2, 2]; title="Model comparison (L = $comparison_size)", xlabel=L"h_0",
         ylabel=L"\chi^2_{\mathrm{red}}", xscale=log10, yscale=log10,
         width=560, height=360, titlesize=23, xlabelsize=23, ylabelsize=23,
         xticklabelsize=20, yticklabelsize=20)
-    comparison_results = [r.result for r in records if r.L == comparison_size]
-    power = [r.power.reduced_chi_square for r in comparison_results]
-    exponential = [r.exponential.reduced_chi_square for r in comparison_results]
+    by_field = Dict(r.h0 => r.result for r in records if r.L == comparison_size)
+    comparison_results = [get(by_field, h0, nothing) for h0 in fields]
+    power = [isnothing(r) ? NaN : r.power.reduced_chi_square for r in comparison_results]
+    exponential = [isnothing(r) ? NaN : r.exponential.reduced_chi_square for r in comparison_results]
     lines!(comparison, fields, [v > 0 ? v : NaN for v in power]; color=PLOT_COLORS[1], linewidth=2, label="Power law")
     lines!(comparison, fields, [v > 0 ? v : NaN for v in exponential]; color=PLOT_COLORS[2], linewidth=2, label="Exponential")
     crossings = model_fit_crossings(fields, power, exponential)
@@ -73,15 +77,15 @@ function plot_imaginary_field_scan(input, sizes; tmin=1.0, tmax=1e3)
     end
     isempty(crossings) && text!(comparison, 0.97, 0.95; text="No crossing in scanned range",
         space=:relative, align=(:right, :top), fontsize=16)
-    xlims!(comparison, first(fields), last(fields))
+    xlims!(comparison, 0.1, 10.0)
     axislegend(comparison; position=:rt, framevisible=false, labelsize=20)
-    Label(fig[3, 1:2], "$(basename(input)) | h = h₀/e | offset=$offset | $(length(fields)) fields, h₀ ≥ 1\n" *
+    Label(fig[3, 1:2], "$(basename(input)) | h = h₀/e | offset=$offset | $(length(fields)) fields, 0.1 ≤ h₀ ≤ 10\n" *
         "Unweighted log-space fits; all finite C > 0; τ ∈ [$tmin, $(isinf(tmax) ? "end" : tmax)]\nCrossings: linear interpolation in log(h₀), no extrapolation";
         fontsize=18)
     (; fig, records, fields, crossings, comparison_size)
 end
 
-function imaginary_time_main(args)
+function imaginary_time_main(args; fitter=fit_autocorrelation, prediction=decay_prediction, background=false)
     length(args) <= 4 || error("Usage: plot_imaginary_time.jl [input] [out] [tau_min] [tau_max]")
     input = if isempty(args)
         paths = filter(p -> occursin(r"^Lmax256_fixed_\d{8}_\d{6}\.h5$", basename(p)),
@@ -91,13 +95,14 @@ function imaginary_time_main(args)
     else
         abspath(args[1])
     end
-    out = length(args) < 2 ? joinpath(dirname(input), "figures_imaginary_time_" * splitext(basename(input))[1]) : abspath(args[2])
-    tmin = length(args) < 3 ? 1.0 : parse(Float64, args[3])
+    out = length(args) < 2 ? joinpath(dirname(input), (background ? "figures_imaginary_time_background_" : "figures_imaginary_time_") * splitext(basename(input))[1]) : abspath(args[2])
+    tmin = length(args) < 3 ? 0.1 : parse(Float64, args[3])
     tmax = length(args) < 4 ? 1e3 : parse(Float64, args[4])
     set_theme!(Theme(fontsize=21, Axis=(xgridvisible=false, ygridvisible=false)))
-    rows = String["L,h0,phase,model,A,decay_parameter,chi_square,reduced_chi_square,n,tau_min,tau_max,selected"]
+    rows = String["L,h0,phase,model,A,decay_parameter,chi_square,reduced_chi_square,n,tau_min,tau_max,selected" * (background ? ",B,logA,logB" : "")]
+    nparameters = background ? 3 : 2
     fig = Figure(size=(1400, 900))
-    Label(fig[0, 1], "Figure 1: Imaginary-time autocorrelations and best fits"; fontsize=29)
+    Label(fig[0, 1], "Figure 1: Imaginary-time autocorrelations and best fits" * (background ? " (+B)" : ""); fontsize=29)
     selections, sizes, n, offset = h5open(input, "r") do f
         attrs = HDF5.attributes(f)
         # Only the plotted groups are required; unrelated scan points may be absent.
@@ -119,12 +124,12 @@ function imaginary_time_main(args)
                 (; h0, phase) = selection
                 g = f["L$(L)/h$(h0)"]
                 (; t, y, sem) = read_imaginary_autocorrelation(g)
-                result = fit_autocorrelation(t, y; tmin, tmax)
+                result = fitter(t, y; tmin, tmax)
                 valid = isfinite.(t) .& (t .> 0) .& (t .>= tmin) .& (t .<= tmax)
                 plot_end = max(plot_end, maximum(t[valid]))
                 uncertainty_curve!(ax, t[valid], y[valid], sem[valid], IMAGINARY_COLORS[k]; positive=true)
                 ft = exp.(range(log(result.tmin), log(result.tmax); length=300))
-                fy = decay_prediction(result.best, ft)
+                fy = prediction(result.best, ft)
                 fy[fy .<= 0] .= NaN
                 lines!(ax, ft, fy; color=IMAGINARY_COLORS[k], linestyle=:dash, linewidth=2.5)
                 best = result.best
@@ -135,7 +140,8 @@ function imaginary_time_main(args)
                 push!(labels, label)
                 for fit in (result.power, result.exponential)
                     push!(rows, join((L, h0, phase, fit.model, fit.A, fit.rate, fit.chi_square,
-                        fit.reduced_chi_square, result.n, result.tmin, result.tmax, fit.model == best.model), ','))
+                        fit.reduced_chi_square, result.n, result.tmin, result.tmax, fit.model == best.model), ',') *
+                        (background ? join(("", fit.B, fit.logA, fit.logB), ',') : ""))
                 end
             end
             xlims!(ax, tmin > 0 ? tmin : nothing, isfinite(tmax) ? tmax : plot_end)
@@ -148,18 +154,20 @@ function imaginary_time_main(args)
         selections, sizes, read(attrs["nsamples"]), offset
     end
     offset_note = offset ? "Lowest odd-parity transition subtracted" : "Full autocorrelation"
-    Label(fig[2, 1], "Solid: stored mean ±1 SEM; dashed: minimum log-space SSE/(N−2) fit\nPower: A τ^(-1/z); exponential: A exp(−τ/ξτ)\n" *
+    Label(fig[2, 1], "Solid: stored mean ±1 SEM; dashed: minimum log-space SSE/(N−$nparameters) fit\nPower: A τ^(-1/z)$(background ? " + B" : ""); exponential: A exp(−τ/ξτ)$(background ? " + B" : "")\n" *
         "$(basename(input)) | h = h₀/e | offset=$offset\n$offset_note | unweighted fit: all finite C > 0, τ ∈ [$tmin, $(isinf(tmax) ? "end" : tmax)]"; fontsize=18)
     mkpath(out)
     save(joinpath(out, "figure1_imaginary_time_autocorrelation.png"), fig; px_per_unit=1.5)
     write(joinpath(out, "imaginary_time_fits.csv"), join(rows, '\n') * "\n")
-    scan = plot_imaginary_field_scan(input, sizes; tmin, tmax)
+    scan = plot_imaginary_field_scan(input, sizes; tmin, tmax, fitter, background)
     save(joinpath(out, "figure2_imaginary_time_fit_parameters.png"), scan.fig; px_per_unit=1.5)
-    scan_rows = ["L,h0,power_rate,exponential_rate,power_reduced_chi_square,exponential_reduced_chi_square,min_reduced_chi_square,selected_model,n,tau_min,tau_max"]
+    scan_rows = ["L,h0,power_rate,exponential_rate,power_reduced_chi_square,exponential_reduced_chi_square,min_reduced_chi_square,selected_model,n,tau_min,tau_max" * (background ? ",power_A,power_B,power_logA,power_logB,exponential_A,exponential_B,exponential_logA,exponential_logB" : "")]
     for (; L, h0, result) in scan.records
         push!(scan_rows, join((L, h0, result.power.rate, result.exponential.rate,
             result.power.reduced_chi_square, result.exponential.reduced_chi_square,
-            result.best.reduced_chi_square, result.best.model, result.n, result.tmin, result.tmax), ','))
+            result.best.reduced_chi_square, result.best.model, result.n, result.tmin, result.tmax), ',') *
+            (background ? join(("", result.power.A, result.power.B, result.power.logA, result.power.logB,
+                result.exponential.A, result.exponential.B, result.exponential.logA, result.exponential.logB), ',') : ""))
     end
     write(joinpath(out, "imaginary_time_field_scan.csv"), join(scan_rows, '\n') * "\n")
     crossing_rows = ["L,h0,reduced_chi_square,h0_left,h0_right"]
@@ -178,22 +186,21 @@ function imaginary_time_main(args)
     Requested fit window: [$tmin, $(isinf(tmax) ? "end of stored time grid" : tmax)]. All finite positive times and finite positive C enter both models.
     Plot uses the same time window, with a 1e-12 vertical plot floor that does not truncate the fits. SEM only controls uncertainty shading.
     Actual windows and point counts appear in imaginary_time_fits.csv.
-    Models: C=A*tau^(-alpha), C=A*exp(-lambda*tau); A>0, alpha/lambda>=0; no offset.
-    Legend notation: 1/z=alpha; 1/xi_tau=lambda; C=A*exp(-tau/xi_tau).
-    Fit natural-log coordinates x=ln(tau), Y=ln(C) with equal weights.
-    Power: Y=logA-alpha*x; exponential: Y=logA-lambda*exp(x).
-    Both models are linear in logA and the decay rate; use unweighted linear regression with nonnegative rate.
-    Minimize chi_square=sum((Y-Y_fit)^2) in log space.
-    For fixed n, minimizing this also minimizes reduced_chi_square; the horizontal time grid is exact.
-    Select the model with smaller reduced_chi_square=chi_square/(n-2).
-    Both models use identical points and have two parameters, so this is equivalent to comparing chi_square.
+    $(background ? "Models: C=A*tau^(-alpha)+B and C=A*exp(-lambda*tau)+B; A>0, B>=0, alpha/lambda>=0." :
+        "Models: C=A*tau^(-alpha) and C=A*exp(-lambda*tau); A>0, alpha/lambda>=0.")
+    Legend notation: 1/z=alpha; 1/xi_tau=lambda.
+    $(background ? "Multistart damped Gauss-Newton fits of log(C_model) to log(C), including the exact B=0 boundary candidate. Stable log-sum-exp evaluation; B is an additional fitted background, distinct from the stored offset flag." :
+        "Unweighted linear regression of log(C), with nonnegative decay rate.")
+    Minimize chi_square=sum((log(C)-log(C_model))^2), using the same finite positive data for both models.
+    Select the model with smaller reduced_chi_square=chi_square/(n-$nparameters).
+    Both models have $nparameters nominal parameters, so this is equivalent to comparing chi_square.
     CSV records both fits and the selected flag.
-    Historical CSV names chi_square/reduced_chi_square denote SSE and SSE/(n-2), equivalent to unit log errors.
+    Historical CSV names chi_square/reduced_chi_square denote SSE and SSE/(n-$nparameters), equivalent to unit log errors.
     These are not measurement-error-normalized chi-squares. No time covariance or resampling is used.
     Model selection is descriptive, not a goodness-of-fit probability or asymptotic exponent claim.
     In particular FM plateaus and crossover regions need not follow either simple decay law.
     Plot uses stored means/SEM directly, with the existing uncertainty masking; zero time omitted.
-    Figure 2: 2x2 panels with in-axis legends, log h0 axes; panels 1 and 3 have linear vertical axes, panels 2 and 4 have log vertical axes (nonpositive values omitted); all $(length(scan.fields)) stored fields h0>=1.
+    Figure 2: 2x2 panels with in-axis legends, log h0 axes spanning [0.1, 10]; panels 1 and 3 have linear vertical axes, panels 2 and 4 have log vertical axes (nonpositive values omitted); $(length(scan.fields)) field-grid points. Absent groups remain gaps in curves and are excluded from fitting and crossing interpolation.
     Each curve is one size. Panel 1: power-law rate 1/z; panel 2: exponential rate 1/xi_tau.
     Both rate panels show the corresponding candidate model regardless of which model wins.
     Panel 3: min(power.reduced_chi_square, exponential.reduced_chi_square) at each (L,h0).
