@@ -251,6 +251,24 @@ end
     _, fallback = RandomTFIM.rank_one_autocorrelation(broken, [0.0, 1.0, 0.0], 1.0)
     @test fallback == [1, 3]
     @test_throws ArgumentError autocorrelation(ones(5), ones(6), [floatmax(Float64)]; offset=true)
+
+    # A direct determinant checks trailing-block updates and complex transpose semantics.
+    rng = Xoshiro(813)
+    for L in (3, 16, 64), scale in (1.0, 1.0im)
+        u, A = rand(rng, L), randn(rng, L, L)
+        synthetic = (; X=u*u'/L, Y=(A-A')/L, energy=collect(range(0.1, 2.0; length=L)), logweight=-0.3)
+        probe = scale isa Real ? [0.7, 0.0, 1.3, 0.7] : [0.7, 0.0, -1.3, 0.7]
+        actual, fallback = RandomTFIM.rank_one_autocorrelation(synthetic, probe, scale)
+        expected = map(probe) do t
+            d1 = exp(-scale*synthetic.energy[1]*t)
+            ratios = exp.(-scale .* (synthetic.energy .- synthetic.energy[1]) .* t)
+            ratios[1] = 0
+            real(exp(synthetic.logweight)*d1 *
+                (det(I+Diagonal(ratios)*(synthetic.X+d1*synthetic.Y))-1))
+        end
+        @test isempty(fallback)
+        @test actual ≈ expected atol=2e-13 rtol=2e-13
+    end
 end
 
 @testset "Optimized kernels: decay, singular prefixes and short strings" begin

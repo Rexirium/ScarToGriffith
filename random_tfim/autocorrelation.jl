@@ -211,7 +211,8 @@ end
 function rank_one_cache(F, j; B=nothing)
     isnothing(B) && (B = spin_flip_covariance(F, j))
     order = sortperm(F.S)
-    P, Q = (I+B[order, order])/2, (I-B[order, order])/2
+    ordered = B[order, order]
+    P, Q = (I+ordered)/2, (I-ordered)/2
     energy = 2 .* F.S[order]
     logweight = ground_transition_logweight(F, j)
     P[1, :] += Q[1, :]
@@ -232,7 +233,7 @@ function rank_one_autocorrelation(cache, times, scale)
     (; X, Y, energy, logweight) = cache
     L, T = length(energy), typeof(scale)
     K = Matrix{T}(undef, L, L)
-    column, row, ratios = Vector{T}(undef, L), Vector{T}(undef, L), Vector{T}(undef, L)
+    ratios = Vector{T}(undef, L)
     C = Vector{Float64}(undef, length(times))
     fallback = Int[]
     for (n, t) in enumerate(times)
@@ -253,14 +254,14 @@ function rank_one_autocorrelation(cache, times, scale)
                 break
             end
             g += log1p(kappa)
-            copyto!(column, view(K, :, mu))
-            copyto!(row, view(K, mu, :))
+            mu == L && continue
+            # Only the unprocessed block contributes to subsequent pivots.
+            remaining = mu+1:L
             alpha = -ratios[mu]/(1+kappa)
-            if scale isa Real
-                BLAS.ger!(alpha, column, row, K)
-            else
-                BLAS.geru!(alpha, column, row, K) # transpose, not adjoint
-            end
+            # Pivot row/column are outside the updated block; no copies are needed.
+            # geru! uses transpose for both real and complex matrices.
+            BLAS.geru!(alpha, view(K, remaining, mu), view(K, mu, remaining),
+                view(K, remaining, remaining))
         end
         if !valid || !isfinite(g)
             push!(fallback, n)

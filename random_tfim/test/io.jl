@@ -2,6 +2,48 @@ include(joinpath(@__DIR__, "..", "run.jl"))
 include(joinpath(@__DIR__, "..", "run_slurm.jl"))
 using Test
 
+# Shadow only this module's SVD to exercise failure recovery without changing LAPACK.
+module ScanSVDFaults
+import LinearAlgebra
+const failure = Ref{Any}(nothing)
+const original = Ref{Matrix{Float64}}()
+const retried = Ref(false)
+function svd!(K; kwargs...)
+    if K isa LinearAlgebra.Bidiagonal
+        original[] = Matrix(K)
+        if failure[] !== nothing
+            fill!(K.dv, NaN)
+            fill!(K.ev, NaN)
+            throw(failure[])
+        end
+    else
+        @assert K == original[]
+        @assert kwargs[:alg] isa LinearAlgebra.QRIteration
+        retried[] = true
+    end
+    return LinearAlgebra.svd!(K; kwargs...)
+end
+include(joinpath(@__DIR__, "..", "scan_common.jl"))
+end
+
+@testset "Scan SVD fallback preserves the disorder sample" begin
+    args = (8, 0.7, [0.0, 0.3, 1.7])
+    kwargs = (; nsamples=1, seed=72, field_distribution=:fixed)
+    expected = ScanSVDFaults.scan_observables(args...; kwargs...)
+    @test !ScanSVDFaults.retried[]
+    ScanSVDFaults.failure[] = LinearAlgebra.LAPACKException(1)
+    actual = @test_logs (:warn, "SVD failed; retrying with QR") ScanSVDFaults.scan_observables(args...; kwargs...)
+    @test ScanSVDFaults.retried[]
+    for key in keys(expected)
+        @test isapprox(getproperty(actual, key), getproperty(expected, key);
+            nans=true, atol=1e-12, rtol=1e-10)
+    end
+    ScanSVDFaults.retried[] = false
+    ScanSVDFaults.failure[] = ArgumentError("simulated non-LAPACK failure")
+    @test_throws "simulated non-LAPACK failure" ScanSVDFaults.scan_observables(args...; kwargs...)
+    @test !ScanSVDFaults.retried[]
+end
+
 @testset "Scan configuration and HDF5 round trip" begin
     base = read_config()
     defaults = TOML.parsefile(joinpath(@__DIR__, "..", "scan.toml"))

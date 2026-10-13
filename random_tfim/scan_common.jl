@@ -32,7 +32,15 @@ function scan_observables(L, h0, times; nsamples, seed, field_distribution, offs
         values = Vector{Float64}(undef, 2width)
         for (n, index) in enumerate(chunks[k])
             J, h = samples[index]
-            F = svd!(RandomTFIM.fermion_matrix(J, h))
+            F = try
+                svd!(RandomTFIM.fermion_matrix(J, h))
+            catch err
+                err isa LinearAlgebra.LAPACKException || rethrow()
+                @warn "SVD failed; retrying with QR" L h0 seed sample_index=index exception=err
+                # svd! may have mutated its input; rebuild from the same disorder sample.
+                K = Matrix(RandomTFIM.fermion_matrix(J, h))
+                svd!(K; alg=LinearAlgebra.QRIteration())
+            end
             gap = RandomTFIM.gap_result(F.S)
             G = -(F.V * F.U')
             B = !isempty(times) && 1 < j < L ? RandomTFIM.spin_flip_covariance(F, j) : nothing
