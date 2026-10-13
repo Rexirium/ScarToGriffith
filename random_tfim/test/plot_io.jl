@@ -4,9 +4,10 @@ include(joinpath(@__DIR__, "..", "plot_imaginary_time.jl"))
 @testset "Imaginary-time field scan" begin
     mktempdir() do directory
         input = joinpath(directory, "field_scan.h5")
-        sizes, fields = [16, 128], [0.5, 1.0, 2.0]
+        sizes, fields = [32, 256], [0.5, 1.0, 2.0]
         t = exp.(range(log(0.1), log(10.0); length=31))
         h5open(input, "w") do f
+            HDF5.attributes(f)["offset"] = true
             f["parameters/fields"] = fields
             for L in sizes, h0 in fields
                 g = create_group(f, "L$(L)/h$(h0)")
@@ -19,6 +20,7 @@ include(joinpath(@__DIR__, "..", "plot_imaginary_time.jl"))
         end
         scan = plot_imaginary_field_scan(input, sizes; tmin=1.0)
         @test scan.fields == [1.0, 2.0]
+        @test scan.comparison_size == 256
         @test length(scan.records) == 4
         for r in scan.records
             @test r.result.best.model == (r.h0 == 1.0 ? :power : :exponential)
@@ -31,7 +33,7 @@ include(joinpath(@__DIR__, "..", "plot_imaginary_time.jl"))
         for k in 1:4
             ax = content(scan.fig[panel_position(k, 2)...])
             @test ax.xscale[] === log10
-            @test ax.yscale[] === (k == 4 ? log10 : identity)
+            @test ax.yscale[] === (k in (2, 4) ? log10 : identity)
         end
         full_scan = plot_imaginary_field_scan(input, sizes; tmin=0.0, tmax=Inf)
         h5open(input, "r") do f

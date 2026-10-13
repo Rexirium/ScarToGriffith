@@ -1,6 +1,16 @@
 # Shared unweighted fits; SEM is used by the plotting code only.
 using Statistics
 
+# Read the stored arithmetic mean, not the mean of log(C), for both decay models.
+function read_imaginary_autocorrelation(group)
+    t = read(group["imaginary_time"])
+    y = read(group["autocorrelation_mean"])
+    sem = read(group["autocorrelation_sem"])
+    all(v -> v isa AbstractVector, (t, y, sem)) || error("Expected autocorrelation vectors")
+    length(t) == length(y) == length(sem) || error("Mismatched autocorrelation data lengths")
+    (; t, y, sem)
+end
+
 # The centered ordinary least-squares formula used by the original slope plot.
 function fit_line(x, y)
     length(x) == length(y) >= 2 || error("Linear regression needs at least two points")
