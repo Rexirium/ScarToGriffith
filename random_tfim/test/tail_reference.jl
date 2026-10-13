@@ -56,7 +56,7 @@ end
 function converged_reference(J, h, times)
     previous = nothing
     history = Dict{String,Any}[]
-    for bits in (256, 512, 1024, 2048, 4096)
+    for bits in (256, 512, 1024, 2048, 4096, 8192, 16384)
         started = time()
         result, change = setprecision(bits) do
             r = reference_curve(J, h, times)
@@ -77,7 +77,7 @@ function converged_reference(J, h, times)
         previous = result.values
         GC.gc()
     end
-    error("Reference did not converge through 4096 bits; no unvalidated values are accepted")
+    error("Reference did not converge through 16384 bits; no unvalidated values are accepted")
 end
 
 # Independent spin-Hamiltonian oracle in even/odd global-spin-flip sectors.
@@ -156,7 +156,7 @@ function run_tail_reference()
     cases = [(L=6, h0=1.0, seed=seed) for seed in seeds]
     append!(cases, [(L=32, h0=h0, seed=seed) for h0 in fields for seed in seeds])
     smoke && (cases = cases[1:1])
-    times = collect(10.0 .^ range(2, 3; length=101))
+    times = collect(10.0 .^ range(2, 4; length=201))
     output = joinpath(@__DIR__, "..", "results", smoke ? "tail_reference_smoke.out" : "tail_reference.out")
     sources = ["model.jl", "autocorrelation.jl"]
     hashes = Dict(file=>bytes2hex(sha256(read(joinpath(@__DIR__, "..", file)))) for file in sources)
@@ -194,7 +194,7 @@ function run_tail_reference()
                 "previous_subtraction_float64"=>accuracy_row(old, ref.values), "fallback_points"=>fallback)
         end
         setprecision(ref.bits) do
-            indices = [1, 51, 101]
+            indices = [1, cld(length(times), 2), length(times)]
             pair = pairing_reference(ref.F, cld(job.L, 2), [0.0; times[indices]])
             @test abs(pair[1]+ref.weight-1) < big"1e-25"
             error = maximum(abs.(pair[2:end]./ref.values[indices] .- 1))

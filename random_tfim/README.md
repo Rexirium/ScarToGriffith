@@ -517,9 +517,9 @@ julia --project=julia-env/precision-check --startup-file=no --threads=1 random_t
 基准固定 `J` 的随机实现及 `h=h0/e`，检查中心格点的 `offset=true` 虚时关联。
 默认包含 `L=32` 的五个场强（0.1、0.3、1、3、10）各四个种子（1996、941、2026、812），
 以及四个 `L=6, h0=1` 的独立自旋谱核对样本。不同场强复用同一种子的键无序，不能将它们视为独立无序样本。
-每个样本使用 101 个对数均匀的 `tau=100..1000` 点；BigFloat SVD 和 Pfaffian 从 256 位逐级倍增，
+每个样本使用 201 个对数均匀的 `tau=100..10000` 点，保留原有时间步密度；BigFloat SVD 和 Pfaffian 从 256 位逐级倍增，
 要求整条剩余关联曲线相对变化小于 `1e-25`，并以另一条高精度 Gaussian 配对路径核对三个尾部点。
-`L=6` 还核对独立自旋哈密顿量的奇偶宇称谱求和。无法在 4096 位以内确认收敛时停止，不接受未验证结果。
+`L=6` 还核对独立自旋哈密顿量的奇偶宇称谱求和。无法在 16384 位以内确认收敛时停止，不接受未验证结果。
 `--smoke` 只运行第一个小链样本，输出单独的文件。
 
 生成的 `results/tail_reference.out` 是 TOML 格式，逐样本保存输入、源码 SHA256、精度收敛历史、
@@ -527,6 +527,14 @@ julia --project=julia-env/precision-check --startup-file=no --threads=1 random_t
 其中 `complete=true` 才表示全部完成；下标从 1 开始。单独记录高于最小正 Float64 的点，
 以区分表示范围不足和算法误差；次正规数本身仍可能有明显量化误差。
 该脚本不修改生产算法，也不改变生产计算的精度。
+
+当前 `tau=100..10000` 基准结果保存在 `results/`：
+
+| 文件 | 内容 |
+| --- | --- |
+| `tail_reference.out` | 24 组高精度参考：时间网格、输入参数、参考值及其对数、收敛历史和 Float64 对照误差（TOML） |
+| `tail_reference_summary.out` | 高精度参考验证与误差汇总 |
+| `tail_reference_run.out` | 高精度参考计算的运行日志 |
 
 ## 论文图与数据需求
 

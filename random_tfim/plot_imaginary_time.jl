@@ -1,5 +1,5 @@
-# julia --project=@v1.13 random_tfim/plot_imaginary_time.jl [Lmax256_fixed_YYYYMMDD_HHMMSS.h5] [output_dir] [tau_min] [tau_max]
-# Default fit and plot window: 0.1 <= tau <= 1e3.
+# julia --project=@v1.13 random_tfim/plot_imaginary_time.jl [Lmax128_fixed_offset_YYYYMMDD_HHMMSS.h5] [output_dir] [tau_min] [tau_max]
+# Default fit and plot window: 1 <= tau <= 1e4.
 include(joinpath(@__DIR__, "plot_results.jl"))
 using Printf
 
@@ -21,7 +21,7 @@ function select_imaginary_fields(fields)
     selections
 end
 
-function plot_imaginary_field_scan(input, sizes; tmin=0.1, tmax=1e3, fitter=fit_autocorrelation, background=false)
+function plot_imaginary_field_scan(input, sizes; tmin=1.0, tmax=1e4, fitter=fit_autocorrelation, background=false)
     comparison_size = maximum(sizes)
     records = []
     fields, offset = h5open(input, "r") do f
@@ -73,12 +73,12 @@ function plot_imaginary_field_scan(input, sizes; tmin=0.1, tmax=1e3, fitter=fit_
         vlines!(comparison, [c.h0]; color=(:black, 0.5), linestyle=:dash, linewidth=1)
         c.reduced_chi_square > 0 || continue # Zero scores cannot be shown on a log axis.
         scatter!(comparison, [c.h0], [c.reduced_chi_square]; color=:black, marker=:xcross,
-            markersize=14, label=@sprintf("Crossing h₀ ≈ %.5g", c.h0))
+            markersize=14, label="Model-score crossings")
     end
     isempty(crossings) && text!(comparison, 0.97, 0.95; text="No crossing in scanned range",
         space=:relative, align=(:right, :top), fontsize=16)
     xlims!(comparison, 0.1, 10.0)
-    axislegend(comparison; position=:rt, framevisible=false, labelsize=20)
+    axislegend(comparison; position=:rt, framevisible=false, labelsize=20, unique=true)
     Label(fig[3, 1:2], "$(basename(input)) | h = h₀/e | offset=$offset | $(length(fields)) fields, 0.1 ≤ h₀ ≤ 10\n" *
         "Unweighted log-space fits; all finite C > 0; τ ∈ [$tmin, $(isinf(tmax) ? "end" : tmax)]\nCrossings: linear interpolation in log(h₀), no extrapolation";
         fontsize=18)
@@ -88,16 +88,16 @@ end
 function imaginary_time_main(args; fitter=fit_autocorrelation, prediction=decay_prediction, background=false)
     length(args) <= 4 || error("Usage: plot_imaginary_time.jl [input] [out] [tau_min] [tau_max]")
     input = if isempty(args)
-        paths = filter(p -> occursin(r"^Lmax256_fixed_\d{8}_\d{6}\.h5$", basename(p)),
+        paths = filter(p -> occursin(r"^Lmax128_fixed_offset_\d{8}_\d{6}\.h5$", basename(p)),
             readdir(joinpath(@__DIR__, "results"); join=true))
-        isempty(paths) && error("No Lmax256_fixed data found")
+        isempty(paths) && error("No Lmax128_fixed_offset data found")
         paths[argmax(mtime.(paths))]
     else
         abspath(args[1])
     end
     out = length(args) < 2 ? joinpath(dirname(input), (background ? "figures_imaginary_time_background_" : "figures_imaginary_time_") * splitext(basename(input))[1]) : abspath(args[2])
-    tmin = length(args) < 3 ? 0.1 : parse(Float64, args[3])
-    tmax = length(args) < 4 ? 1e3 : parse(Float64, args[4])
+    tmin = length(args) < 3 ? 1.0 : parse(Float64, args[3])
+    tmax = length(args) < 4 ? 1e4 : parse(Float64, args[4])
     set_theme!(Theme(fontsize=21, Axis=(xgridvisible=false, ygridvisible=false)))
     rows = String["L,h0,phase,model,A,decay_parameter,chi_square,reduced_chi_square,n,tau_min,tau_max,selected" * (background ? ",B,logA,logB" : "")]
     nparameters = background ? 3 : 2
