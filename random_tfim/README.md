@@ -502,8 +502,31 @@ julia --startup-file=no random_tfim/test/benchmark.jl
 `plot_io.jl` 使用已有 `@v1.13` 环境，检查虚时间汇总数据的场强扫描、拟合窗口、模型交点、坐标轴和共享误差掩码。
 旧图集的样本读取、能隙直方图、分布缩放和旧时间关联图测试已移除；核心模块仍支持的空间关联和可选样本接口继续保留测试。
 `imaginary_time_fit.jl` 检查无权幂律/指数拟合的参数恢复、模型选择、平台、无效点筛选、微小正尾部保留，以及对数斜率的筛选、异常输入和与独立线性回归的一致性。
-删除独立尾部对比诊断脚本（核心测试已覆盖相应数值检查）；性能基准仅测当前实现，不再加载旧源码。
+性能基准仅测当前实现，不再加载旧源码。
 这些小规模验证不代表已完成 full 默认 10000 样本的论文统计精度复现。
+
+可选的高精度尾部基准由 [tail_reference.jl](test/tail_reference.jl) 单独生成，不属于日常测试：
+
+```sh
+julia --project=julia-env/precision-check -e 'using Pkg; Pkg.instantiate()'
+julia --project=julia-env/precision-check --startup-file=no --threads=1 random_tfim/test/tail_reference.jl
+# 中断后续跑；要求输入网格与源码指纹一致
+julia --project=julia-env/precision-check --startup-file=no --threads=1 random_tfim/test/tail_reference.jl --resume
+```
+
+基准固定 `J` 的随机实现及 `h=h0/e`，检查中心格点的 `offset=true` 虚时关联。
+默认包含 `L=32` 的五个场强（0.1、0.3、1、3、10）各四个种子（1996、941、2026、812），
+以及四个 `L=6, h0=1` 的独立自旋谱核对样本。不同场强复用同一种子的键无序，不能将它们视为独立无序样本。
+每个样本使用 101 个对数均匀的 `tau=100..1000` 点；BigFloat SVD 和 Pfaffian 从 256 位逐级倍增，
+要求整条剩余关联曲线相对变化小于 `1e-25`，并以另一条高精度 Gaussian 配对路径核对三个尾部点。
+`L=6` 还核对独立自旋哈密顿量的奇偶宇称谱求和。无法在 4096 位以内确认收敛时停止，不接受未验证结果。
+`--smoke` 只运行第一个小链样本，输出单独的文件。
+
+生成的 `results/tail_reference.out` 是 TOML 格式，逐样本保存输入、源码 SHA256、精度收敛历史、
+高精度值及其对数，以及当前 Float64 和原先末步相减方法的误差、负值、零值及回退位置。
+其中 `complete=true` 才表示全部完成；下标从 1 开始。单独记录高于最小正 Float64 的点，
+以区分表示范围不足和算法误差；次正规数本身仍可能有明显量化误差。
+该脚本不修改生产算法，也不改变生产计算的精度。
 
 ## 论文图与数据需求
 
