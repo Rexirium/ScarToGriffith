@@ -193,12 +193,13 @@ function ground_transition_weight(F, j)
 end
 
 function autocorrelation(F, times, j, scale;
-        rcond_tol::Real=sqrt(eps(Float64)), B=nothing, offset::Bool=false)
+        rcond_tol::Real=sqrt(eps(Float64)), B=nothing, offset::Bool=false, transition=nothing)
     isempty(times) && return Float64[]
     if offset
         C = autocorrelation(F, times, j, scale; rcond_tol, B)
-        weight = ground_transition_weight(F, j)
-        gap = 2minimum(F.S)
+        # Internal callers can share the same sample/site transition across time domains.
+        (; weight, gap) = isnothing(transition) ?
+            (; weight=ground_transition_weight(F, j), gap=2minimum(F.S)) : transition
         for (n, t) in enumerate(times)
             C[n] -= weight * (scale isa Real ? exp(-gap*t) : cos(gap*t))
         end

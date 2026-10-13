@@ -36,9 +36,11 @@ function scan_observables(L, h0, times; nsamples, seed, field_distribution, offs
             gap = RandomTFIM.gap_result(F.S)
             G = -(F.V * F.U')
             B = !isempty(times) && 1 < j < L ? RandomTFIM.spin_flip_covariance(F, j) : nothing
+            transition = offset && !isempty(times) ?
+                (; weight=RandomTFIM.ground_transition_weight(F, j), gap=gap.gap) : nothing
             values[1] = gap.gap
-            values[2:1+nt] = RandomTFIM.autocorrelation(F, times, j, 1.0; B, offset)
-            values[2+nt:1+2nt] = RandomTFIM.autocorrelation(F, times, j, 1.0im; B, offset)
+            values[2:1+nt] = RandomTFIM.autocorrelation(F, times, j, 1.0; B, offset, transition)
+            values[2+nt:1+2nt] = RandomTFIM.autocorrelation(F, times, j, 1.0im; B, offset, transition)
             # G is L-by-L and entropy_cuts produces valid cuts; check finiteness once.
             all(isfinite, G) || throw(ArgumentError("G must be finite"))
             for (i, cut) in enumerate(cuts)

@@ -166,6 +166,7 @@ end
         @test reverse(odd) ≈ -odd atol=1e-9
         gap = exact.E1 - exact.E0
         Jcopy, hcopy = copy(J), copy(h)
+        F = svd!(RandomTFIM.fermion_matrix(J, h))
         for j in 1:L, time_domain in (:imaginary, :real)
             times = time_domain == :imaginary ? [0.7, 0.0, 2.3, 0.7] : [0.7, 0.0, -2.3, -0.7]
             scale = time_domain == :imaginary ? 1.0 : 1im
@@ -175,8 +176,12 @@ end
             expected = [real(sum(weights .* exp.(-scale .* (exact.energies .- exact.E0) .* t))) for t in times]
             original = autocorrelation(J, h, times; j, time_domain)
             @test original == autocorrelation(J, h, times; j, time_domain, offset=false)
+            transition = (; weight=RandomTFIM.ground_transition_weight(F, j), gap=2minimum(F.S))
             for rcond_tol in (0.0, sqrt(eps(Float64)), 1.0)
                 actual = @inferred autocorrelation(J, h, times; j, time_domain, rcond_tol, offset=true)
+                cached = @inferred RandomTFIM.autocorrelation(F, times, j, float(scale);
+                    rcond_tol, offset=true, transition)
+                @test cached == actual
                 @test actual ≈ expected atol=2e-10
                 @test original - actual ≈ weight .* real.(exp.(-scale .* gap .* times)) atol=2e-10
                 @test actual[2] ≈ 1-weight atol=2e-10

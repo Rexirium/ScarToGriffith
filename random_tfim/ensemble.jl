@@ -90,8 +90,10 @@ Base.@constprop :aggressive function disorder_ensemble(L::Int, h0::Real,
         end
 
         B = !isempty(times) && 1 < j < L && rcond_tol != 1 ? spin_flip_covariance(F, j) : nothing
-        sample_Ct[:, n] = autocorrelation(F, times, j, 1.0; rcond_tol, B, offset)
-        sample_real_Ct[:, n] = autocorrelation(F, times, j, 1.0im; rcond_tol, B, offset)
+        transition = offset && !isempty(times) ?
+            (; weight=ground_transition_weight(F, j), gap=result.gap) : nothing
+        sample_Ct[:, n] = autocorrelation(F, times, j, 1.0; rcond_tol, B, offset, transition)
+        sample_real_Ct[:, n] = autocorrelation(F, times, j, 1.0im; rcond_tol, B, offset, transition)
     end
 
     sample_logCt = correlation_log.(sample_Ct)
