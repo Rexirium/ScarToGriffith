@@ -642,6 +642,17 @@ end
         @test autocorrelation(J, h, times; j, offset=true) ≈ expected atol=2e-12
     end
     @test_throws ArgumentError autocorrelation(ones(3), ones(4), [floatmax(Float64)]; offset=true)
+    # Force the singular-chart fallback with a supplied transition, independently of w=0.
+    F = svd!(RandomTFIM.fermion_matrix(zeros(3), [1.3, 0.4, 1.7, 0.9]))
+    @test isnothing(RandomTFIM.offset_pairing_setup(F, 3))
+    transition = (; weight=0.25, gap=2minimum(F.S))
+    times = [0.0, 0.3, 2.0, 0.3]
+    for scale in (1.0, 1.0im)
+        full = RandomTFIM.autocorrelation(F, times, 3, scale)
+        expected = full .- transition.weight .* real.(exp.(-scale .* transition.gap .* times))
+        actual = @inferred RandomTFIM.autocorrelation(F, times, 3, scale; offset=true, transition)
+        @test actual ≈ expected atol=1e-15
+    end
 end
 
 @testset "Limits and sampling" begin

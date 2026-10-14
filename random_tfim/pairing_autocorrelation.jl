@@ -1,10 +1,8 @@
 # Gaussian state relative to the selected lowest odd-parity state.
 function offset_pairing_setup(F, j)
-    L = length(F.S)
     order = sortperm(F.S)
-    depth = min(j, L+1-j)
-    u = j <= cld(L, 2) ? F.U[1:depth, order] : F.V[L-depth+1:L, order]
-    v = j <= cld(L, 2) ? F.V[1:depth-1, order] : F.U[L-depth+2:L, order]
+    u_modes, v_modes = short_string_modes(F, j)
+    u, v = u_modes[:, order], v_modes[:, order]
     Gu, Gv = u'*u, v'*v
     P, Q = Gu+Gv-I, Gu-Gv
     P[:, 1], Q[:, 1] = copy(Q[:, 1]), copy(P[:, 1])
@@ -49,8 +47,9 @@ function pairing_offset_autocorrelation(pairing, times, weight, gap)
     decays = Vector{Float64}(undef, length(beta))
     C = Vector{Float64}(undef, length(times))
     logweight = log(weight)
+    max_frequency = maximum(beta)
     for (n, tau) in enumerate(times)
-        isfinite(maximum(beta)*tau) || throw(ArgumentError("time-frequency product overflows Float64"))
+        isfinite(max_frequency*tau) || throw(ArgumentError("time-frequency product overflows Float64"))
         for k in 2:length(beta)
             decays[k] = exp(-beta[k]*tau/2)
         end

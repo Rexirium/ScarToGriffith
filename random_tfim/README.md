@@ -404,6 +404,12 @@ $$C_{ij}=\det G_{i:j-1,\ i+1:j}.$$
 
 ### 自关联的两个计算路径
 
+内部入口 `autocorrelation` 只负责选择是否 offset：`full_autocorrelation` 计算全关联，
+`offset_autocorrelation` 按 `scale::Real/Complex` 分派到虚时间或实时间处理。
+实时间与虚时间配对态失败时直接调用 `full_autocorrelation`，再用 `subtract_transition!` 原地扣除跃迁项，
+无需额外的全关联包装或递归调用入口。
+端点、尾部阈值和条件数仍按数值判断；三个预处理步骤共用 `short_string_modes` 的反射约定。
+
 初态和演化共用同一次 SVD：`U, ε, V`。
 端点自关联直接计算 `Σμ wμ exp(−2εμ z)`，左端权重为 `U[1,μ]^2`，右端为 `V[L,μ]^2`，
 实时间直接取余弦；无需构造矩阵、估计条件数或计算 Pfaffian。

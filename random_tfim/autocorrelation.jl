@@ -170,12 +170,19 @@ function endpoint_autocorrelation(F, times, j, scale; skip_mode::Int=0)
     return C
 end
 
-# In one OBC mode basis, B=(I-2u'u)(I-2v'v); no site-basis covariance is needed.
-function spin_flip_covariance(F, j)
+# Reflect right-half sites and exchange U/V to use the shorter JW string.
+@inline function short_string_modes(F, j)
     L = length(F.S)
     depth = min(j, L+1-j)
     u = j <= cld(L, 2) ? view(F.U, 1:depth, :) : view(F.V, L-depth+1:L, :)
     v = j <= cld(L, 2) ? view(F.V, 1:depth-1, :) : view(F.U, L-depth+2:L, :)
+    return u, v
+end
+
+# In one OBC mode basis, B=(I-2u'u)(I-2v'v); no site-basis covariance is needed.
+function spin_flip_covariance(F, j)
+    L = length(F.S)
+    u, v = short_string_modes(F, j)
     B = u' * u
     B .*= -2
     for a in 1:L
@@ -191,9 +198,7 @@ function ground_transition_weight(F, j)
     mu = argmin(F.S)
     j == 1 && return abs2(F.U[1, mu])
     j == L && return abs2(F.V[L, mu])
-    depth = min(j, L+1-j)
-    u = j <= cld(L, 2) ? view(F.U, 1:depth, :) : view(F.V, L-depth+1:L, :)
-    v = j <= cld(L, 2) ? view(F.V, 1:depth-1, :) : view(F.U, L-depth+2:L, :)
+    u, v = short_string_modes(F, j)
     logabs, _ = logabsdet(hcat(u * v', u[:, mu]))
     return exp(2logabs)
 end
@@ -201,25 +206,46 @@ end
 function autocorrelation(F, times, j, scale;
         rcond_tol::Real=sqrt(eps(Float64)), B=nothing, offset::Bool=false, transition=nothing)
     isempty(times) && return Float64[]
-    if offset
-        # Internal callers can share the same sample/site transition across time domains.
-        (; weight, gap) = isnothing(transition) ?
-            (; weight=ground_transition_weight(F, j), gap=2minimum(F.S)) : transition
-        if scale isa Real
-            (j == 1 || j == length(F.S)) &&
-                return endpoint_autocorrelation(F, times, j, scale; skip_mode=argmin(F.S))
-            iszero(weight) && return autocorrelation(F, times, j, scale; rcond_tol, B)
-            pairing = offset_pairing_setup(F, j)
-            if !isnothing(pairing)
-                return pairing_offset_autocorrelation(pairing, times, weight, gap)
-            end
-        end
-        C = autocorrelation(F, times, j, scale; rcond_tol, B)
-        for (n, t) in enumerate(times)
-            C[n] -= weight * (scale isa Real ? exp(-gap*t) : cos(gap*t))
-        end
-        return C
+    return offset ? offset_autocorrelation(F, times, j, scale; rcond_tol, B, transition) :
+        full_autocorrelation(F, times, j, scale; rcond_tol, B)
+end
+
+# Preserve the shared transition supplied by ensemble/scan callers.
+@inline ground_transition(F, j, transition) = isnothing(transition) ?
+    (; weight=ground_transition_weight(F, j), gap=2minimum(F.S)) : transition
+
+function offset_autocorrelation(F, times, j, scale::Real;
+        rcond_tol, B, transition)
+    (j == 1 || j == length(F.S)) &&
+        return endpoint_autocorrelation(F, times, j, scale; skip_mode=argmin(F.S))
+    transition = ground_transition(F, j, transition)
+    (; weight, gap) = transition
+    iszero(weight) && return full_autocorrelation(F, times, j, scale; rcond_tol, B)
+    pairing = offset_pairing_setup(F, j)
+    if !isnothing(pairing)
+        return pairing_offset_autocorrelation(pairing, times, weight, gap)
     end
+    C = full_autocorrelation(F, times, j, scale; rcond_tol, B)
+    return subtract_transition!(C, times, scale, transition)
+end
+
+function offset_autocorrelation(F, times, j, scale::Complex;
+        rcond_tol, B, transition)
+    transition = ground_transition(F, j, transition)
+    C = full_autocorrelation(F, times, j, scale; rcond_tol, B)
+    return subtract_transition!(C, times, scale, transition)
+end
+
+# Shared by real-time offset and the imaginary-time singular-chart fallback.
+function subtract_transition!(C, times, scale, transition)
+    (; weight, gap) = transition
+    for (n, t) in enumerate(times)
+        C[n] -= weight * (scale isa Real ? exp(-gap*t) : cos(gap*t))
+    end
+    return C
+end
+
+function full_autocorrelation(F, times, j, scale; rcond_tol, B)
     L = length(F.S)
     (j == 1 || j == L) && return endpoint_autocorrelation(F, times, j, scale)
     depth = min(j, L+1-j)
