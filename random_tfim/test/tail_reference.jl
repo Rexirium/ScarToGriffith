@@ -161,13 +161,14 @@ function run_tail_reference()
     sources = ["model.jl", "autocorrelation.jl"]
     hashes = Dict(file=>bytes2hex(sha256(read(joinpath(@__DIR__, "..", file)))) for file in sources)
     hashes["tail_reference.jl"] = bytes2hex(sha256(read(@__FILE__)))
-    report = Dict{String,Any}("format_version"=>1, "complete"=>false,
+    report = Dict{String,Any}("format_version"=>2, "complete"=>false, "method"=>"full_minus_lowest_transition",
         "julia"=>string(VERSION), "generic_linear_algebra"=>string(pkgversion(GenericLinearAlgebra)),
         "cpu"=>Sys.CPU_NAME, "blas_threads"=>BLAS.get_num_threads(),
         "times"=>times, "source_sha256"=>hashes, "field_distribution"=>"fixed", "field_divisor"=>exp(1),
         "relative_convergence_tolerance"=>"1e-25", "expected_cases"=>length(cases), "cases"=>Dict{String,Any}[])
     if "--resume" in ARGS && isfile(output)
         report = TOML.parsefile(output)
+        @assert report["format_version"] == 2
         @assert report["source_sha256"] == hashes && report["times"] == times
         @assert report["expected_cases"] == length(cases)
     end
@@ -179,19 +180,12 @@ function run_tail_reference()
         ref = converged_reference(J, h, times)
         row = setprecision(ref.bits) do
             current = autocorrelation(J, h, times; offset=true)
-            f = svd!(RandomTFIM.fermion_matrix(J, h))
             j = cld(job.L, 2)
-            old = RandomTFIM.autocorrelation(f, times, j, 1.0)
-            RandomTFIM.subtract_ground_transition!(old, f, times, j, 1.0, nothing)
-            cache = RandomTFIM.rank_one_cache(f, j)
-            fallback = isnothing(cache.X) ? collect(eachindex(times)) :
-                last(RandomTFIM.rank_one_autocorrelation(cache, times, 1.0))
             Dict{String,Any}("L"=>job.L, "h0"=>job.h0, "seed"=>job.seed, "j"=>j, "J"=>J, "h"=>h,
                 "bits"=>ref.bits, "convergence"=>ref.history,
                 "reference"=>string.(ref.values), "log_reference"=>string.(log.(ref.values)),
                 "lowest_weight"=>string(ref.weight), "gap"=>string(ref.gap),
-                "current_float64"=>accuracy_row(current, ref.values),
-                "previous_subtraction_float64"=>accuracy_row(old, ref.values), "fallback_points"=>fallback)
+                "current_float64"=>accuracy_row(current, ref.values))
         end
         setprecision(ref.bits) do
             indices = [1, cld(length(times), 2), length(times)]
@@ -219,7 +213,7 @@ function run_tail_reference()
             TOML.print(io, report)
         end
         println((stage="saved", job..., bits=ref.bits, seconds=round(row["seconds"]; digits=2),
-            error=parse(Float64, row["current_float64"]["max_relative_error"]))); flush(stdout)
+            error=Float64(parse(BigFloat, row["current_float64"]["max_relative_error"])))); flush(stdout)
         GC.gc()
     end
     println("Saved: ", output)

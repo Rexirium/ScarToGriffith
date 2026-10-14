@@ -217,60 +217,6 @@ end
     @test result.real_Ct_mean ≈ vec(mean(result.sample_real_Ct; dims=2))
 end
 
-@testset "Scaled rank-one offset tails and shared cache" begin
-    J, h = sample_disorder(Xoshiro(1996), 6, 1.0; field_distribution=:fixed)
-    F = svd!(RandomTFIM.fermion_matrix(J, h))
-    B = RandomTFIM.spin_flip_covariance(F, 3)
-    cache = RandomTFIM.rank_one_cache(F, 3; B)
-    saved = deepcopy(cache)
-    # Converged 2048-bit Pfaffian values, independently checked by spin ED.
-    times = [1000.0, 100.0, 1000.0]
-    expected = [8.439819263002584e-191, 4.019047182655034e-21, 8.439819263002584e-191]
-    actual = autocorrelation(J, h, times; offset=true)
-    @test all(isapprox.(actual, expected; rtol=1e-10, atol=0))
-    @test actual == RandomTFIM.autocorrelation(F, times, 3, 1.0; offset=true, B, offset_cache=cache)
-    @test actual == autocorrelation(J, h, times; offset=true, rcond_tol=1.0)
-    for scale in (1.0, 1.0im)
-        probe = [0.0, 0.7, 12.0]
-        raw = RandomTFIM.autocorrelation(F, probe, 3, scale)
-        weight = RandomTFIM.ground_transition_weight(F, 3)
-        expected = raw .- weight .* real.(exp.(-scale .* 2minimum(F.S) .* probe))
-        @test RandomTFIM.autocorrelation(F, probe, 3, scale; offset=true, offset_cache=cache) ≈ expected atol=2e-11
-    end
-    @test cache == saved
-    # Production SVDs are descending; permuting the mode basis must not change the observable.
-    order = reverse(eachindex(F.S))
-    reordered = (; U=F.U[:, order], S=F.S[order], V=F.V[:, order])
-    @test RandomTFIM.autocorrelation(reordered, times, 3, 1.0; offset=true) ≈ actual rtol=1e-10 atol=0
-
-    # Zero baseline weight makes the rank-one chart unavailable, as in disconnected chains.
-    decoupled = svd!(RandomTFIM.fermion_matrix(zeros(3), [1.3, 0.4, 1.7, 0.9]))
-    @test isnothing(RandomTFIM.rank_one_cache(decoupled, 3).X)
-    # An invalid update falls back only at the affected time, preserving order and duplicates.
-    broken = (; X=Diagonal([1.0, -1.0]), Y=zeros(2, 2), energy=[1.0, 2.0], logweight=0.0)
-    _, fallback = RandomTFIM.rank_one_autocorrelation(broken, [0.0, 1.0, 0.0], 1.0)
-    @test fallback == [1, 3]
-    @test_throws ArgumentError autocorrelation(ones(5), ones(6), [floatmax(Float64)]; offset=true)
-
-    # A direct determinant checks trailing-block updates and complex transpose semantics.
-    rng = Xoshiro(813)
-    for L in (3, 16, 64), scale in (1.0, 1.0im)
-        u, A = rand(rng, L), randn(rng, L, L)
-        synthetic = (; X=u*u'/L, Y=(A-A')/L, energy=collect(range(0.1, 2.0; length=L)), logweight=-0.3)
-        probe = scale isa Real ? [0.7, 0.0, 1.3, 0.7] : [0.7, 0.0, -1.3, 0.7]
-        actual, fallback = RandomTFIM.rank_one_autocorrelation(synthetic, probe, scale)
-        expected = map(probe) do t
-            d1 = exp(-scale*synthetic.energy[1]*t)
-            ratios = exp.(-scale .* (synthetic.energy .- synthetic.energy[1]) .* t)
-            ratios[1] = 0
-            real(exp(synthetic.logweight)*d1 *
-                (det(I+Diagonal(ratios)*(synthetic.X+d1*synthetic.Y))-1))
-        end
-        @test isempty(fallback)
-        @test actual ≈ expected atol=2e-13 rtol=2e-13
-    end
-end
-
 @testset "Optimized kernels: decay, singular prefixes and short strings" begin
     rng = Xoshiro(3209)
     # Independent Pfaffian oracle: expansion along the first row.

@@ -68,23 +68,17 @@ offset=true subtracts |<GS_-|sigma_z(j)|GS_+>|^2 * exp(-Delta*z),
 where GS_+ is the even ground state, GS_- the lowest odd state,
 Delta=E_--E_+=2minimum(F.S), and z=tau or im*t (only the real part is returned).
 The matrix element uses the lowest SVD mode; if it is degenerate, this selects
-one odd ground state, not the whole degenerate subspace. At interior sites,
-offset=true uses scaled rank-one updates in Float64 (ComplexF64 for real time),
-with time-independent preprocessing shared across the time grid. The remaining
-correlation is recovered with log1p/expm1 rather than final subtraction.
-Singular baselines or failed updates fall back to the original subtraction path.
-This does not guarantee tail accuracy or positivity; values are not clipped.
+one odd ground state, not the whole degenerate subspace. Subtraction can lose
+relative precision when the remaining correlation is small; values are not clipped.
 J has L-1 bonds, h has L fields; require L >= 2.
 Default j=cld(L,2) is the midpoint (left midpoint for even L).
-Endpoints use a direct spectral sum, skipping the lowest mode when offset=true.
-For offset=false at interior sites, estimate
+Endpoints use a direct spectral sum. At interior sites, estimate
 the reciprocal 1-norm condition number of the L-dimensional scaled matrix R
 using its LU factors. Use the determinant when rcond(R) > rcond_tol. Otherwise,
 use a JW-string Pfaffian of dimension 4min(j,L+1-j)-2 (reflecting
 right-half sites).
 rcond_tol defaults to sqrt(eps(Float64)); at interior sites, 0 forces the determinant
-and 1 forces the Pfaffian. For offset=true it only controls the fallback.
-Endpoints always use the spectral sum.
+and 1 forces the Pfaffian. Endpoints always use the spectral sum.
 The threshold is a numerical heuristic, not an error guarantee.
 Extremely small tails can still underflow or require higher-precision validation.
 """
@@ -154,7 +148,7 @@ function string_autocorrelation(F, times, j, reflected, scale=1.0)
     return C
 end
 
-function endpoint_autocorrelation(F, times, j, scale; skip_mode=0)
+function endpoint_autocorrelation(F, times, j, scale)
     modes = j == 1 ? F.U : F.V
     weights = abs2.(@view modes[j, :])
     C = Vector{Float64}(undef, length(times))
@@ -163,7 +157,6 @@ function endpoint_autocorrelation(F, times, j, scale; skip_mode=0)
         for mu in eachindex(F.S)
             angle = 2 * F.S[mu] * t
             isfinite(angle) || throw(ArgumentError("time-frequency product overflows Float64"))
-            mu == skip_mode && continue
             value += weights[mu] * (scale isa Real ? exp(-angle) : cos(angle))
         end
         C[n] = value
@@ -192,117 +185,23 @@ function ground_transition_weight(F, j)
     mu = argmin(F.S)
     j == 1 && return abs2(F.U[1, mu])
     j == L && return abs2(F.V[L, mu])
-    return exp(ground_transition_logweight(F, j))
-end
-
-function ground_transition_logweight(F, j)
-    L, mu = length(F.S), argmin(F.S)
-    j == 1 && return 2log(abs(F.U[1, mu]))
-    j == L && return 2log(abs(F.V[L, mu]))
     depth = min(j, L+1-j)
     u = j <= cld(L, 2) ? view(F.U, 1:depth, :) : view(F.V, L-depth+1:L, :)
     v = j <= cld(L, 2) ? view(F.V, 1:depth-1, :) : view(F.U, L-depth+2:L, :)
     logabs, _ = logabsdet(hcat(u * v', u[:, mu]))
-    return 2logabs
-end
-
-# At d1=1, A*=P+e1*q1' has determinant w1. Its inverse gives
-# d1*Q*inv(P+d1*e1*q1') = X+d1*Y, avoiding a tiny time-dependent pivot.
-function rank_one_cache(F, j; B=nothing)
-    isnothing(B) && (B = spin_flip_covariance(F, j))
-    order = sortperm(F.S)
-    ordered = B[order, order]
-    P, Q = (I+ordered)/2, (I-ordered)/2
-    energy = 2 .* F.S[order]
-    logweight = ground_transition_logweight(F, j)
-    P[1, :] += Q[1, :]
-    factors = lu!(P; check=false)
-    if !isfinite(logweight) || !issuccess(factors)
-        return (; X=nothing, Y=nothing, energy, logweight)
-    end
-    H = inv(factors)
-    X = (Q*H[:, 1]) * transpose(transpose(H)*Q[1, :])
-    Y = Q*H-X
-    # Orthogonality of B makes Y skew-symmetric, including its zero diagonal.
-    # Enforce this identity before tiny symmetric roundoff terms get amplified.
-    Y = (Y-transpose(Y))/2
-    return (; X, Y, energy, logweight)
-end
-
-function rank_one_autocorrelation(cache, times, scale)
-    (; X, Y, energy, logweight) = cache
-    L, T = length(energy), typeof(scale)
-    K = Matrix{T}(undef, L, L)
-    ratios = Vector{T}(undef, L)
-    C = Vector{Float64}(undef, length(times))
-    fallback = Int[]
-    for (n, t) in enumerate(times)
-        for mu in 1:L
-            isfinite(energy[mu]*t) || throw(ArgumentError("time-frequency product overflows Float64"))
-            angle = (energy[mu]-energy[1])*t
-            ratios[mu] = scale isa Real ? exp(-angle) : cis(-angle)
-        end
-        angle = energy[1]*t
-        d1 = scale isa Real ? exp(-angle) : cis(-angle)
-        K .= X .+ d1.*Y
-        g = zero(T)
-        valid = true
-        for mu in 2:L
-            kappa = ratios[mu]*K[mu, mu]
-            if !isfinite(kappa) || iszero(1+kappa) || (kappa isa Real && kappa < -1)
-                valid = false
-                break
-            end
-            g += log1p(kappa)
-            mu == L && continue
-            # Only the unprocessed block contributes to subsequent pivots.
-            remaining = mu+1:L
-            alpha = -ratios[mu]/(1+kappa)
-            # Pivot row/column are outside the updated block; no copies are needed.
-            # geru! uses transpose for both real and complex matrices.
-            BLAS.geru!(alpha, view(K, remaining, mu), view(K, mu, remaining),
-                view(K, remaining, remaining))
-        end
-        if !valid || !isfinite(g)
-            push!(fallback, n)
-        elseif scale isa Real
-            # Combine exponents before returning raw Float64; preserve negative tails.
-            logres = g > log(2) ? g+log1p(-exp(-g)) : log(abs(expm1(g)))
-            C[n] = sign(g)*exp(logweight-angle+logres)
-        else
-            C[n] = real(exp(logweight)*d1*expm1(g))
-            isfinite(C[n]) || push!(fallback, n)
-        end
-    end
-    return C, fallback
-end
-
-function subtract_ground_transition!(C, F, times, j, scale, transition)
-    (; weight, gap) = isnothing(transition) ?
-        (; weight=ground_transition_weight(F, j), gap=2minimum(F.S)) : transition
-    for (n, t) in enumerate(times)
-        C[n] -= weight * (scale isa Real ? exp(-gap*t) : cos(gap*t))
-    end
-    return C
+    return exp(2logabs)
 end
 
 function autocorrelation(F, times, j, scale;
-        rcond_tol::Real=sqrt(eps(Float64)), B=nothing, offset::Bool=false, transition=nothing,
-        offset_cache=nothing)
+        rcond_tol::Real=sqrt(eps(Float64)), B=nothing, offset::Bool=false, transition=nothing)
     isempty(times) && return Float64[]
     if offset
-        (j == 1 || j == length(F.S)) &&
-            return endpoint_autocorrelation(F, times, j, scale; skip_mode=argmin(F.S))
-        cache = isnothing(offset_cache) ? rank_one_cache(F, j; B) : offset_cache
-        if isnothing(cache.X)
-            C = autocorrelation(F, times, j, scale; rcond_tol, B)
-            return subtract_ground_transition!(C, F, times, j, scale, transition)
-        end
-        C, fallback = rank_one_autocorrelation(cache, times, scale)
-        if !isempty(fallback)
-            selected = times[fallback]
-            original = autocorrelation(F, selected, j, scale; rcond_tol, B)
-            C[fallback] = subtract_ground_transition!(original, F, selected, j, scale, transition)
+        C = autocorrelation(F, times, j, scale; rcond_tol, B)
+        # Internal callers can share the same sample/site transition across time domains.
+        (; weight, gap) = isnothing(transition) ?
+            (; weight=ground_transition_weight(F, j), gap=2minimum(F.S)) : transition
+        for (n, t) in enumerate(times)
+            C[n] -= weight * (scale isa Real ? exp(-gap*t) : cos(gap*t))
         end
         return C
     end

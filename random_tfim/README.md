@@ -272,14 +272,11 @@ realtime_offset = autocorrelation(J, h, times; time_domain=:real, offset=true)
 权重复用同一次 SVD，以最低能单准粒子和较短 JW 字符串的 Wick 收缩行列式计算，
 不通过长时间拟合估计。端点直接使用最低模态的 `U[1,mu]^2` 或 `V[L,mu]^2`。
 若最低模态简并（例如某些断链构型），按 SVD 的 `argmin` 选择其中一个奇宇称基态，
-不扣除整个简并子空间。`offset=true` 的体内格点使用全程 Float64 的带缩放秩一更新
-（实时间工作区为 ComplexF64），通过 `log1p`/`expm1` 直接恢复剩余关联；端点谱求和直接跳过最低模。
-两种时间域复用与时间无关的预计算矩阵，并恢复预计算矩阵的反对称结构以抑制舍入误差。
-每次秩一更新只修改尚未处理的子矩阵，直接读取其外侧的主元行列，省去行列工作区和复制；
-两种时间域统一使用非共轭的 `geru!` 更新。
-最低跃迁权重为零、基准矩阵奇异或某次更新失败时，回退到原有全关联计算后扣除的方法。
-`offset=false` 保留原有算法。返回值仍为普通 Float64，极小尾部可能下溢为零；
-极小能隙和秩一更新也仍可能失去相对精度，结果不裁剪、不取绝对值，非正值的对数仍记为 NaN。
+不扣除整个简并子空间。`offset=true` 先使用与 `offset=false` 完全相同的路径计算全自关联，
+再扣除第一激发态的跃迁贡献；端点也先对全部模态求和后相减。
+两种时间域共享同一样本的跃迁权重和能隙。
+返回值仍为普通 Float64；当扣除后的剩余关联很小时，相减可能损失相对精度或产生非正值。
+结果不裁剪、不取绝对值，非正值的对数仍记为 NaN。
 
 ### 无序平均
 
@@ -422,8 +419,8 @@ $$
 不根据关联实部是否为负切换。时间点可乱序，每点独立判断。
 
 `autocorrelation` 和 `disorder_ensemble` 均接受 `rcond_tol`，默认 `sqrt(eps(Float64))≈1.49e-8`。
-有效范围为 [0,1]：`offset=false` 时体内格点的 0 强制行列式，1 强制 Pfaffian，便于交叉验证；
-`offset=true` 时该参数仅控制秩一算法失败后的回退路径；端点始终直接求和。
+有效范围为 [0,1]：体内格点的 0 强制行列式，1 强制 Pfaffian，便于交叉验证；
+两种 `offset` 设置均使用该规则计算全自关联，端点始终直接求和。
 这是数值稳定性的启发式阈值，不是严格的相对误差保证；更大的阈值会更早切换。
 
 强制 Pfaffian 时直接进入字符串计算，跳过 B、R、衰减缓冲区的重复构造、LU 和倒条件数估计；强制行列式时跳过倒条件数估计。
@@ -505,36 +502,28 @@ julia --startup-file=no random_tfim/test/benchmark.jl
 性能基准仅测当前实现，不再加载旧源码。
 这些小规模验证不代表已完成 full 默认 10000 样本的论文统计精度复现。
 
-可选的高精度尾部基准由 [tail_reference.jl](test/tail_reference.jl) 单独生成，不属于日常测试：
+可选的虚时 offset 正性诊断与高精度尾部检查：
 
 ```sh
+# 按 scan.toml 的网格和种子检查每组前 8 个样本，始终检查 offset=true
+julia --project=julia-env/local --startup-file=no --threads=2 random_tfim/test/check_offset_positivity.jl 8
+
 julia --project=julia-env/precision-check -e 'using Pkg; Pkg.instantiate()'
-julia --project=julia-env/precision-check --startup-file=no --threads=1 random_tfim/test/tail_reference.jl
-# 中断后续跑；要求输入网格与源码指纹一致
-julia --project=julia-env/precision-check --startup-file=no --threads=1 random_tfim/test/tail_reference.jl --resume
+# 小链冒烟检查；去掉 --smoke 后运行全部 24 组参考样本
+julia --project=julia-env/precision-check --startup-file=no --threads=1 random_tfim/test/tail_reference.jl --smoke
+# 相同输入与源码指纹下，可用 --resume 续跑
 ```
 
-基准固定 `J` 的随机实现及 `h=h0/e`，检查中心格点的 `offset=true` 虚时关联。
-默认包含 `L=32` 的五个场强（0.1、0.3、1、3、10）各四个种子（1996、941、2026、812），
-以及四个 `L=6, h0=1` 的独立自旋谱核对样本。不同场强复用同一种子的键无序，不能将它们视为独立无序样本。
-每个样本使用 201 个对数均匀的 `tau=100..10000` 点，保留原有时间步密度；BigFloat SVD 和 Pfaffian 从 256 位逐级倍增，
-要求整条剩余关联曲线相对变化小于 `1e-25`，并以另一条高精度 Gaussian 配对路径核对三个尾部点。
-`L=6` 还核对独立自旋哈密顿量的奇偶宇称谱求和。无法在 16384 位以内确认收敛时停止，不接受未验证结果。
-`--smoke` 只运行第一个小链样本，输出单独的文件。
+正性诊断直接调用当前虚时 `offset=true` 路径，报告负值、零值、非有限值及 SVD 重试次数，
+并记录负值处的全关联与扣除项，重新生成一个受影响样本核对公开接口。
+负值是诊断结果，不会被裁剪或自动判为脚本失败。
 
-生成的 `results/tail_reference.out` 是 TOML 格式，逐样本保存输入、源码 SHA256、精度收敛历史、
-高精度值及其对数，以及当前 Float64 和原先末步相减方法的误差、负值、零值及回退位置。
-其中 `complete=true` 才表示全部完成；下标从 1 开始。单独记录高于最小正 Float64 的点，
-以区分表示范围不足和算法误差；次正规数本身仍可能有明显量化误差。
-该脚本不修改生产算法，也不改变生产计算的精度。
-
-当前 `tau=100..10000` 基准结果保存在 `results/`：
-
-| 文件 | 内容 |
-| --- | --- |
-| `tail_reference.out` | 24 组高精度参考：时间网格、输入参数、参考值及其对数、收敛历史和 Float64 对照误差（TOML） |
-| `tail_reference_summary.out` | 高精度参考验证与误差汇总 |
-| `tail_reference_run.out` | 高精度参考计算的运行日志 |
+高精度检查保留逐级提高 BigFloat 精度的 Pfaffian 相减参考、Gaussian 配对交叉核对及小链自旋谱核对。
+报告只比较当前 Float64 相减结果与收敛参考，记录相对误差、负值、零值和可表示范围内的误差。
+相对误差超出 Float64 范围时，终端摘要显示 `Inf`，报告仍保存完整高精度数值。
+输出为 `results/tail_reference.out`（冒烟检查为 `tail_reference_smoke.out`），格式版本为 2，
+`method=full_minus_lowest_transition`；旧格式或源码指纹不同的报告不能直接续跑。
+这些检查不改变生产算法或精度，也不保证 Float64 相减后的极小尾部保持正值。
 
 ## 论文图与数据需求
 
