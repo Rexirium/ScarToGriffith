@@ -21,7 +21,7 @@ function select_imaginary_fields(fields)
     selections
 end
 
-function plot_imaginary_field_scan(input, sizes; tmin=1.0, tmax=Inf, fitter=fit_autocorrelation, background=false)
+function plot_imaginary_field_scan(input, sizes; tmin=1.0, tmax=Inf)
     comparison_size = maximum(sizes)
     records = []
     fields, offset = h5open(input, "r") do f
@@ -31,13 +31,13 @@ function plot_imaginary_field_scan(input, sizes; tmin=1.0, tmax=Inf, fitter=fit_
             haskey(f, "L$(L)/h$(h0)") || continue
             g = f["L$(L)/h$(h0)"]
             (; t, y) = read_imaginary_autocorrelation(g)
-            result = fitter(t, y; tmin, tmax)
+            result = fit_autocorrelation(t, y; tmin, tmax)
             push!(records, (; L, h0, result))
         end
         fields, read(HDF5.attributes(f)["offset"])
     end
     fig = Figure(size=(1600, 1100))
-    Label(fig[0, 1:2], "Figure 2: Imaginary-time fit parameters versus field" * (background ? " (+B)" : ""); fontsize=28)
+    Label(fig[0, 1:2], "Figure 2: Imaginary-time fit parameters versus field"; fontsize=28)
     titles = ["Power-law fit", "Exponential fit", "Best-model reduced χ²"]
     ylabels = [L"1/z", L"\lambda=1/\xi_{\tau}", L"\min(\chi^2_{\mathrm{red,power}},\chi^2_{\mathrm{red,exp}})"]
     axes = [Axis(fig[panel_position(k, 2)...]; title=titles[k], xlabel=L"h_0", ylabel=ylabels[k],
@@ -85,7 +85,7 @@ function plot_imaginary_field_scan(input, sizes; tmin=1.0, tmax=Inf, fitter=fit_
     (; fig, records, fields, crossings, comparison_size)
 end
 
-function imaginary_time_main(args; fitter=fit_autocorrelation, prediction=decay_prediction, background=false)
+function imaginary_time_main(args)
     length(args) <= 4 || error("Usage: plot_imaginary_time.jl [input] [out] [tau_min] [tau_max]")
     input = if isempty(args)
         paths = filter(p -> occursin(r"^Lmax128_fixed_offset_\d{8}_\d{6}\.h5$", basename(p)),
@@ -95,14 +95,13 @@ function imaginary_time_main(args; fitter=fit_autocorrelation, prediction=decay_
     else
         abspath(args[1])
     end
-    out = length(args) < 2 ? joinpath(dirname(input), (background ? "figures_imaginary_time_background_" : "figures_imaginary_time_") * splitext(basename(input))[1]) : abspath(args[2])
+    out = length(args) < 2 ? joinpath(dirname(input), "figures_imaginary_time_" * splitext(basename(input))[1]) : abspath(args[2])
     tmin = length(args) < 3 ? 1.0 : parse(Float64, args[3])
     tmax = length(args) < 4 ? Inf : parse(Float64, args[4])
     set_theme!(Theme(fontsize=21, Axis=(xgridvisible=false, ygridvisible=false)))
-    rows = String["L,h0,phase,model,A,decay_parameter,chi_square,reduced_chi_square,n,tau_min,tau_max,selected" * (background ? ",B,logA,logB" : "")]
-    nparameters = background ? 3 : 2
+    rows = String["L,h0,phase,model,A,decay_parameter,chi_square,reduced_chi_square,n,tau_min,tau_max,selected"]
     fig = Figure(size=(1400, 900))
-    Label(fig[0, 1], "Figure 1: Imaginary-time autocorrelations and best fits" * (background ? " (+B)" : ""); fontsize=29)
+    Label(fig[0, 1], "Figure 1: Imaginary-time autocorrelations and best fits"; fontsize=29)
     selections, sizes, n, offset = h5open(input, "r") do f
         attrs = HDF5.attributes(f)
         # Only the plotted groups are required; unrelated scan points may be absent.
@@ -124,12 +123,12 @@ function imaginary_time_main(args; fitter=fit_autocorrelation, prediction=decay_
                 (; h0, phase) = selection
                 g = f["L$(L)/h$(h0)"]
                 (; t, y, sem) = read_imaginary_autocorrelation(g)
-                result = fitter(t, y; tmin, tmax)
+                result = fit_autocorrelation(t, y; tmin, tmax)
                 valid = isfinite.(t) .& (t .> 0) .& (t .>= tmin) .& (t .<= tmax)
                 plot_end = max(plot_end, maximum(t[valid]))
                 uncertainty_curve!(ax, t[valid], y[valid], sem[valid], IMAGINARY_COLORS[k]; positive=true)
                 ft = exp.(range(log(result.tmin), log(result.tmax); length=300))
-                fy = prediction(result.best, ft)
+                fy = decay_prediction(result.best, ft)
                 fy[fy .<= 0] .= NaN
                 lines!(ax, ft, fy; color=IMAGINARY_COLORS[k], linestyle=:dash, linewidth=2.5)
                 best = result.best
@@ -140,8 +139,7 @@ function imaginary_time_main(args; fitter=fit_autocorrelation, prediction=decay_
                 push!(labels, label)
                 for fit in (result.power, result.exponential)
                     push!(rows, join((L, h0, phase, fit.model, fit.A, fit.rate, fit.chi_square,
-                        fit.reduced_chi_square, result.n, result.tmin, result.tmax, fit.model == best.model), ',') *
-                        (background ? join(("", fit.B, fit.logA, fit.logB), ',') : ""))
+                        fit.reduced_chi_square, result.n, result.tmin, result.tmax, fit.model == best.model), ','))
                 end
             end
             xlims!(ax, tmin > 0 ? tmin : nothing, isfinite(tmax) ? tmax : plot_end)
@@ -154,20 +152,18 @@ function imaginary_time_main(args; fitter=fit_autocorrelation, prediction=decay_
         selections, sizes, read(attrs["nsamples"]), offset
     end
     offset_note = offset ? "Lowest odd-parity transition subtracted" : "Full autocorrelation"
-    Label(fig[2, 1], "Solid: stored mean ±1 SEM; dashed: minimum log-space SSE/(N−$nparameters) fit\nPower: A τ^(-1/z)$(background ? " + B" : ""); exponential: A exp(−τ/ξτ)$(background ? " + B" : "")\n" *
+    Label(fig[2, 1], "Solid: stored mean ±1 SEM; dashed: minimum log-space SSE/(N−2) fit\nPower: A τ^(-1/z); exponential: A exp(−τ/ξτ)\n" *
         "$(basename(input)) | h = h₀/e | offset=$offset\n$offset_note | unweighted fit: all finite C > 0, τ ∈ [$tmin, $(isinf(tmax) ? "end" : tmax)]"; fontsize=18)
     mkpath(out)
     save(joinpath(out, "figure1_imaginary_time_autocorrelation.png"), fig; px_per_unit=1.5)
     write(joinpath(out, "imaginary_time_fits.csv"), join(rows, '\n') * "\n")
-    scan = plot_imaginary_field_scan(input, sizes; tmin, tmax, fitter, background)
+    scan = plot_imaginary_field_scan(input, sizes; tmin, tmax)
     save(joinpath(out, "figure2_imaginary_time_fit_parameters.png"), scan.fig; px_per_unit=1.5)
-    scan_rows = ["L,h0,power_rate,exponential_rate,power_reduced_chi_square,exponential_reduced_chi_square,min_reduced_chi_square,selected_model,n,tau_min,tau_max" * (background ? ",power_A,power_B,power_logA,power_logB,exponential_A,exponential_B,exponential_logA,exponential_logB" : "")]
+    scan_rows = ["L,h0,power_rate,exponential_rate,power_reduced_chi_square,exponential_reduced_chi_square,min_reduced_chi_square,selected_model,n,tau_min,tau_max"]
     for (; L, h0, result) in scan.records
         push!(scan_rows, join((L, h0, result.power.rate, result.exponential.rate,
             result.power.reduced_chi_square, result.exponential.reduced_chi_square,
-            result.best.reduced_chi_square, result.best.model, result.n, result.tmin, result.tmax), ',') *
-            (background ? join(("", result.power.A, result.power.B, result.power.logA, result.power.logB,
-                result.exponential.A, result.exponential.B, result.exponential.logA, result.exponential.logB), ',') : ""))
+            result.best.reduced_chi_square, result.best.model, result.n, result.tmin, result.tmax), ','))
     end
     write(joinpath(out, "imaginary_time_field_scan.csv"), join(scan_rows, '\n') * "\n")
     crossing_rows = ["L,h0,reduced_chi_square,h0_left,h0_right"]
@@ -186,16 +182,14 @@ function imaginary_time_main(args; fitter=fit_autocorrelation, prediction=decay_
     Requested fit window: [$tmin, $(isinf(tmax) ? "end of stored time grid" : tmax)]. All finite positive times and finite positive C enter both models.
     Plot uses the same time window, with a 1e-12 vertical plot floor that does not truncate the fits. SEM only controls uncertainty shading.
     Actual windows and point counts appear in imaginary_time_fits.csv.
-    $(background ? "Models: C=A*tau^(-alpha)+B and C=A*exp(-lambda*tau)+B; A>0, B>=0, alpha/lambda>=0." :
-        "Models: C=A*tau^(-alpha) and C=A*exp(-lambda*tau); A>0, alpha/lambda>=0.")
+    Models: C=A*tau^(-alpha) and C=A*exp(-lambda*tau); A>0, alpha/lambda>=0.
     Legend notation: 1/z=alpha; 1/xi_tau=lambda.
-    $(background ? "Multistart damped Gauss-Newton fits of log(C_model) to log(C), including the exact B=0 boundary candidate. Stable log-sum-exp evaluation; B is an additional fitted background, distinct from the stored offset flag." :
-        "Unweighted linear regression of log(C), with nonnegative decay rate.")
+    Unweighted linear regression of log(C), with nonnegative decay rate.
     Minimize chi_square=sum((log(C)-log(C_model))^2), using the same finite positive data for both models.
-    Select the model with smaller reduced_chi_square=chi_square/(n-$nparameters).
-    Both models have $nparameters nominal parameters, so this is equivalent to comparing chi_square.
+    Select the model with smaller reduced_chi_square=chi_square/(n-2).
+    Both models have 2 nominal parameters, so this is equivalent to comparing chi_square.
     CSV records both fits and the selected flag.
-    Historical CSV names chi_square/reduced_chi_square denote SSE and SSE/(n-$nparameters), equivalent to unit log errors.
+    Historical CSV names chi_square/reduced_chi_square denote SSE and SSE/(n-2), equivalent to unit log errors.
     These are not measurement-error-normalized chi-squares. No time covariance or resampling is used.
     Model selection is descriptive, not a goodness-of-fit probability or asymptotic exponent claim.
     In particular FM plateaus and crossover regions need not follow either simple decay law.
