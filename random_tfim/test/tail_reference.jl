@@ -158,10 +158,10 @@ function run_tail_reference()
     smoke && (cases = cases[1:1])
     times = collect(10.0 .^ range(2, 4; length=201))
     output = joinpath(@__DIR__, "..", "results", smoke ? "tail_reference_smoke.out" : "tail_reference.out")
-    sources = ["model.jl", "autocorrelation.jl"]
+    sources = ["model.jl", "autocorrelation.jl", "pairing_autocorrelation.jl"]
     hashes = Dict(file=>bytes2hex(sha256(read(joinpath(@__DIR__, "..", file)))) for file in sources)
     hashes["tail_reference.jl"] = bytes2hex(sha256(read(@__FILE__)))
-    report = Dict{String,Any}("format_version"=>2, "complete"=>false, "method"=>"full_minus_lowest_transition",
+    report = Dict{String,Any}("format_version"=>2, "complete"=>false, "method"=>"pairing_tail",
         "julia"=>string(VERSION), "generic_linear_algebra"=>string(pkgversion(GenericLinearAlgebra)),
         "cpu"=>Sys.CPU_NAME, "blas_threads"=>BLAS.get_num_threads(),
         "times"=>times, "source_sha256"=>hashes, "field_distribution"=>"fixed", "field_divisor"=>exp(1),

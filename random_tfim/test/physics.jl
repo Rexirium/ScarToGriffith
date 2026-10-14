@@ -605,6 +605,45 @@ end
     @test_throws ArgumentError disorder_ensemble(6, 1.0, times; keep_samples=true, j=0)
 end
 
+@testset "Pairing offset production path" begin
+    for n in (2, 7), magnitude in (0.0, 1e-150, 1.0, 1e100)
+        A = magnitude .* randn(Xoshiro(94), n, n)
+        expected = svdvals(A)
+        workspace = RandomTFIM.pairing_svd_workspace(A)
+        @test RandomTFIM.pairing_svdvals!(copy(A), workspace) ≈ expected rtol=1e-14
+        @test RandomTFIM.pairing_svdvals!(copy(A), workspace) ≈ expected rtol=1e-14
+    end
+    for a in (0.0, 0.999e-8, 1.001e-8, 0.3)
+        Z = zeros(4, 4)
+        Z[1, 2] = Z[3, 4] = sqrt(a/2)
+        Z[2, 1] = Z[4, 3] = -sqrt(a/2)
+        pairing = (; Z, beta=zeros(4))
+        actual = only(RandomTFIM.pairing_offset_autocorrelation(pairing, [0.0], 1.0, 0.0))
+        expected = a <= 1e-8 ? a : a+a*a/4
+        @test actual ≈ expected rtol=1e-13
+    end
+    # Finite norm despite an overflowing squared singular value / expm1(g).
+    Z = [0.0 1e160; -1e160 0.0]
+    actual = only(RandomTFIM.pairing_offset_autocorrelation((; Z, beta=zeros(2)), [0.0], 1e-320, 0.0))
+    expected = Float64(BigFloat(1e-320)*BigFloat(1e160)^2)
+    @test actual ≈ expected rtol=1e-12
+    # Endpoint omission retains a tail lost by subtracting two O(1) numbers.
+    F = (; S=[0.01, 1.0], U=[1.0 1e-10; 0.0 1.0], V=Matrix{Float64}(I, 2, 2))
+    actual = RandomTFIM.autocorrelation(F, [1.0], 1, 1.0; offset=true)
+    @test only(actual) ≈ 1e-20*exp(-2) rtol=1e-14
+    # Partial disconnection: zero-overlap charts retain the full-correlation fallback.
+    J, h = [0.8, 0.0, 0.6], [0.4, 0.5, 1.2, 1.3]
+    exact = spin_oracle(J, h)
+    for j in 1:4
+        times = [0.0, 100.0, 0.3, 0.3]
+        weights = abs2.(exact.vectors' * (exact.Z[:, j] .* exact.vectors[:, 1]))
+        weights[1:2] .= 0
+        expected = [sum(weights .* exp.(-(exact.energies .- exact.E0)*t)) for t in times]
+        @test autocorrelation(J, h, times; j, offset=true) ≈ expected atol=2e-12
+    end
+    @test_throws ArgumentError autocorrelation(ones(3), ones(4), [floatmax(Float64)]; offset=true)
+end
+
 @testset "Limits and sampling" begin
     J, h = zeros(5), collect(0.5:0.5:3.0)
     state = ground_state(J, h)

@@ -74,6 +74,8 @@ end
 function write_metadata(file, cfg)
     attributes(file)["format_version"] = 2
     attributes(file)["offset"] = cfg.offset
+    attributes(file)["imaginary_autocorrelation_method"] = cfg.offset ? "pairing_tail" : "full"
+    attributes(file)["pairing_tail_threshold"] = 1e-8
     attributes(file)["complete"] = false
     attributes(file)["nsamples"] = cfg.nsamples
     attributes(file)["master_seed"] = cfg.seed

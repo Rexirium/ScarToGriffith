@@ -7,7 +7,7 @@ function check_offset_positivity(nsamples=8; cfg=read_config())
     nsamples > 0 || error("nsamples must be positive")
     jobs = collect(scan_jobs(cfg))
     summaries = Vector{NamedTuple}(undef, length(jobs))
-    println("Julia=$VERSION method=subtract offset=true samples_per_case=$nsamples distribution=$(cfg.field_distribution)")
+    println("Julia=$VERSION method=pairing_tail offset=true samples_per_case=$nsamples distribution=$(cfg.field_distribution)")
     println("sizes=$(cfg.sizes) fields=$(length(cfg.fields)) times=$(length(cfg.times))")
     println("time_range=$(extrema(cfg.times)) master_seed=$(cfg.seed) BLAS=$(BLAS.get_config())")
     for L in cfg.sizes

@@ -181,6 +181,8 @@ end
             end
             h5open(output, "r") do file
                 @test read(attributes(file)["offset"]) == offset
+                @test read(attributes(file)["imaginary_autocorrelation_method"]) == (offset ? "pairing_tail" : "full")
+                @test read(attributes(file)["pairing_tail_threshold"]) == 1e-8
                 @test read(attributes(file)["format_version"]) == 2
                 @test Set(keys(file["parameters"])) == Set(["sizes", "fields"])
                 group = file["L$L/h1.8"]

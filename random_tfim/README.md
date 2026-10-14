@@ -151,6 +151,7 @@ sbatch random_tfim/submit.sh random_tfim/scan.toml
 - [correlations.jl](correlations.jl)：空间关联及增量 QR 计算。
 - [entanglement.jl](entanglement.jl)：Majorana 协方差谱与基态二分纠缠熵。
 - [autocorrelation.jl](autocorrelation.jl)：实时间/虚时间自关联及 Pfaffian 后备算法。
+- [pairing_autocorrelation.jl](pairing_autocorrelation.jl)：虚时间 offset 的配对态范数、尾部近似与可复用 SVD 工作区。
 - [ensemble.jl](ensemble.jl)：无序样本并行计算、均值与标准误。
 
 这些文件共享 `RandomTFIM` 命名空间，由模块入口统一加载；使用时仍只需
@@ -272,10 +273,17 @@ realtime_offset = autocorrelation(J, h, times; time_domain=:real, offset=true)
 权重复用同一次 SVD，以最低能单准粒子和较短 JW 字符串的 Wick 收缩行列式计算，
 不通过长时间拟合估计。端点直接使用最低模态的 `U[1,mu]^2` 或 `V[L,mu]^2`。
 若最低模态简并（例如某些断链构型），按 SVD 的 `argmin` 选择其中一个奇宇称基态，
-不扣除整个简并子空间。`offset=true` 先使用与 `offset=false` 完全相同的路径计算全自关联，
-再扣除第一激发态的跃迁贡献；端点也先对全部模态求和后相减。
+不扣除整个简并子空间。虚时间 `offset=true` 的端点直接跳过最低模态；内部格点以最低奇宇称态
+为参考，使用 Gaussian 配对态范数计算剩余贡献，避免末尾两个接近数相减。
+每条曲线复用 SVD 工作区和逐模态指数；最低模态单独处理，避免增长指数溢出。
+若 `a=||Z_tau||_F²/2 <= 1e-8`，使用正项和 `w*exp(-gap*tau)*a`；
+否则使用完整配对态公式。截断相对误差上界为 `(expm1(a)-a)/a`，阈值处约 `5e-9`，
+不包含原始 SVD 和配对系数的舍入误差。乘积在对数域组合，避免中间上溢或下溢。
+零跃迁权重直接计算全关联；配对矩阵奇异或非有限时回退到原全关联相减路径。
+实时间仍计算全关联再扣除最低跃迁项。
 两种时间域共享同一样本的跃迁权重和能隙。
-返回值仍为普通 Float64；当扣除后的剩余关联很小时，相减可能损失相对精度或产生非正值。
+返回值仍为普通 Float64。强铁磁区极小配对系数仍可能有严重相对误差；非负不代表准确。
+回退路径及实时间的相减仍可能丢失精度；极小结果也可能下溢。
 结果不裁剪、不取绝对值，非正值的对数仍记为 NaN。
 
 ### 无序平均
@@ -336,6 +344,8 @@ The local and Slurm entry points share `scan_common.jl` and `results_io.jl`.
 Format version 2 stores only summary statistics for each `L16/h1.0` group.
 Root attributes include `format_version=2`, `offset` (from the scan configuration), `boundary=open`,
 `distribution=box`, `field_distribution`, `nsamples`, `master_seed`, and `complete`.
+New files record `imaginary_autocorrelation_method=pairing_tail` (or `full` when offset is disabled)
+and `pairing_tail_threshold=1e-8`; `pairing_tail` includes the singular-chart fallback described above.
 Fixed fields also record `fixed_field_divisor=e`. Completion is marked only after all writes succeed.
 `parameters/sizes` and `parameters/fields` store the scan grid; group attributes store `j` and `seed`.
 
@@ -420,7 +430,8 @@ $$
 
 `autocorrelation` 和 `disorder_ensemble` 均接受 `rcond_tol`，默认 `sqrt(eps(Float64))≈1.49e-8`。
 有效范围为 [0,1]：体内格点的 0 强制行列式，1 强制 Pfaffian，便于交叉验证；
-两种 `offset` 设置均使用该规则计算全自关联，端点始终直接求和。
+该规则用于全关联、实时间 offset 及虚时间 offset 的回退路径；
+虚时间配对态路径不由 `rcond_tol` 选择算法，端点始终直接求和。
 这是数值稳定性的启发式阈值，不是严格的相对误差保证；更大的阈值会更早切换。
 
 强制 Pfaffian 时直接进入字符串计算，跳过 B、R、衰减缓冲区的重复构造、LU 和倒条件数估计；强制行列式时跳过倒条件数估计。
@@ -519,11 +530,11 @@ julia --project=julia-env/precision-check --startup-file=no --threads=1 random_t
 负值是诊断结果，不会被裁剪或自动判为脚本失败。
 
 高精度检查保留逐级提高 BigFloat 精度的 Pfaffian 相减参考、Gaussian 配对交叉核对及小链自旋谱核对。
-报告只比较当前 Float64 相减结果与收敛参考，记录相对误差、负值、零值和可表示范围内的误差。
+报告比较当前 Float64 生产结果与收敛参考，记录相对误差、负值、零值和可表示范围内的误差。
 相对误差超出 Float64 范围时，终端摘要显示 `Inf`，报告仍保存完整高精度数值。
 输出为 `results/tail_reference.out`（冒烟检查为 `tail_reference_smoke.out`），格式版本为 2，
-`method=full_minus_lowest_transition`；旧格式或源码指纹不同的报告不能直接续跑。
-这些检查不改变生产算法或精度，也不保证 Float64 相减后的极小尾部保持正值。
+新报告为 `method=pairing_tail`，源码指纹包含 `pairing_autocorrelation.jl`；旧格式或源码指纹不同的报告不能直接续跑。
+这些检查不改变生产算法或精度，也不保证极小尾部的相对精度。
 
 ## 论文图与数据需求
 

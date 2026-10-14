@@ -68,17 +68,22 @@ offset=true subtracts |<GS_-|sigma_z(j)|GS_+>|^2 * exp(-Delta*z),
 where GS_+ is the even ground state, GS_- the lowest odd state,
 Delta=E_--E_+=2minimum(F.S), and z=tau or im*t (only the real part is returned).
 The matrix element uses the lowest SVD mode; if it is degenerate, this selects
-one odd ground state, not the whole degenerate subspace. Subtraction can lose
-relative precision when the remaining correlation is small; values are not clipped.
+one odd ground state, not the whole degenerate subspace. Imaginary-time offset
+uses a Gaussian pairing norm, with a positive pair sum when ||Z_tau||_F^2/2 <= 1e-8
+(relative truncation bound about 5e-9, excluding coefficient roundoff).
+Endpoints omit the selected spectral term. Real time retains explicit subtraction.
+If the pairing chart is singular or nonfinite, use the original subtraction path;
+zero transition weight needs only the full correlation. Values are not clipped.
 J has L-1 bonds, h has L fields; require L >= 2.
 Default j=cld(L,2) is the midpoint (left midpoint for even L).
-Endpoints use a direct spectral sum. At interior sites, estimate
+Endpoints use a direct spectral sum. For the full correlation at interior sites, estimate
 the reciprocal 1-norm condition number of the L-dimensional scaled matrix R
 using its LU factors. Use the determinant when rcond(R) > rcond_tol. Otherwise,
 use a JW-string Pfaffian of dimension 4min(j,L+1-j)-2 (reflecting
 right-half sites).
-rcond_tol defaults to sqrt(eps(Float64)); at interior sites, 0 forces the determinant
-and 1 forces the Pfaffian. Endpoints always use the spectral sum.
+rcond_tol defaults to sqrt(eps(Float64)); for the full-correlation path at interior
+sites, 0 forces the determinant and 1 forces the Pfaffian. It does not select the
+imaginary-time pairing algorithm. Endpoints always use the spectral sum.
 The threshold is a numerical heuristic, not an error guarantee.
 Extremely small tails can still underflow or require higher-precision validation.
 """
@@ -148,7 +153,7 @@ function string_autocorrelation(F, times, j, reflected, scale=1.0)
     return C
 end
 
-function endpoint_autocorrelation(F, times, j, scale)
+function endpoint_autocorrelation(F, times, j, scale; skip_mode::Int=0)
     modes = j == 1 ? F.U : F.V
     weights = abs2.(@view modes[j, :])
     C = Vector{Float64}(undef, length(times))
@@ -157,6 +162,7 @@ function endpoint_autocorrelation(F, times, j, scale)
         for mu in eachindex(F.S)
             angle = 2 * F.S[mu] * t
             isfinite(angle) || throw(ArgumentError("time-frequency product overflows Float64"))
+            mu == skip_mode && continue
             value += weights[mu] * (scale isa Real ? exp(-angle) : cos(angle))
         end
         C[n] = value
@@ -196,10 +202,19 @@ function autocorrelation(F, times, j, scale;
         rcond_tol::Real=sqrt(eps(Float64)), B=nothing, offset::Bool=false, transition=nothing)
     isempty(times) && return Float64[]
     if offset
-        C = autocorrelation(F, times, j, scale; rcond_tol, B)
         # Internal callers can share the same sample/site transition across time domains.
         (; weight, gap) = isnothing(transition) ?
             (; weight=ground_transition_weight(F, j), gap=2minimum(F.S)) : transition
+        if scale isa Real
+            (j == 1 || j == length(F.S)) &&
+                return endpoint_autocorrelation(F, times, j, scale; skip_mode=argmin(F.S))
+            iszero(weight) && return autocorrelation(F, times, j, scale; rcond_tol, B)
+            pairing = offset_pairing_setup(F, j)
+            if !isnothing(pairing)
+                return pairing_offset_autocorrelation(pairing, times, weight, gap)
+            end
+        end
+        C = autocorrelation(F, times, j, scale; rcond_tol, B)
         for (n, t) in enumerate(times)
             C[n] -= weight * (scale isa Real ? exp(-gap*t) : cos(gap*t))
         end
