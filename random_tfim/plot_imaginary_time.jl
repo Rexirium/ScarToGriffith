@@ -1,5 +1,5 @@
-# julia --project=@v1.13 random_tfim/plot_imaginary_time.jl [Lmax128_fixed_offset_YYYYMMDD_HHMMSS.h5] [output_dir] [tau_min] [tau_max]
-# Default fit and plot window: 1 <= tau <= 1e4.
+# julia --project=@v1.13 random_tfim/plot_imaginary_time.jl [data_file.h5] [output_dir] [tau_min] [tau_max]
+# Default fit and plot window: 1 <= tau <= end of stored time grid.
 include(joinpath(@__DIR__, "plot_results.jl"))
 using Printf
 
@@ -21,7 +21,7 @@ function select_imaginary_fields(fields)
     selections
 end
 
-function plot_imaginary_field_scan(input, sizes; tmin=1.0, tmax=1e4, fitter=fit_autocorrelation, background=false)
+function plot_imaginary_field_scan(input, sizes; tmin=1.0, tmax=Inf, fitter=fit_autocorrelation, background=false)
     comparison_size = maximum(sizes)
     records = []
     fields, offset = h5open(input, "r") do f
@@ -97,7 +97,7 @@ function imaginary_time_main(args; fitter=fit_autocorrelation, prediction=decay_
     end
     out = length(args) < 2 ? joinpath(dirname(input), (background ? "figures_imaginary_time_background_" : "figures_imaginary_time_") * splitext(basename(input))[1]) : abspath(args[2])
     tmin = length(args) < 3 ? 1.0 : parse(Float64, args[3])
-    tmax = length(args) < 4 ? 1e4 : parse(Float64, args[4])
+    tmax = length(args) < 4 ? Inf : parse(Float64, args[4])
     set_theme!(Theme(fontsize=21, Axis=(xgridvisible=false, ygridvisible=false)))
     rows = String["L,h0,phase,model,A,decay_parameter,chi_square,reduced_chi_square,n,tau_min,tau_max,selected" * (background ? ",B,logA,logB" : "")]
     nparameters = background ? 3 : 2
