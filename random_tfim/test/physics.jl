@@ -606,13 +606,6 @@ end
 end
 
 @testset "Pairing offset production path" begin
-    for n in (2, 7), magnitude in (0.0, 1e-150, 1.0, 1e100)
-        A = magnitude .* randn(Xoshiro(94), n, n)
-        expected = svdvals(A)
-        workspace = RandomTFIM.pairing_svd_workspace(A)
-        @test RandomTFIM.pairing_svdvals!(copy(A), workspace) ≈ expected rtol=1e-14
-        @test RandomTFIM.pairing_svdvals!(copy(A), workspace) ≈ expected rtol=1e-14
-    end
     for a in (0.0, 0.999e-8, 1.001e-8, 0.3)
         Z = zeros(4, 4)
         Z[1, 2] = Z[3, 4] = sqrt(a/2)

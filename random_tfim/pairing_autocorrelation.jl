@@ -16,34 +16,9 @@ function offset_pairing_setup(F, j)
     return (; Z, beta)
 end
 
-# Same DGESDD('N') backend/ABI as LinearAlgebra.svdvals!, reusing all work arrays.
-function pairing_svdvals!(A::Matrix{Float64}, ws; query=false)
-    n = size(A, 1)
-    size(A, 2) == n == length(ws.singular) || throw(DimensionMismatch("SVD workspace size"))
-    lwork = query ? BlasInt(-1) : BlasInt(length(ws.work))
-    ccall((@blasfunc(dgesdd_), libblastrampoline), Cvoid,
-        (Ref{UInt8}, Ref{BlasInt}, Ref{BlasInt}, Ptr{Float64}, Ref{BlasInt},
-         Ptr{Float64}, Ptr{Float64}, Ref{BlasInt}, Ptr{Float64}, Ref{BlasInt},
-         Ptr{Float64}, Ref{BlasInt}, Ptr{BlasInt}, Ref{BlasInt}, Clong),
-        'N', n, n, A, max(1, n), ws.singular, ws.dummy, 1, ws.dummy, 1,
-        ws.work, lwork, ws.iwork, ws.info, 1)
-    LAPACK.chklapackerror(ws.info[])
-    return ws.singular
-end
-
-function pairing_svd_workspace(A)
-    n = size(A, 1)
-    ws = (; singular=zeros(n), dummy=zeros(1), work=zeros(1),
-        iwork=zeros(BlasInt, 8n), info=Ref{BlasInt}(0))
-    pairing_svdvals!(A, ws; query=true)
-    resize!(ws.work, round(BlasInt, nextfloat(ws.work[1])))
-    return ws
-end
-
 function pairing_offset_autocorrelation(pairing, times, weight, gap)
     (; Z, beta) = pairing
     W = zeros(size(Z))
-    ws = pairing_svd_workspace(W)
     decays = Vector{Float64}(undef, length(beta))
     C = Vector{Float64}(undef, length(times))
     logweight = log(weight)
@@ -68,7 +43,7 @@ function pairing_offset_autocorrelation(pairing, times, weight, gap)
             # a <= expm1(g) <= expm1(a); relative truncation error <= (expm1(a)-a)/a.
             logvalue = log(a)
         else
-            singular = pairing_svdvals!(W, ws)
+            singular = svdvals!(W)
             g = sum(s -> s <= 1 ? log1p(s*s) : 2log(hypot(1, s)), singular)/2
             logvalue = g + log(-expm1(-g))
         end

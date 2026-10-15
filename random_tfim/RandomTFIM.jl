@@ -3,8 +3,6 @@ module RandomTFIM
 using LinearAlgebra
 using Random
 using Statistics
-using LinearAlgebra.BLAS: @blasfunc
-using LinearAlgebra: BlasInt, libblastrampoline
 
 export sample_disorder, energy_gap, ground_state, correlations, disorder_ensemble
 export autocorrelation

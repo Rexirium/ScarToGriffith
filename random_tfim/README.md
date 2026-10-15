@@ -151,7 +151,7 @@ sbatch random_tfim/submit.sh random_tfim/scan.toml
 - [correlations.jl](correlations.jl)：空间关联及增量 QR 计算。
 - [entanglement.jl](entanglement.jl)：Majorana 协方差谱与基态二分纠缠熵。
 - [autocorrelation.jl](autocorrelation.jl)：实时间/虚时间自关联及 Pfaffian 后备算法。
-- [pairing_autocorrelation.jl](pairing_autocorrelation.jl)：虚时间 offset 的配对态范数、尾部近似与可复用 SVD 工作区。
+- [pairing_autocorrelation.jl](pairing_autocorrelation.jl)：虚时间 offset 的配对态范数、尾部近似与标准库 `svdvals!` 求解。
 - [ensemble.jl](ensemble.jl)：无序样本并行计算、均值与标准误。
 
 这些文件共享 `RandomTFIM` 命名空间，由模块入口统一加载；使用时仍只需
@@ -275,7 +275,7 @@ realtime_offset = autocorrelation(J, h, times; time_domain=:real, offset=true)
 若最低模态简并（例如某些断链构型），按 SVD 的 `argmin` 选择其中一个奇宇称基态，
 不扣除整个简并子空间。虚时间 `offset=true` 的端点直接跳过最低模态；内部格点以最低奇宇称态
 为参考，使用 Gaussian 配对态范数计算剩余贡献，避免末尾两个接近数相减。
-每条曲线复用 SVD 工作区和逐模态指数；最低模态单独处理，避免增长指数溢出。
+每条曲线复用矩阵缓冲区和逐模态指数，SVD 使用标准库 `svdvals!`；最低模态单独处理，避免增长指数溢出。
 若 `a=||Z_tau||_F²/2 <= 1e-8`，使用正项和 `w*exp(-gap*tau)*a`；
 否则使用完整配对态公式。截断相对误差上界为 `(expm1(a)-a)/a`，阈值处约 `5e-9`，
 不包含原始 SVD 和配对系数的舍入误差。乘积在对数域组合，避免中间上溢或下溢。
