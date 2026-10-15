@@ -6,8 +6,12 @@ function offset_pairing_setup(F, j)
     Gu, Gv = u'*u, v'*v
     P, Q = Gu+Gv-I, Gu-Gv
     P[:, 1], Q[:, 1] = copy(Q[:, 1]), copy(P[:, 1])
+    matrix_norm = opnorm(P, 1)
     factors = lu!(P; check=false)
     issuccess(factors) || return nothing
+    # Tiny reference overlaps can produce finite but unusable pairing coefficients.
+    reciprocal_condition = LAPACK.gecon!('1', factors.factors, matrix_norm)
+    isfinite(reciprocal_condition) && reciprocal_condition > sqrt(eps(Float64)) || return nothing
     Z = -(factors\Q)
     Z = (Z-Z')/2
     all(isfinite, Z) || return nothing

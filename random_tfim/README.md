@@ -120,7 +120,7 @@ julia --startup-file=no random_tfim/test/imaginary_time_fit.jl
 指数拟合的 `1/ξτ`、两模型中较小的 `reduced_chi_square`，以及 L=128 的两个模型各自的 `reduced_chi_square`，均随 h0 变化。
 第四子图标出两条曲线的交点：在相邻场强的分数差变号区间内，按 log(h0) 线性插值；不外推。
 精确落在网格点上的交点也保留。交点与左右网格场强保存至 `imaginary_time_model_crossings.csv`，仅表示模型分数相等，不代表相界。
-所有横轴均为对数标度；第一、三子图纵轴线性，第二、四子图纵轴对数（非正值不显示）。前三子图不同颜色对应输入中的各个尺寸。
+所有横轴均为对数标度；第三子图纵轴线性，第一、二、四子图纵轴对数（非正值不显示）。前三子图不同颜色对应输入中的各个尺寸。
 扫描所有 0.1≤h0≤10 的已存场强；前两子图始终显示各自模型的参数，不按胜出模型筛选。
 拟合沿用图 1 的无权回归及命令行时间窗口。默认使用全部有效数据时，衰减曲线的子图 1 斜率与旧斜率图一致。
 指定时间窗口后只拟合窗口内的数据，旧斜率图仍使用全部有效时间。
@@ -273,17 +273,22 @@ realtime_offset = autocorrelation(J, h, times; time_domain=:real, offset=true)
 权重复用同一次 SVD，以最低能单准粒子和较短 JW 字符串的 Wick 收缩行列式计算，
 不通过长时间拟合估计。端点直接使用最低模态的 `U[1,mu]^2` 或 `V[L,mu]^2`。
 若最低模态简并（例如某些断链构型），按 SVD 的 `argmin` 选择其中一个奇宇称基态，
-不扣除整个简并子空间。虚时间 `offset=true` 的端点直接跳过最低模态；内部格点以最低奇宇称态
+不扣除整个简并子空间。两种时间域 `offset=true` 的端点均直接跳过最低模态；虚时间内部格点以最低奇宇称态
 为参考，使用 Gaussian 配对态范数计算剩余贡献，避免末尾两个接近数相减。
 每条曲线复用矩阵缓冲区和逐模态指数，SVD 使用标准库 `svdvals!`；最低模态单独处理，避免增长指数溢出。
 若 `a=||Z_tau||_F²/2 <= 1e-8`，使用正项和 `w*exp(-gap*tau)*a`；
 否则使用完整配对态公式。截断相对误差上界为 `(expm1(a)-a)/a`，阈值处约 `5e-9`，
 不包含原始 SVD 和配对系数的舍入误差。乘积在对数域组合，避免中间上溢或下溢。
-零跃迁权重直接计算全关联；配对矩阵奇异或非有限时回退到原全关联相减路径。
+零跃迁权重直接计算全关联；配对矩阵在 LU 求解前保存 1-范数，利用 LU 因子估计倒条件数。
+倒条件数不大于 `sqrt(eps(Float64))`（约 `1.49e-8`）、奇异或非有限时，
+回退到普通全关联路径，再减去最低态跃迁贡献。该阈值为保守数值策略，不是严格误差界。
+回退时按各时间点 R 的倒条件数与 `rcond_tol` 比较，选择行列式或 JW-string Pfaffian；
+仍支持 `rcond_tol=0` 强制行列式、`rcond_tol=1` 强制 Pfaffian。
+长时两项接近时仍可能有消去误差，尚不自动高精度重算。
 实时间仍计算全关联再扣除最低跃迁项。
 两种时间域共享同一样本的跃迁权重和能隙。
 返回值仍为普通 Float64。强铁磁区极小配对系数仍可能有严重相对误差；非负不代表准确。
-回退路径及实时间的相减仍可能丢失精度；极小结果也可能下溢。
+回退路径及实时间内部格点的相减仍可能丢失精度；极小结果也可能下溢。
 结果不裁剪、不取绝对值，非正值的对数仍记为 NaN。
 
 ### 无序平均
@@ -345,7 +350,7 @@ Format version 2 stores only summary statistics for each `L16/h1.0` group.
 Root attributes include `format_version=2`, `offset` (from the scan configuration), `boundary=open`,
 `distribution=box`, `field_distribution`, `nsamples`, `master_seed`, and `complete`.
 New files record `imaginary_autocorrelation_method=pairing_tail` (or `full` when offset is disabled)
-and `pairing_tail_threshold=1e-8`; `pairing_tail` includes the singular-chart fallback described above.
+and `pairing_tail_threshold=1e-8`; `pairing_tail` includes the ill-conditioned/singular-chart fallback described above.
 Fixed fields also record `fixed_field_divisor=e`. Completion is marked only after all writes succeed.
 `parameters/sizes` and `parameters/fields` store the scan grid; group attributes store `j` and `seed`.
 
@@ -405,9 +410,18 @@ $$C_{ij}=\det G_{i:j-1,\ i+1:j}.$$
 ### 自关联的两个计算路径
 
 内部入口 `autocorrelation` 只负责选择是否 offset：`full_autocorrelation` 计算全关联，
-`offset_autocorrelation` 按 `scale::Real/Complex` 分派到虚时间或实时间处理。
-实时间与虚时间配对态失败时直接调用 `full_autocorrelation`，再用 `subtract_transition!` 原地扣除跃迁项，
-无需额外的全关联包装或递归调用入口。
+`offset_autocorrelation` 共用以下判断顺序：
+
+| 条件 | 计算路径 |
+| --- | --- |
+| 端点，任一时间域 | 谱和中直接跳过最低模式，避免相减消去 |
+| 内部格点，跃迁权重为零 | 普通全关联路径，不构造配对矩阵、不做减项 |
+| 内部格点，虚时间，配对矩阵条件合格 | 配对态范数及其尾部近似 |
+| 内部格点，虚时间，配对矩阵被拒绝 | 按 `rcond_tol` 选择全关联路径，再减最低态贡献 |
+| 内部格点，实时间 | 按 `rcond_tol` 选择全关联路径，再减最低态贡献 |
+
+两种时间域共用跃迁读取和 `subtract_transition!`；回退经 `full_autocorrelation`，
+复用其逐时间点条件数判断、左右反射与工作区逻辑。P 病态不意味着 R 也病态。
 端点、尾部阈值和条件数仍按数值判断；三个预处理步骤共用 `short_string_modes` 的反射约定。
 
 初态和演化共用同一次 SVD：`U, ε, V`。

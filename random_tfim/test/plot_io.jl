@@ -35,7 +35,7 @@ include(joinpath(@__DIR__, "..", "plot_imaginary_time.jl"))
             ax = content(scan.fig[panel_position(k, 2)...])
             @test ax.xscale[] === log10
             @test ax.limits[][1] == (0.1, 10.0)
-            @test ax.yscale[] === (k in (2, 4) ? log10 : identity)
+            @test ax.yscale[] === (k in (1, 2, 4) ? log10 : identity)
         end
         full_scan = plot_imaginary_field_scan(input, sizes; tmin=0.0, tmax=Inf)
         h5open(input, "r") do f

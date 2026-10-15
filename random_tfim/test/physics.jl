@@ -606,6 +606,32 @@ end
 end
 
 @testset "Pairing offset production path" begin
+    # Reproduce tiny-overlap samples that previously produced huge or suppressed C(0).
+    for (h0, seed, sample_index) in ((5.011872336272722, 88124, 4), (10.0, 103124, 2))
+        rng = Xoshiro(seed)
+        samples = [sample_disorder(rng, 128, h0; field_distribution=:fixed) for _ in 1:sample_index]
+        J, h = last(samples)
+        F = svd!(RandomTFIM.fermion_matrix(J, h))
+        times = [1.0, 0.0, 0.1, 10.0, 0.1]
+        for j in (64, 65)
+            @test isnothing(RandomTFIM.offset_pairing_setup(F, j))
+            weight = RandomTFIM.ground_transition_weight(F, j)
+            full = RandomTFIM.autocorrelation(F, times, j, 1.0; rcond_tol=1.0)
+            expected = full .- weight .* exp.(-2minimum(F.S) .* times)
+            for rcond_tol in (0.0, sqrt(eps(Float64)), 1.0)
+                selected_full = RandomTFIM.autocorrelation(F, times, j, 1.0; rcond_tol)
+                actual = RandomTFIM.autocorrelation(F, times, j, 1.0; offset=true, rcond_tol)
+                @test actual == selected_full .- weight .* exp.(-2minimum(F.S) .* times)
+                # Forced determinants may lose tiny tails; compare to Pfaffian in absolute error.
+                @test actual ≈ expected rtol=1e-12 atol=1e-13
+                @test actual[2] ≈ 1-weight atol=1e-12
+                @test all(isfinite, actual) && all(-1e-13 .<= actual .<= 1+1e-12)
+            end
+        end
+    end
+    # The clean chain still uses pairing, retaining its cancellation-free tails.
+    F = svd!(RandomTFIM.fermion_matrix(ones(127), fill(10.0, 128)))
+    @test !isnothing(RandomTFIM.offset_pairing_setup(F, 64))
     for a in (0.0, 0.999e-8, 1.001e-8, 0.3)
         Z = zeros(4, 4)
         Z[1, 2] = Z[3, 4] = sqrt(a/2)
@@ -622,8 +648,10 @@ end
     @test actual ≈ expected rtol=1e-12
     # Endpoint omission retains a tail lost by subtracting two O(1) numbers.
     F = (; S=[0.01, 1.0], U=[1.0 1e-10; 0.0 1.0], V=Matrix{Float64}(I, 2, 2))
-    actual = RandomTFIM.autocorrelation(F, [1.0], 1, 1.0; offset=true)
-    @test only(actual) ≈ 1e-20*exp(-2) rtol=1e-14
+    for (scale, expected) in ((1.0, 1e-20*exp(-2)), (1.0im, 1e-20*cos(2)))
+        actual = @inferred RandomTFIM.autocorrelation(F, [1.0], 1, scale; offset=true)
+        @test only(actual) ≈ expected rtol=1e-14
+    end
     # Partial disconnection: zero-overlap charts retain the full-correlation fallback.
     J, h = [0.8, 0.0, 0.6], [0.4, 0.5, 1.2, 1.3]
     exact = spin_oracle(J, h)

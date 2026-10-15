@@ -44,7 +44,7 @@ function scan_observables(L, h0, times; nsamples, seed, field_distribution, offs
             gap = RandomTFIM.gap_result(F.S)
             G = -(F.V * F.U')
             B = !isempty(times) && 1 < j < L ? RandomTFIM.spin_flip_covariance(F, j) : nothing
-            transition = offset && !isempty(times) ?
+            transition = offset && !isempty(times) && 1 < j < L ?
                 (; weight=RandomTFIM.ground_transition_weight(F, j), gap=gap.gap) : nothing
             values[1] = gap.gap
             values[2:1+nt] = RandomTFIM.autocorrelation(F, times, j, 1.0; B, offset, transition)

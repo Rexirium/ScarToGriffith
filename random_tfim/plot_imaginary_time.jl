@@ -41,7 +41,7 @@ function plot_imaginary_field_scan(input, sizes; tmin=1.0, tmax=Inf)
     titles = ["Power-law fit", "Exponential fit", "Best-model reduced χ²"]
     ylabels = [L"1/z", L"\lambda=1/\xi_{\tau}", L"\min(\chi^2_{\mathrm{red,power}},\chi^2_{\mathrm{red,exp}})"]
     axes = [Axis(fig[panel_position(k, 2)...]; title=titles[k], xlabel=L"h_0", ylabel=ylabels[k],
-        xscale=log10, yscale=(k == 2 ? log10 : identity), width=560, height=360,
+        xscale=log10, yscale=(k <= 2 ? log10 : identity), width=560, height=360,
         titlesize=23, xlabelsize=23, ylabelsize=23, xticklabelsize=20, yticklabelsize=20) for k in 1:3]
     for (j, L) in enumerate(sizes)
         by_field = Dict(r.h0 => r.result for r in records if r.L == L)
@@ -50,7 +50,7 @@ function plot_imaginary_field_scan(input, sizes; tmin=1.0, tmax=Inf)
             [isnothing(r) ? NaN : r.exponential.rate for r in results],
             [isnothing(r) ? NaN : r.best.reduced_chi_square for r in results])
         for k in 1:3
-            plotted = k == 2 ? [v > 0 ? v : NaN for v in values[k]] : values[k]
+            plotted = k <= 2 ? [v > 0 ? v : NaN for v in values[k]] : values[k]
             lines!(axes[k], fields, plotted; color=PLOT_COLORS[j], linewidth=2, label="L = $L")
         end
     end
@@ -194,7 +194,7 @@ function imaginary_time_main(args)
     Model selection is descriptive, not a goodness-of-fit probability or asymptotic exponent claim.
     In particular FM plateaus and crossover regions need not follow either simple decay law.
     Plot uses stored means/SEM directly, with the existing uncertainty masking; zero time omitted.
-    Figure 2: 2x2 panels with in-axis legends, log h0 axes spanning [0.1, 10]; panels 1 and 3 have linear vertical axes, panels 2 and 4 have log vertical axes (nonpositive values omitted); $(length(scan.fields)) field-grid points. Absent groups remain gaps in curves and are excluded from fitting and crossing interpolation.
+    Figure 2: 2x2 panels with in-axis legends, log h0 axes spanning [0.1, 10]; panel 3 has a linear vertical axis, panels 1, 2 and 4 have log vertical axes (nonpositive values omitted); $(length(scan.fields)) field-grid points. Absent groups remain gaps in curves and are excluded from fitting and crossing interpolation.
     Each curve is one size. Panel 1: power-law rate 1/z; panel 2: exponential rate 1/xi_tau.
     Both rate panels show the corresponding candidate model regardless of which model wins.
     Panel 3: min(power.reduced_chi_square, exponential.reduced_chi_square) at each (L,h0).

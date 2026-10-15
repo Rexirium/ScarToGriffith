@@ -71,9 +71,11 @@ The matrix element uses the lowest SVD mode; if it is degenerate, this selects
 one odd ground state, not the whole degenerate subspace. Imaginary-time offset
 uses a Gaussian pairing norm, with a positive pair sum when ||Z_tau||_F^2/2 <= 1e-8
 (relative truncation bound about 5e-9, excluding coefficient roundoff).
-Endpoints omit the selected spectral term. Real time retains explicit subtraction.
-If the pairing chart is singular or nonfinite, use the original subtraction path;
-zero transition weight needs only the full correlation. Values are not clipped.
+Endpoints omit the selected spectral term in both time domains. Interior real time uses explicit subtraction.
+If the pairing chart has estimated reciprocal 1-norm condition <= sqrt(eps(Float64)),
+is singular or nonfinite, use the full-correlation path selected by rcond_tol and subtract the transition;
+this fallback can lose relative accuracy when the two terms nearly cancel.
+Zero transition weight needs only the full correlation. Values are not clipped.
 J has L-1 bonds, h has L fields; require L >= 2.
 Default j=cld(L,2) is the midpoint (left midpoint for even L).
 Endpoints use a direct spectral sum. For the full correlation at interior sites, estimate
@@ -214,24 +216,20 @@ end
 @inline ground_transition(F, j, transition) = isnothing(transition) ?
     (; weight=ground_transition_weight(F, j), gap=2minimum(F.S)) : transition
 
-function offset_autocorrelation(F, times, j, scale::Real;
+function offset_autocorrelation(F, times, j, scale;
         rcond_tol, B, transition)
     (j == 1 || j == length(F.S)) &&
         return endpoint_autocorrelation(F, times, j, scale; skip_mode=argmin(F.S))
     transition = ground_transition(F, j, transition)
     (; weight, gap) = transition
     iszero(weight) && return full_autocorrelation(F, times, j, scale; rcond_tol, B)
-    pairing = offset_pairing_setup(F, j)
-    if !isnothing(pairing)
-        return pairing_offset_autocorrelation(pairing, times, weight, gap)
+    if scale isa Real
+        pairing = offset_pairing_setup(F, j)
+        if !isnothing(pairing)
+            return pairing_offset_autocorrelation(pairing, times, weight, gap)
+        end
     end
-    C = full_autocorrelation(F, times, j, scale; rcond_tol, B)
-    return subtract_transition!(C, times, scale, transition)
-end
-
-function offset_autocorrelation(F, times, j, scale::Complex;
-        rcond_tol, B, transition)
-    transition = ground_transition(F, j, transition)
+    # shortcut: subtraction can lose tiny tails; use higher precision when those tails are needed.
     C = full_autocorrelation(F, times, j, scale; rcond_tol, B)
     return subtract_transition!(C, times, scale, transition)
 end
