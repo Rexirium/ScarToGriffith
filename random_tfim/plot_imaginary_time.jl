@@ -39,7 +39,7 @@ function plot_imaginary_field_scan(input, sizes; tmin=1.0, tmax=Inf)
     fig = Figure(size=(1600, 1100))
     Label(fig[0, 1:2], "Figure 2: Imaginary-time fit parameters versus field"; fontsize=28)
     titles = ["Power-law fit", "Exponential fit", "Best-model reduced χ²"]
-    ylabels = [L"1/z", L"\lambda=1/\xi_{\tau}", L"\min(\chi^2_{\mathrm{red,power}},\chi^2_{\mathrm{red,exp}})"]
+    ylabels = [L"1/z", L"1/\xi_{\tau}", L"\min(\chi^2_{\mathrm{red,power}},\chi^2_{\mathrm{red,exp}})"]
     axes = [Axis(fig[panel_position(k, 2)...]; title=titles[k], xlabel=L"h_0", ylabel=ylabels[k],
         xscale=log10, yscale=(k <= 2 ? log10 : identity), width=560, height=360,
         titlesize=23, xlabelsize=23, ylabelsize=23, xticklabelsize=20, yticklabelsize=20) for k in 1:3]

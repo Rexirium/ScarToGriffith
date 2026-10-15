@@ -12,7 +12,7 @@ function main(args)
     out = isempty(args) ? joinpath(@__DIR__, "results") : abspath(args[1])
     L = length(args) < 2 ? 128 : parse(Int, args[2])
     tmin = length(args) < 3 ? 1e-1 : parse(Float64, args[3])
-    tmax = length(args) < 4 ? 1e3 : parse(Float64, args[4])
+    tmax = length(args) < 4 ? 1e4 : parse(Float64, args[4])
     L >= 2 || error("L must be >= 2")
     isfinite(tmin) && isfinite(tmax) && 0 < tmin < tmax || error("Require 0 < tau_min < tau_max < Inf")
     BLAS.set_num_threads(1)
@@ -26,7 +26,7 @@ function main(args)
     Label(fig[0, 1:2], "Figure 1: Clean TFIM imaginary-time autocorrelations"; fontsize=28)
     ax = Axis(fig[1, 1]; title="L = $L, OBC, j = $(cld(L,2)), J = 1, T = 0", xlabel=L"\tau",
         ylabel=L"C_{\mathrm{offset}}(\tau)",
-        xscale=log10, yscale=log10, width=630, height=500,
+        xscale=log10, yscale=log10, yautolimitmargin=(0, 0), width=630, height=500,
         titlesize=24, xlabelsize=24, ylabelsize=24)
     labels = typeof(L"\alpha")[]
     for (k, h) in enumerate(FIELDS)
@@ -55,8 +55,8 @@ function main(args)
             L"\mathrm{%$(phase)}\quad h=%$(h)\;|\;\lambda=%$(rate)"
         push!(labels, label)
     end
-    xlims!(ax, tmin, tmax)
-    ylims!(ax, 1e-8, 1.2)
+    xlims!(ax, 0.1, 1000)
+    ylims!(ax, 1e-16, nothing)
     Legend(fig[1, 2], [LineElement(color=c, linewidth=2.5) for c in COLORS], labels;
         framevisible=false, labelsize=20, tellheight=false)
     footer = fig[2, 1:2] = GridLayout()
@@ -64,7 +64,7 @@ function main(args)
     Label(footer[2, 1],
         "Power: A τ^(−α); exponential: A exp(−λτ); equal weights in log C";
         fontsize=18)
-    Label(footer[3, 1], "Fit window: τ ∈ [$tmin, $tmax]; C_offset ≥ 10⁻¹²; plot floor: 10⁻⁸"; fontsize=18)
+    Label(footer[3, 1], "Fit window: τ ∈ [$tmin, $tmax]; C_offset ≥ 10⁻¹²; plot floor: 10⁻¹⁶"; fontsize=18)
     Label(footer[4, 1], "Lowest odd-state contribution removed; C_offset(0) = 1 − transition weight"; fontsize=18)
     rowgap!(footer, 4)
     mkpath(out)

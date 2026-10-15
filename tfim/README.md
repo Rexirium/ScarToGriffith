@@ -36,7 +36,7 @@ julia --startup-file=no --project=@v1.13 tfim/plot_imaginary_time.jl
 julia --startup-file=no --project=@v1.13 tfim/plot_imaginary_time.jl tfim/results_obc 128 0.1 1000
 ```
 
-默认 `L=128`，时间为 `0.1..1000` 的 241 个对数等距点，额外保存 `tau=0`（不参与拟合和绘图）。
+默认 `L=128`，时间为 `0.1..10000` 的 241 个对数等距点，额外保存 `tau=0`（不参与拟合和绘图）。
 场强为 `0.2, 0.6, 0.9, 1.0, 1.1, 1.4, 1.7, 2.5, 5.0, 10.0`，可修改脚本顶部的 `FIELDS`。
 核心和测试只需 Julia 标准库；绘图另需 CairoMakie。
 
@@ -56,7 +56,7 @@ julia --startup-file=no --project=@v1.13 tfim/plot_imaginary_time.jl tfim/result
 这是描述性模型比较；图例的 `alpha` 不解释为 Griffiths 区的 `1/z`。
 
 最低态贡献相减会在长时产生消去误差。CSV 保留原值，不裁剪或重新归一化；
-双对数图跳过非正值，显示下限为 `1e-8`。
+横轴为对数标度，显示范围为 `0.1..1000`；纵轴为对数标度，下限为 `1e-16`、上限自动确定，跳过非正值。
 拟合仅使用 `C_offset>=1e-12` 的有限正值，两个候选模型使用相同点。
 该阈值是数值筛选而非严格误差界；不足三个有效点时拟合报错，应调整时间窗口。
 CSV 记录实际拟合窗口。原周期链的铁磁平台、临界指数检查和拟合数值不适用于本次减项后的结果。
