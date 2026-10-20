@@ -15,6 +15,9 @@ is diagonalized, with reflection i -> L-1-i. The normalized initial state
 is |Z2,+> = (|1010...> + |0101...>)/sqrt(2). All overlaps, correlations
 and return probabilities refer to this symmetric state within this sector.
 Entropy is the half-chain von Neumann entropy, using natural logarithms.
+Level statistics use locally unfolded spacings in the central 2/3 of the
+spectrum (window=5, etol=1e-8), normalized to mean spacing 1, as in the
+reference script. Gaps <= etol are excluded, including zero-mode degeneracies.
 
 Outputs: a four-panel PNG and an NPZ containing the plotted numerical data.
 Default output paths are relative to this script, independent of the cwd.
@@ -37,8 +40,10 @@ from quspin.operators import hamiltonian
 
 if __package__:
     from .pxp_basis import fibonacci, pxp_basis_1d
+    from .utils import unfolded_spacings
 else:
     from pxp_basis import fibonacci, pxp_basis_1d
+    from utils import unfolded_spacings
 
 
 def build_hamiltonian(basis, m):
@@ -55,17 +60,15 @@ def build_hamiltonian(basis, m):
     )
 
 
-def gap_ratios(energies, tolerance=1e-10):
-    """Adjacent-gap ratios in the central 2/3 of ONE resolved sector.
-
-    Omit pairs touching a numerically zero gap; do not merge degenerate
-    levels, which would create artificial spacings (especially at m=0).
-    """
+def spectrum_spacings(energies):
+    """Match the reference unfolding; return no samples for tiny/flat spectra."""
+    energies = np.sort(np.asarray(energies, dtype=float))
     trim = len(energies) // 6
-    gaps = np.diff(energies[trim:len(energies) - trim])
-    lower, upper = np.minimum(gaps[:-1], gaps[1:]), np.maximum(gaps[:-1], gaps[1:])
-    valid = lower > tolerance
-    return lower[valid] / upper[valid]
+    start, stop = trim, len(energies) - trim
+    first, last = max(start, 5), min(stop, len(energies) - 6)
+    if last <= first or not np.any(np.diff(energies)[first:last] > 1e-8):
+        return np.empty(0)
+    return unfolded_spacings(energies, start=start, stop=stop, window=5, etol=1e-8)
 
 
 def solve(L=20, m=0.2, times=None):
@@ -122,15 +125,14 @@ def solve(L=20, m=0.2, times=None):
         zz_t[block] = zz_diagonal @ np.abs(states_t)**2
         return_amplitude[block] = cat_overlaps @ phases
 
-    ratios = gap_ratios(E)
-    mean_ratio = ratios.mean() if ratios.size else float("nan")
+    spacings = spectrum_spacings(E)
     print(
-        f"  max residual={residual:.2e}; gap pairs={ratios.size}, "
-        f"<r>={mean_ratio:.4f}", flush=True,
+        f"  max residual={residual:.2e}; unfolded spacings={spacings.size}",
+        flush=True,
     )
     sectors = [dict(
         kblock=0, parity=1, energies=E, overlaps=cat_overlaps,
-        entropies=entropies, gap_ratios=ratios, residual=residual,
+        entropies=entropies, spacings=spacings, residual=residual,
     )]
 
     return dict(
@@ -147,6 +149,8 @@ def save_results(result, output_dir):
     stem = output_dir / f"pxp_spectrum_L={L}_m={m:g}"
     arrays = {key: result[key] for key in ("L", "m", "times", "zz", "fidelity")}
     arrays["initial_state"] = "Z2_plus"
+    arrays["unfolding_window"] = 5
+    arrays["spacing_etol"] = 1e-8
     for sector in result["sectors"]:
         for key, value in sector.items():
             arrays[f"k{sector['kblock']}_{key}"] = value
@@ -177,12 +181,11 @@ def save_results(result, output_dir):
                 c=sector["entropies"][visible], cmap="plasma", vmin=0, vmax=max_entropy,
                 marker="o", s=np.where(weights[visible] > 0.01, 25, 9), label=label,
             )
-            ratios = sector["gap_ratios"]
-            if ratios.size:
+            spacings = sector["spacings"]
+            if spacings.size:
                 statistics.hist(
-                    ratios, bins=np.linspace(0, 1, 21), density=True,
-                    histtype="step", linewidth=1.5,
-                    label=label + f", mean={ratios.mean():.3f}",
+                    spacings, bins=30, density=True,
+                    histtype="stepfilled", alpha=0.7,
                 )
         spectrum.axvline(0, color="0.5", linestyle="--", lw=1, label=r"$E_{\mathbb{Z}_2^{+}}=0$")
         spectrum.set(
@@ -192,17 +195,15 @@ def save_results(result, output_dir):
         spectrum.legend()
         fig.colorbar(points, ax=spectrum, pad=0.02, label=r"$S_{L/2}$ (nats)")
         statistics.set(
-            xlabel=r"$r=\min(\delta_n,\delta_{n+1})/\max(\delta_n,\delta_{n+1})$",
-            ylabel=r"$P(r)$", xlim=(0, 1),
+            xlabel=r"$s$", ylabel=r"$P(s)$",
         )
+        statistics.set_xlim(left=0)
         statistics.text(
             0.97, 0.97, r"Central 2/3, $k=0,\ p=+$",
             ha="right", va="top", transform=statistics.transAxes,
         )
         statistics.set_ylim(top=statistics.get_ylim()[1] * 1.15)
-        if any(s["gap_ratios"].size for s in result["sectors"]):
-            statistics.legend()
-        else:
+        if not any(s["spacings"].size for s in result["sectors"]):
             statistics.text(0.5, 0.5, "Too few nondegenerate levels", ha="center",
                             transform=statistics.transAxes)
         correlation.plot(result["times"], result["zz"])

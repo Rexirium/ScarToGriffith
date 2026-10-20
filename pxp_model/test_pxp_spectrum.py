@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from .pxp_spectrum import build_hamiltonian, gap_ratios, save_results, solve
+from .pxp_spectrum import build_hamiltonian, spectrum_spacings, save_results, solve
 from .pxp_basis import pxp_basis_1d
 import numpy as np
 from scipy.linalg import eigh
@@ -86,8 +86,20 @@ class PXPSpectrumTest(unittest.TestCase):
             self.assertAlmostEqual(full.my_ent_entropy(state),
                                    -probabilities @ np.log(probabilities))
 
-    def test_gap_ratios_and_saved_outputs(self):
-        np.testing.assert_allclose(gap_ratios(np.array([0., 1., 1., 3., 7.])), [0.5])
+    def test_unfolded_spacings(self):
+        np.testing.assert_allclose(spectrum_spacings(np.arange(60.)), np.ones(40))
+        energies = np.arange(60.)**3
+        energies[30] = energies[29]
+        indices = np.arange(10, 50)
+        gaps = np.diff(energies)[indices]
+        local_means = (energies[indices + 5] - energies[indices - 5]) / 10
+        expected = (gaps / local_means)[gaps > 1e-8]
+        expected /= expected.mean()
+        np.testing.assert_allclose(spectrum_spacings(energies), expected)
+        self.assertEqual(spectrum_spacings(np.zeros(60)).size, 0)
+        self.assertEqual(spectrum_spacings(np.arange(8.)).size, 0)
+
+    def test_saved_outputs(self):
         result = solve(6, 0.2, np.linspace(0, 1, 3))
         with tempfile.TemporaryDirectory() as directory:
             save_results(result, directory)
@@ -97,6 +109,8 @@ class PXPSpectrumTest(unittest.TestCase):
             with np.load(data, allow_pickle=False) as saved:
                 np.testing.assert_allclose(saved["fidelity"], result["fidelity"])
                 self.assertIn("k0_entropies", saved.files)
+                self.assertIn("k0_spacings", saved.files)
+                self.assertNotIn("k0_gap_ratios", saved.files)
                 self.assertFalse(any(key.startswith("k3_") for key in saved.files))
 
 
