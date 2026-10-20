@@ -36,6 +36,7 @@ JuliaLocalPreferences.toml
 *.err
 *.out
 *.h5
+*.npz
 *.csv
 
 # LaTeX build artifacts
