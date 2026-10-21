@@ -9,7 +9,7 @@ from quspin.basis.user import (
 from numba import carray, cfunc  # numba helper functions
 from numba import uint32, int32  # numba data types
 import numpy as np
-from scipy.sparse import csc_matrix
+from scipy.sparse import csc_matrix, eye
 if __package__:
     from .entanglement import my_ent_entropy, my_negativity, ops_ent_entropy
 else:
@@ -180,33 +180,30 @@ def pxp_basis_1d(N:int, a:int=1, kblock=None, pblock=None):
     return basis
 
 
-def pxp_project_from(self, v0, full_pxp_basis, enforce_pure=False):
-    """Lift states or a density matrix to the symmetry-free PXP basis.
-
-    This is the PXP analogue of QuSpin's ``basis.project_from()``.  The
-    difference is that the output rows contain only blockade-compatible
-    configurations, in the same (descending-integer) order as
-    ``pxp_basis_1d(self.N).states``, instead of all ``2**N`` spin states.
+def pxp_get_proj(self, full_pxp_basis):
+    """Return the cached expansion matrix P into the symmetry-free PXP basis.
 
     Parameters
     ----------
-    v0 : array_like
-        A state vector of shape ``(self.Ns,)``, several state vectors stored
-        column-wise with shape ``(self.Ns, nvec)``, or a square density matrix.
     full_pxp_basis : user_basis
         A symmetry-free PXP basis constructed beforehand with
         ``pxp_basis_1d(self.N)``. Its state ordering determines the rows of
-        the returned vector or matrix.
-    enforce_pure : bool, optional
-        If false, a square ``v0`` is treated as a density matrix and
-        transformed using ``P @ v0 @ P.conj().T``. If true, a square ``v0``
-        is treated as column-wise pure states. The default is false.
+        P; columns follow ``self.states``.
 
     Returns
     -------
-    numpy.ndarray
-        State(s) expressed in the symmetry-free PXP-constrained basis.
+    scipy.sparse.csc_matrix
+        Shape ``(full_pxp_basis.Ns, self.Ns)``. ``P @ v`` expands a state;
+        ``P.conj().T @ w`` projects back into this symmetry sector.
+        The returned matrix is cached; copy it before modifying it.
+        Neither basis may be modified after caching. For two symmetry-free
+        bases, matching states and ordering are required and P is identity.
     """
+    cache = getattr(self, "_pxp_projection_cache", {})
+    cached = cache.get(id(full_pxp_basis))
+    if cached is not None and cached[0] is full_pxp_basis:
+        return cached[1]
+
     if full_pxp_basis.N != self.N:
         raise ValueError(
             "full_pxp_basis and the symmetry-reduced basis must have "
@@ -218,18 +215,12 @@ def pxp_project_from(self, v0, full_pxp_basis, enforce_pure=False):
             "construct it with pxp_basis_1d(N)"
         )
 
-    v0 = np.asarray(v0)
-    if v0.ndim not in (1, 2) or v0.shape[0] != self.Ns:
-        raise ValueError(
-            f"v0 must have shape ({self.Ns},) or ({self.Ns}, nvec)"
-        )
-    is_density = not enforce_pure and v0.shape == (self.Ns, self.Ns)
-
-    # Cache the symmetry expansion because orbit representatives and their
-    # amplitudes depend only on the two bases, not on the projected vectors.
-    cache = getattr(self, "_pxp_projection_cache", {})
-    cached = cache.get(id(full_pxp_basis))
-    if cached is None or cached[0] is not full_pxp_basis:
+    if not getattr(self, "blocks", {}):
+        if self is not full_pxp_basis and not np.array_equal(
+                self.states, full_pxp_basis.states):
+            raise ValueError("Symmetry-free bases must have identical states and ordering")
+        projector = eye(self.Ns, format="csc", dtype=np.float64)
+    else:
         representatives = full_pxp_basis.states.copy()
         amplitudes = np.real_if_close(
             self.get_amp(representatives, mode="full_basis")
@@ -242,13 +233,46 @@ def pxp_project_from(self, v0, full_pxp_basis, enforce_pure=False):
             (amplitudes[rows], (rows, columns)),
             shape=(full_pxp_basis.Ns, self.Ns),
         )
-        cached = (full_pxp_basis, projector)
-        cache[id(full_pxp_basis)] = cached
-        self._pxp_projection_cache = cache
+    # Validate and construct once per pair of unchanged bases.
+    cache[id(full_pxp_basis)] = (full_pxp_basis, projector)
+    self._pxp_projection_cache = cache
+    return projector
 
-    _, projector = cached
 
-    if is_density:
+def pxp_project_from(self, v0, full_pxp_basis, enforce_pure=False):
+    """Lift states or a density matrix to the symmetry-free PXP basis.
+
+    This is the PXP analogue of QuSpin's ``basis.project_from()``. The
+    output rows contain only blockade-compatible configurations, in the
+    order of ``full_pxp_basis.states``, instead of all ``2**N`` spin states.
+
+    Parameters
+    ----------
+    v0 : array_like
+        A state vector of shape ``(self.Ns,)``, several state vectors stored
+        column-wise with shape ``(self.Ns, nvec)``, or a square density matrix.
+    full_pxp_basis : user_basis
+        A symmetry-free PXP basis constructed with ``pxp_basis_1d(self.N)``.
+    enforce_pure : bool, optional
+        If false, a square ``v0`` is treated as a density matrix and
+        transformed using ``P @ v0 @ P.conj().T``. If true, a square ``v0``
+        is treated as column-wise pure states. The default is false.
+
+    Returns
+    -------
+    numpy.ndarray
+        State(s) expressed in the symmetry-free PXP-constrained basis.
+    """
+    v0 = np.asarray(v0)
+    if v0.ndim not in (1, 2) or v0.shape[0] != self.Ns:
+        raise ValueError(
+            f"v0 must have shape ({self.Ns},) or ({self.Ns}, nvec)"
+        )
+    projector = self.pxp_get_proj(full_pxp_basis)
+    if not getattr(self, "blocks", {}):
+        return v0.copy()
+
+    if not enforce_pure and v0.shape == (self.Ns, self.Ns):
         return np.asarray(projector @ v0 @ projector.conj().T)
     return np.asarray(projector @ v0)
 
@@ -263,6 +287,7 @@ def fibonacci(n:int):
 user_basis.my_ent_entropy = my_ent_entropy
 user_basis.my_negativity = my_negativity
 user_basis.ops_ent_entropy = ops_ent_entropy
+user_basis.pxp_get_proj = pxp_get_proj
 user_basis.pxp_project_from = pxp_project_from
 ##############################################################################
 ##############################################################################
