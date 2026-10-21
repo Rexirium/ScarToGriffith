@@ -15,11 +15,22 @@ is diagonalized, with reflection i -> L-1-i. The normalized initial state
 is |Z2,+> = (|1010...> + |0101...>)/sqrt(2). All overlaps, correlations
 and return probabilities refer to this symmetric state within this sector.
 Entropy is the half-chain von Neumann entropy, using natural logarithms.
+Of the L+1 FSA eigenstates constructed at the same m, retain only
+those with projection weight > 1/2 in this sector, then normalize them.
+Large circles mark the ED state of maximum squared overlap with each
+retained FSA state; repeated matches mark the same ED state once.
+Red crosses show the retained FSA states at their effective-Hamiltonian
+eigenenergies and overlaps with |Z2,+>, after projection and normalization.
+Saved fsa_projection_weights are measured before normalization and retain
+all L+1 FSA indices; scar_indices contains unique matched ED indices.
+Selected overlaps below 1e-15 are displayed at the log-axis floor; saved
+overlaps retain their actual values.
 Level statistics use locally unfolded spacings in the central 2/3 of the
 spectrum (window=5, etol=1e-8), normalized to mean spacing 1, as in the
 reference script. Gaps <= etol are excluded, including zero-mode degeneracies.
 
 Outputs: a four-panel PNG and an NPZ containing the plotted numerical data.
+NPZ data keys match the flat dictionary returned by solve(), without k0_ prefixes.
 Default output paths are relative to this script, independent of the cwd.
 Conventions: .knowledge/models/rydberg-pxp/MODEL.md
 Projected-drive construction: https://quspin.github.io/QuSpin/examples/example14.html
@@ -40,10 +51,13 @@ from quspin.operators import hamiltonian
 
 if __package__:
     from .pxp_basis import fibonacci, pxp_basis_1d
-    from .utils import unfolded_spacings
+    from .utils import max_overlap_indices, unfolded_spacings
 else:
     from pxp_basis import fibonacci, pxp_basis_1d
-    from utils import unfolded_spacings
+    from utils import max_overlap_indices, unfolded_spacings
+
+
+FSA_WEIGHT_CUTOFF = 0.5
 
 
 def build_hamiltonian(basis, m):
@@ -72,7 +86,14 @@ def spectrum_spacings(energies):
 
 
 def solve(L=20, m=0.2, times=None):
-    """Return the k=0, p=+ spectrum and normalized |Z2,+> dynamics."""
+    """Return a flat dictionary of plot data and FSA matching diagnostics.
+
+    Parameters: L, m, times. Spectrum: energies, overlaps, entropies,
+    spacings, scar_indices. FSA spectrum: fsa_energies, fsa_overlaps (retained
+    states only). Dynamics: zz, fidelity. FSA diagnostics:
+    fsa_projection_weights (before normalization).
+    The sector is always k=0, p=+ and overlaps refer to normalized |Z2,+>.
+    """
     if not isinstance(L, (int, np.integer)) or L < 4 or L > 32 or L % 2:
         raise ValueError("L must be an even integer between 4 and 32")
     if not np.isfinite(m):
@@ -86,14 +107,10 @@ def solve(L=20, m=0.2, times=None):
 
     full_basis = pxp_basis_1d(L)
     assert full_basis.Ns == fibonacci(L - 1) + fibonacci(L + 1)
-    print(f"L={L}, m={m:g}, PBC, a=1; constrained dimension={full_basis.Ns}", flush=True)
-    return_amplitude = np.zeros(times.size, dtype=complex)
-    zz_t = np.zeros(times.size)
-
     basis = pxp_basis_1d(L, a=1, kblock=0, pblock=1)
     dim = basis.Ns
     print(
-        f"kblock=0, parity=+1, dimension={dim}; "
+        f"L={L}, m={m:g}, PBC, k=0, p=+; dimension={dim}/{full_basis.Ns}; "
         f"dense H + eigenvectors >= {16 * dim**2 / 2**20:.1f} MiB",
         flush=True,
     )
@@ -103,8 +120,16 @@ def solve(L=20, m=0.2, times=None):
     if residual > 1e-9 * max(1.0, np.max(np.abs(E))):
         raise RuntimeError(f"Eigenpair residual too large: {residual:g}")
 
+    basis._pxp_fsa_full_basis = full_basis
+    fsa = basis.construct_fsa_eigensystem(normalized=False, m=m)
+    fsa_projection_weights = np.sum(np.abs(fsa["psi"])**2, axis=0)
+    valid_fsa = fsa_projection_weights > FSA_WEIGHT_CUTOFF
+    psi_fsa = fsa["psi"][:, valid_fsa] / np.sqrt(fsa_projection_weights[valid_fsa])
+    scar_indices = np.unique(max_overlap_indices(psi_fsa, U))
+
     # This representative denotes the normalized symmetric cat in this block.
     z2_index = basis.index("10" * (L // 2))
+    fsa_overlaps = np.abs(psi_fsa[z2_index, :])**2
     coefficients = U[z2_index, :].conj()
     cat_overlaps = np.abs(coefficients)**2
     entropies = np.empty(dim)
@@ -117,6 +142,8 @@ def solve(L=20, m=0.2, times=None):
     bits = ((basis.states[:, None] >> np.arange(L)) & 1).astype(float)
     z = 2 * bits - 1
     zz_diagonal = np.mean(z * np.roll(z, 1, axis=1), axis=1)
+    return_amplitude = np.empty(times.size, dtype=complex)
+    zz_t = np.empty(times.size)
     # Keep memory bounded when many time points are requested.
     for start in range(0, times.size, 128):
         block = slice(start, start + 128)
@@ -127,17 +154,17 @@ def solve(L=20, m=0.2, times=None):
 
     spacings = spectrum_spacings(E)
     print(
-        f"  max residual={residual:.2e}; unfolded spacings={spacings.size}",
+        f"Done: FSA {valid_fsa.sum()}/{L + 1}, scars={scar_indices.size}, "
+        f"spacings={spacings.size}, max residual={residual:.2e}",
         flush=True,
     )
-    sectors = [dict(
-        kblock=0, parity=1, energies=E, overlaps=cat_overlaps,
-        entropies=entropies, spacings=spacings, residual=residual,
-    )]
-
     return dict(
-        L=L, m=m, times=times, sectors=sectors, zz=zz_t,
-        fidelity=np.abs(return_amplitude)**2,
+        L=L, m=m, times=times,
+        energies=E, overlaps=cat_overlaps, entropies=entropies,
+        spacings=spacings, scar_indices=scar_indices,
+        fsa_energies=fsa["energies"][valid_fsa], fsa_overlaps=fsa_overlaps,
+        zz=zz_t, fidelity=np.abs(return_amplitude)**2,
+        fsa_projection_weights=fsa_projection_weights,
     )
 
 
@@ -147,14 +174,11 @@ def save_results(result, output_dir):
     output_dir.mkdir(parents=True, exist_ok=True)
     L, m = result["L"], result["m"]
     stem = output_dir / f"pxp_spectrum_L={L}_m={m:g}"
-    arrays = {key: result[key] for key in ("L", "m", "times", "zz", "fidelity")}
-    arrays["initial_state"] = "Z2_plus"
-    arrays["unfolding_window"] = 5
-    arrays["spacing_etol"] = 1e-8
-    for sector in result["sectors"]:
-        for key, value in sector.items():
-            arrays[f"k{sector['kblock']}_{key}"] = value
-    np.savez_compressed(str(stem) + ".npz", **arrays)
+    np.savez_compressed(
+        str(stem) + ".npz", **result, kblock=0, parity=1,
+        initial_state="Z2_plus", unfolding_window=5, spacing_etol=1e-8,
+        fsa_weight_cutoff=FSA_WEIGHT_CUTOFF,
+    )
 
     with plt.rc_context({
         "font.family": "serif",
@@ -171,22 +195,34 @@ def save_results(result, output_dir):
         statistics = fig.add_subplot(grid[0, 1])
         correlation = fig.add_subplot(grid[1, :])
         fidelity = fig.add_subplot(grid[2, :], sharex=correlation)
-        max_entropy = max(s["entropies"].max() for s in result["sectors"])
-        for sector in result["sectors"]:
-            label = r"$k=0,\ p=+$"
-            weights = sector["overlaps"]
-            visible = weights > 1e-15
-            points = spectrum.scatter(
-                sector["energies"][visible], weights[visible],
-                c=sector["entropies"][visible], cmap="plasma", vmin=0, vmax=max_entropy,
-                marker="o", s=np.where(weights[visible] > 0.01, 25, 9), label=label,
+        weights = result["overlaps"]
+        scars = result["scar_indices"]
+        background = weights > 1e-15
+        background[scars] = False
+        colors = dict(cmap="plasma", vmin=0, vmax=result["entropies"].max())
+        points = spectrum.scatter(
+            result["energies"][background], weights[background],
+            c=result["entropies"][background], **colors,
+            marker="o", s=9, label=r"$k=0,\ p=+$",
+        )
+        # Keep selected states visible even below the logarithmic plotting floor.
+        spectrum.scatter(
+            result["energies"][scars], np.maximum(weights[scars], 1e-15),
+            c=result["entropies"][scars], **colors,
+            marker="o", s=40, edgecolors="black", linewidths=0.4,
+            label="FSA-matched scars", zorder=3,
+        )
+        spectrum.scatter(
+            result["fsa_energies"], np.maximum(result["fsa_overlaps"], 1e-15),
+            color="red", marker="x", s=40, linewidths=1.2,
+            label="FSA eigenstates", zorder=4,
+        )
+        spacings = result["spacings"]
+        if spacings.size:
+            statistics.hist(
+                spacings, bins=30, density=True,
+                histtype="stepfilled", alpha=0.7,
             )
-            spacings = sector["spacings"]
-            if spacings.size:
-                statistics.hist(
-                    spacings, bins=30, density=True,
-                    histtype="stepfilled", alpha=0.7,
-                )
         spectrum.axvline(0, color="0.5", linestyle="--", lw=1, label=r"$E_{\mathbb{Z}_2^{+}}=0$")
         spectrum.set(
             xlabel=r"$E_n$", ylabel=r"$|\langle \mathbb{Z}_2^{+}|E_n\rangle|^2$",
@@ -203,7 +239,7 @@ def save_results(result, output_dir):
             ha="right", va="top", transform=statistics.transAxes,
         )
         statistics.set_ylim(top=statistics.get_ylim()[1] * 1.15)
-        if not any(s["spacings"].size for s in result["sectors"]):
+        if not spacings.size:
             statistics.text(0.5, 0.5, "Too few nondegenerate levels", ha="center",
                             transform=statistics.transAxes)
         correlation.plot(result["times"], result["zz"])

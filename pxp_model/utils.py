@@ -1,6 +1,27 @@
 import numpy as np
 from quspin.basis import spin_basis_1d
 
+
+def max_overlap_indices(states, candidates):
+    """Match each column of states to a column of candidates by squared overlap.
+
+    Inputs have shapes (D, N) and (D, M), in the same basis and row order.
+    Returns an integer array of shape (N,), with entry i equal to
+    argmax_j |<candidates[:, j] | states[:, i]>|**2. Matches may repeat;
+    ties select the first candidate. Columns are not normalized internally;
+    supply normalized states to compare fidelities.
+    """
+    states, candidates = np.asarray(states), np.asarray(candidates)
+    if states.ndim != 2 or candidates.ndim != 2:
+        raise ValueError("states and candidates must be two-dimensional")
+    if states.shape[0] != candidates.shape[0]:
+        raise ValueError("states and candidates must have the same number of rows")
+    if candidates.shape[1] == 0:
+        raise ValueError("candidates must contain at least one state")
+    overlaps = np.abs(candidates.conj().T @ states)**2
+    return np.argmax(overlaps, axis=0)
+
+
 def merge_basis_index(bases:list[spin_basis_1d]):
     
     merged_states = np.concatenate([basis.states for basis in bases])

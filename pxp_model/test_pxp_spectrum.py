@@ -6,6 +6,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from .pxp_spectrum import build_hamiltonian, spectrum_spacings, save_results, solve
 from .pxp_basis import pxp_basis_1d
@@ -64,12 +65,46 @@ class PXPSpectrumTest(unittest.TestCase):
                 result = solve(L, m, times)
                 np.testing.assert_allclose(result["fidelity"], np.abs(initial @ states)**2, atol=1e-11)
                 np.testing.assert_allclose(result["zz"], zz @ np.abs(states)**2, atol=1e-11)
-                self.assertEqual([(s["kblock"], s["parity"]) for s in result["sectors"]], [(0, 1)])
-                self.assertAlmostEqual(sum(s["overlaps"].sum() for s in result["sectors"]), 1)
+                self.assertAlmostEqual(result["overlaps"].sum(), 1)
                 self.assertAlmostEqual(result["fidelity"][0], 1)
                 self.assertAlmostEqual(result["zz"][0], -1)
-                self.assertAlmostEqual(sum(s["energies"] @ s["overlaps"]
-                                           for s in result["sectors"]), 0)
+                self.assertAlmostEqual(result["energies"] @ result["overlaps"], 0)
+
+                # Compare matching in the reduced basis with full-space overlaps.
+                _, reduced_U = build_hamiltonian(basis, m).eigh()
+                full_fsa = full.construct_fsa_eigensystem(m=m)
+                raw_fsa = full_fsa["psi"]
+                norms = np.linalg.norm(P.T @ raw_fsa, axis=0)
+                valid = norms**2 > 0.5
+                self.assertEqual(np.count_nonzero(valid), L // 2 + 1)
+                np.testing.assert_allclose(result["fsa_projection_weights"], norms**2, atol=1e-12)
+                np.testing.assert_allclose(result["fsa_energies"], full_fsa["energies"][valid])
+                projected_fsa = P @ (P.T @ raw_fsa[:, valid]) / norms[valid]
+                np.testing.assert_allclose(
+                    result["fsa_overlaps"], np.abs(initial.conj() @ projected_fsa)**2,
+                    atol=1e-12,
+                )
+                expected = np.abs(
+                    (P @ reduced_U).T @ raw_fsa[:, valid] / norms[valid]
+                )**2
+                np.testing.assert_array_equal(
+                    result["scar_indices"], np.unique(np.argmax(expected, axis=0)),
+                )
+
+    def test_filter_before_normalization_and_repeated_matches(self):
+        basis = pxp_basis_1d(6, kblock=0, pblock=1)
+        _, U = build_hamiltonian(basis, 0.2).eigh()
+        psi = np.column_stack([
+            0.9 * U[:, 0], U[:, 0], 0.1 * U[:, 2],
+            0.8 * U[:, 1], U[:, 1], 0.7 * U[:, 2], np.zeros(basis.Ns),
+        ])
+        with patch.object(type(basis), "construct_fsa_eigensystem",
+                          return_value=dict(psi=psi, energies=np.arange(7.))) as construct:
+            result = solve(6, 0.2, np.array([0.]))
+        construct.assert_called_once_with(normalized=False, m=0.2)
+        np.testing.assert_allclose(result["fsa_projection_weights"], [.81, 1, .01, .64, 1, .49, 0])
+        np.testing.assert_array_equal(result["scar_indices"], [0, 1])
+        np.testing.assert_array_equal(result["fsa_energies"], [0, 1, 3, 4])
 
     def test_half_chain_entropy_against_full_tensor_product(self):
         L = 8
@@ -107,11 +142,14 @@ class PXPSpectrumTest(unittest.TestCase):
             data = png.with_suffix(".npz")
             self.assertGreater(png.stat().st_size, 1000)
             with np.load(data, allow_pickle=False) as saved:
-                np.testing.assert_allclose(saved["fidelity"], result["fidelity"])
-                self.assertIn("k0_entropies", saved.files)
-                self.assertIn("k0_spacings", saved.files)
-                self.assertNotIn("k0_gap_ratios", saved.files)
-                self.assertFalse(any(key.startswith("k3_") for key in saved.files))
+                self.assertNotIn("fsa_matches", saved.files)
+                for key, value in result.items():
+                    np.testing.assert_array_equal(saved[key], value)
+                self.assertEqual(saved["fsa_weight_cutoff"], 0.5)
+                self.assertEqual((saved["kblock"], saved["parity"]), (0, 1))
+                self.assertEqual(saved["initial_state"], "Z2_plus")
+                self.assertEqual(saved["unfolding_window"], 5)
+                self.assertEqual(saved["spacing_etol"], 1e-8)
 
 
 if __name__ == "__main__":

@@ -4,8 +4,9 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from .pxp_fsa import build_forward_operator, construct_fsa_eigensystem
-from .pxp_basis import pxp_basis_1d, fibonacci
+from .pxp_basis import (
+    build_forward_operator, construct_fsa_eigensystem, pxp_basis_1d, fibonacci,
+)
 import numpy as np
 
 
@@ -57,6 +58,25 @@ class PXPFSATest(unittest.TestCase):
                 self.assertAlmostEqual(result["initial_overlaps"].sum(), 1)
                 self.assertEqual(set(result), {"fsa_basis", "beta", "H_fsa", "energies",
                                                "eigenvectors", "initial_overlaps", "psi"})
+                magnetization = np.array([
+                    sum(1 if int(s) & (1 << bit) else -1 for bit in range(L))
+                    for s in states
+                ])
+                for m in (0, -0.2, 0.2):
+                    detuned = basis.construct_fsa_eigensystem(m=m)
+                    np.testing.assert_array_equal(detuned["fsa_basis"], V)
+                    np.testing.assert_allclose(
+                        detuned["H_fsa"], V.T @ (H - m * np.diag(magnetization)) @ V,
+                        atol=1e-12,
+                    )
+                    U, E = detuned["eigenvectors"], detuned["energies"]
+                    np.testing.assert_allclose(detuned["H_fsa"] @ U, U * E, atol=1e-12)
+                    self.assertAlmostEqual(detuned["H_fsa"][1, 1], 2 * m)
+
+    def test_invalid_field(self):
+        for m in (np.nan, np.inf, -np.inf):
+            with self.subTest(m=m), self.assertRaises(ValueError):
+                construct_fsa_eigensystem(SimpleNamespace(N=8), m=m)
 
     def test_invalid_size(self):
         for L in (0, 2, 5, 34, 6.0):
@@ -83,7 +103,7 @@ class PXPFSATest(unittest.TestCase):
                     np.testing.assert_allclose(result["psi"], 0, atol=1e-12)
                 auxiliary = basis._pxp_fsa_full_basis
                 cached_P = basis.pxp_get_proj(auxiliary)
-                with patch("pxp_model.pxp_fsa.pxp_basis_1d", side_effect=AssertionError("Rebuilt basis")):
+                with patch("pxp_model.pxp_basis.pxp_basis_1d", side_effect=AssertionError("Rebuilt basis")):
                     basis.construct_fsa_eigensystem()
                 self.assertIs(basis._pxp_fsa_full_basis, auxiliary)
                 self.assertIs(basis.pxp_get_proj(auxiliary), cached_P)
@@ -93,8 +113,9 @@ class PXPFSATest(unittest.TestCase):
                        dict(kblock=1)):
             with self.subTest(blocks=blocks):
                 basis = pxp_basis_1d(8, **blocks)
-                raw = basis.construct_fsa_eigensystem(normalized=False)
-                normalized = basis.construct_fsa_eigensystem()
+                raw = basis.construct_fsa_eigensystem()
+                np.testing.assert_array_equal(raw["psi"], raw["fsa_basis"] @ raw["eigenvectors"])
+                normalized = basis.construct_fsa_eigensystem(normalized=True)
                 norms = np.linalg.norm(raw["psi"], axis=0)
                 nonzero = norms > 1e-12
                 psi = normalized["psi"]
