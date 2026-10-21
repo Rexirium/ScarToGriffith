@@ -4,7 +4,7 @@ L. Münster, A. K. Hartmann, and M. Weigel
 *Physical Review E* **110**, 054112 (2024)  
 DOI: [10.1103/PhysRevE.110.054112](https://doi.org/10.1103/PhysRevE.110.054112)
 
-> Markdown transcription of the supplied paper. Display and inline mathematics are retained as LaTeX. Figure captions are retained; consult the source PDF for the corresponding figures. Citations retain the source's Pandoc/BibTeX citation keys.
+> Markdown transcription of the supplied paper. Display and inline mathematics are retained as LaTeX. Figures are described by their captions without embedded images. Citations retain the source's Pandoc/BibTeX citation keys.
 
 ## Abstract
 

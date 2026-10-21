@@ -12,7 +12,7 @@ DOI: [10.1103/PhysRevB.53.8486](https://doi.org/10.1103/PhysRevB.53.8486)
 
 Received 5 October 1995.
 
-> Markdown transcription of the supplied paper. Equations are retained as LaTeX, and the original figures are embedded from the authors' arXiv source. Minor differences between the preprint source and the published PDF were reconciled against the supplied PDF.
+> Markdown transcription of the supplied paper. Equations are retained as LaTeX, and figures are described in text without embedded images. Minor differences between the preprint source and the published PDF were reconciled against the supplied PDF.
 
 ## Abstract
 
@@ -402,15 +402,15 @@ In the disordered phase, the data looks rather different. Fig. 3 shows the distr
 
 <a id="fig1"></a>
 
-![Figure 1. A plot of the distribution of the log of the energy gap, $\Delta E$, at the critical point, $h_0 = 1$, for lattice sizes between 16 and 128. The distribution was obtained from the value of the gap for 50000 samples for each size. For the larger sizes, the distribution is cut off at small values because, in this region, the gap is essentially zero within double precision accuracy. One sees that the distribution gets broader and broader as $L$ increases.](assets/young_rieger_1996/fig1.png)
+**Figure 1.** A plot of the distribution of the log of the energy gap, $\Delta E$, at the critical point, $h_0 = 1$, for lattice sizes between 16 and 128. The distribution was obtained from the value of the gap for 50000 samples for each size. For the larger sizes, the distribution is cut off at small values because, in this region, the gap is essentially zero within double precision accuracy. One sees that the distribution gets broader and broader as $L$ increases.
 
 <a id="fig2"></a>
 
-![Figure 2. A scaling plot of the data in Fig. 1, assuming that the log of the energy scale (here the gap) varies as the square root of the corresponding length scale (here the size of the system).](assets/young_rieger_1996/fig2.png)
+**Figure 2.** A scaling plot of the data in Fig. 1, assuming that the log of the energy scale (here the gap) varies as the square root of the corresponding length scale (here the size of the system).
 
 <a id="fig3"></a>
 
-![Figure 3. A plot of the distribution of the log of the energy gap, $\Delta E$, in the disordered phase at $h_0 = 3$, for lattice sizes between 16 and 128. The distribution was obtained from the value of the gap for 50000 samples for each size. The different curves are very similar and just shifted relative to each other.](assets/young_rieger_1996/fig3.png)
+**Figure 3.** A plot of the distribution of the log of the energy gap, $\Delta E$, in the disordered phase at $h_0 = 3$, for lattice sizes between 16 and 128. The distribution was obtained from the value of the gap for 50000 samples for each size. The different curves are very similar and just shifted relative to each other.
 
 Note that in the region of small gaps, the data in Fig. 3 is a straight line indicating a power law distribution of gaps. This power law behavior is not special to the 1-$d$ problem discussed here, but is expected quite generally[14] in the Griffiths phase for systems with discrete symmetry. The power is related to $z$ as we shall now see. Well into the disordered phase, excitations which give a small gap are well localized so we assume that the probability of having small gap is proportional to the size of the system, $L$. This assumption is confirmed by the data in Fig 3. Hence, the probability of having a gap between $\Delta E$ and $\Delta E (1 + \epsilon)$ (for some $\epsilon$) should have the scaling form, $\epsilon L \Delta E^{1/z}$, so the distribution of gaps, $P(\Delta E)$, must vary as
 $$
@@ -424,15 +424,15 @@ From the slopes in Fig. 3 we estimate $z \simeq 1.4$, which gives a satisfactory
 
 <a id="fig4"></a>
 
-![Figure 4. A scaling plot of the data in Fig. 3, assuming scaling with a finite value of $z$. The fit here has $z = 1.4$.](assets/young_rieger_1996/fig4.png)
+**Figure 4.** A scaling plot of the data in Fig. 3, assuming scaling with a finite value of $z$. The fit here has $z = 1.4$.
 
 <a id="fig5"></a>
 
-![Figure 5. Results for $1/z$ against $\delta$, where $z$ is the dynamical exponent and $\delta$ is related to $h_0$ by Eq. ([delta_h0]). The solid curve is a fit to $1/z = 2\delta (1 - 2\delta C)$ (which corresponds to the expected form[6], Eq. ([zdiverge])) with $C = 0.311$. The dashed line is $1/z = 2\delta$, the predicted asymptotic form for $\delta \to 0$.](assets/young_rieger_1996/fig5.png)
+**Figure 5.** Results for $1/z$ against $\delta$, where $z$ is the dynamical exponent and $\delta$ is related to $h_0$ by Eq. ([delta_h0]). The solid curve is a fit to $1/z = 2\delta (1 - 2\delta C)$ (which corresponds to the expected form[6], Eq. ([zdiverge])) with $C = 0.311$. The dashed line is $1/z = 2\delta$, the predicted asymptotic form for $\delta \to 0$.
 
 <a id="fig6b"></a>
 
-![Figure 6. A plot of the distribution of the log of the energy gap, $\Delta E$, at the critical point, $h_0 = 1$, for the bimodal distribution in Eq. ([dist2]). The distribution was obtained from the value of the gap for 50000 samples for each size.](assets/young_rieger_1996/fig6b.png)
+**Figure 6.** A plot of the distribution of the log of the energy gap, $\Delta E$, at the critical point, $h_0 = 1$, for the bimodal distribution in Eq. ([dist2]). The distribution was obtained from the value of the gap for 50000 samples for each size.
 
 We have carried out a similar analysis for other values of $h_0$. Close to the critical point, it is difficult to determine $z$ because the distribution broadens with increasing size for small sizes (presumably where $L \le \xi$), but then the slope of the straight line region starts to saturate, corresponding to a large but finite $z$. The sizes that we can study are therefore in a crossover region between conventional dynamical scaling ($z$ finite) and activated dynamical scaling ($z$ infinite) so the data does not scale well with any choice of $z$.
 
@@ -451,7 +451,7 @@ The critical point is at $h_0 = 1$. The data for $\Delta E$ at the critical poin
 
 <a id="fig6"></a>
 
-![Figure 7. A scaling plot of the data in Fig. 6. The collapse of the data indicates that $z=\infty$, the same as for the continuous distribution of Eq. ([dist]), see Fig. 2.](assets/young_rieger_1996/fig6.png)
+**Figure 7.** A scaling plot of the data in Fig. 6. The collapse of the data indicates that $z=\infty$, the same as for the continuous distribution of Eq. ([dist]), see Fig. 2.
 
 ## V. Results for Correlation Functions
 
@@ -463,19 +463,19 @@ A graph of the average of the log of the correlation function (which corresponds
 
 <a id="fig7"></a>
 
-![Figure 8. A log-log plot of the average correlation function against distance at the critical point. The straight line behavior for larger sizes indicates a power law variation. The dashed line is a fit to the data for $L=128$ with $7 \le r \le 35$ and has slope of $-0.38$ in excellent agreement with the prediction in Eq. ([cav]). The results are obtained by averaging over all pairs of points separated by a distance $r$ for 10000 samples.](assets/young_rieger_1996/fig7.png)
+**Figure 8.** A log-log plot of the average correlation function against distance at the critical point. The straight line behavior for larger sizes indicates a power law variation. The dashed line is a fit to the data for $L=128$ with $7 \le r \le 35$ and has slope of $-0.38$ in excellent agreement with the prediction in Eq. ([cav]). The results are obtained by averaging over all pairs of points separated by a distance $r$ for 10000 samples.
 
 <a id="fig8"></a>
 
-![Figure 9. A plot of the average of the log of the correlation function against $\sqrt{r}$ at the critical point. The straight line behavior for larger sizes supports the prediction[5, 6] of Eq. ([logcr]). The results are obtained by averaging over 10000 samples.](assets/young_rieger_1996/fig8.png)
+**Figure 9.** A plot of the average of the log of the correlation function against $\sqrt{r}$ at the critical point. The straight line behavior for larger sizes supports the prediction[5, 6] of Eq. ([logcr]). The results are obtained by averaging over 10000 samples.
 
 <a id="fig9"></a>
 
-![Figure 10. The distribution of the log of the correlation function for different values of $r$ at the critical point. The data is obtained from 10000 samples of size $L=128$.](assets/young_rieger_1996/fig9.png)
+**Figure 10.** The distribution of the log of the correlation function for different values of $r$ at the critical point. The data is obtained from 10000 samples of size $L=128$.
 
 <a id="fig10"></a>
 
-![Figure 11. A scaling plot of the data in Fig. 10 according to the theoretical prediction[6]. The data collapses well in the region of fairly high probability, including the upturn near the right hand edge (which may indicate a divergence as the abscissa tends to 0, see the text). There are systematic deviations in the tail which may be due to corrections to scaling.](assets/young_rieger_1996/fig10.png)
+**Figure 11.** A scaling plot of the data in Fig. 10 according to the theoretical prediction[6]. The data collapses well in the region of fairly high probability, including the upturn near the right hand edge (which may indicate a divergence as the abscissa tends to 0, see the text). There are systematic deviations in the tail which may be due to corrections to scaling.
 
 The reason for this difference is that the distribution of $\ln C(r)$ is very broad, as can be seen in the plot in Fig. 10. Fisher[6] has predicted that the distribution of $(\ln C(r)) / \sqrt{r}$ should be universal and independent of $r$ so we show the corresponding scaling plot in Fig. 11. Note that the distribution monotonically decreases as $C(r)$ becomes smaller. The data scales well for larger values of $C$, including even the upturn near the right hand edge of the graph. This is the region where $C(r)$ is anomalously large and which gives the dominant contribution to the average correlation function. An interesting question, then, is whether the value for the average correlation function is included in the scaling function for $\ln C(r) / \sqrt{r}$. If so, the the scaling function will *diverge* as a power near the origin[11]. To see this, note that if the probability of having a correlation $C$ at a distance $r$ only depends on the combination
 $$
@@ -501,7 +501,7 @@ $$
 $$
 <a id="fig10b"></a>
 
-![Figure 12. An enlarged log-log plot of the region of the upturn in Fig. 11 where the abscissa approaches zero..](assets/young_rieger_1996/fig10b.png)
+**Figure 12.** An enlarged log-log plot of the region of the upturn in Fig. 11 where the abscissa approaches zero..
 
 An enlarged log-log plot of the region of the upturn in Fig. 11. is shown in Fig. 12. The data does lie on a rough straight line whose slope decreases (in magnitude) with increasing $r$. A fit to the data for $r=24$ in the middle region of the graph has a slope of about 0.45 (in magnitude), larger than 0.24, but since the effective slope decreases with increasing $r$ the data does not rule out the possibility that the distribution of $(\ln C(r)) / \sqrt{r}$ diverges with an exponent of 0.24 for $r \to \infty$. Even if the scaling function for $(\ln C(r)) / \sqrt{r}$ gives the correct *power* for the average correlation function, it does not necessarily mean that the *amplitude* is correct, since there could also be additional non-universal contributions to the amplitude, outside the scaling function[11].
 
@@ -509,19 +509,19 @@ We suspect that the systematic deviation in the tail of the distribution in Fig.
 
 <a id="fig11"></a>
 
-![Figure 13. A scaling plot of the average correlation function in the disordered phase according to Eq. ([cscale]). The best fit (shown) is for $\nu = 1.8$, fairly close to the prediction [6] $\nu = 2$. The data represents an average over 10000 samples.](assets/young_rieger_1996/fig11.png)
+**Figure 13.** A scaling plot of the average correlation function in the disordered phase according to Eq. ([cscale]). The best fit (shown) is for $\nu = 1.8$, fairly close to the prediction [6] $\nu = 2$. The data represents an average over 10000 samples.
 
 <a id="fig11b"></a>
 
-![Figure 14. A scaling plot of the average correlation function, according to Eq. ([cscale]) with the predicted value $\nu = 2$. The curve is a plot of Eq. ([asymp]) (expected to be valid for $r \delta^2 \gg 1$) with $D=35$. Note that from Eqs. ([truexi]) and ([lv]), one has $\xi^{-1} = \delta^2$ for the distribution of Eq. ([dist]).](assets/young_rieger_1996/fig11b.png)
+**Figure 14.** A scaling plot of the average correlation function, according to Eq. ([cscale]) with the predicted value $\nu = 2$. The curve is a plot of Eq. ([asymp]) (expected to be valid for $r \delta^2 \gg 1$) with $D=35$. Note that from Eqs. ([truexi]) and ([lv]), one has $\xi^{-1} = \delta^2$ for the distribution of Eq. ([dist]).
 
 <a id="fig12"></a>
 
-![Figure 15. A scaling plot of the average of the log of the correlation function in the disordered phase according to Eq. ([lncscale]). The best fit (shown) is for $\tilde{\nu} = 1.1$, close to the prediction [5, 6] $\tilde{\nu} = 1$. The data is an average over 10000 samples.](assets/young_rieger_1996/fig12.png)
+**Figure 15.** A scaling plot of the average of the log of the correlation function in the disordered phase according to Eq. ([lncscale]). The best fit (shown) is for $\tilde{\nu} = 1.1$, close to the prediction [5, 6] $\tilde{\nu} = 1$. The data is an average over 10000 samples.
 
 <a id="fig12b"></a>
 
-![Figure 16. A scaling plot of the average of the log of the correlation function in the disordered phase according to Eq. ([lncscale]), assuming the theoretical value $\tilde{\nu} = 1$. The solid line is the prediction of Eq. ([large_r]), which expected to be valid at large $r$, but also works well down to $r=0$. It appears that by dividing by the correlation function at criticality, we incorporate most of the corrections to the asymptotic form in Eq. ([large_r]). Note that from Eq. ([xitypex]) one has $\tilde{\xi}^{-1} = 2 \delta$.](assets/young_rieger_1996/fig12b.png)
+**Figure 16.** A scaling plot of the average of the log of the correlation function in the disordered phase according to Eq. ([lncscale]), assuming the theoretical value $\tilde{\nu} = 1$. The solid line is the prediction of Eq. ([large_r]), which expected to be valid at large $r$, but also works well down to $r=0$. It appears that by dividing by the correlation function at criticality, we incorporate most of the corrections to the asymptotic form in Eq. ([large_r]). Note that from Eq. ([xitypex]) one has $\tilde{\xi}^{-1} = 2 \delta$.
 
 We now discuss our results for the disordered phase. The scaling plot corresponding to Eq. (20) is shown in Fig. 13. The plot has $\nu = 1.8$ which gave the best fit, and which agrees fairly well with the prediction $\nu = 2$. A plot using $\nu = 2$ works somewhat less well, presumably indicating that there are corrections to scaling for this range of lattice sizes and distances. Fig. 14 is a scaling plot using the theoretical value $\nu = 2$ which also shows the asymptotic form in Eq. (21) with $D=35$. Both the data and the prediction of Eq. (21), have substantial curvature: much more than in the corresponding data for $\log C(r)$ shown in Figs. 15 and 16. Over the range of accessible values of $r\delta^2$, the data and the asymptotic prediction do not track each other closely, though it is possible that they would do so for larger values of $r \delta^2$.
 
@@ -531,11 +531,11 @@ Fig. 16 tests the more stringent prediction[5, 11] for the average of $\ln C(r)$
 
 <a id="fig13"></a>
 
-![Figure 17. The distribution of the log of the correlation function for different values of $r$ at $h_0 = 3$ in the disordered phase. The data represents an average over 10000 samples for $L=64$. Both the most probable value and the width of the distribution increase with $r$ but the most probable value increases faster, see Fig. 18.](assets/young_rieger_1996/fig13.png)
+**Figure 17.** The distribution of the log of the correlation function for different values of $r$ at $h_0 = 3$ in the disordered phase. The data represents an average over 10000 samples for $L=64$. Both the most probable value and the width of the distribution increase with $r$ but the most probable value increases faster, see Fig. 18.
 
 <a id="fig14"></a>
 
-![Figure 18. A scaling plot of the data in Fig. 17. The width of the distribution is seen to narrow with increasing $r$, as expected.](assets/young_rieger_1996/fig14.png)
+**Figure 18.** A scaling plot of the data in Fig. 17. The width of the distribution is seen to narrow with increasing $r$, as expected.
 
 Although our best estimates of the critical exponents $\nu$ and $\tilde{\nu}$ do not quite agree with the theoretical predictions, they are fairly close to those predictions, and they differ *substantially* from *each other*, providing clear evidence that there are different correlation length exponents for the average and typical correlation functions.
 
@@ -543,7 +543,7 @@ Finally, in this section, we look at the *distribution* of $\ln C(r)$ for $r$ la
 
 <a id="fig13b"></a>
 
-![Figure 19. The mean and variance of the distribution of $\ln C(r)$ in the disordered phase at $h_0=3$ for different values of $r$. Both the mean and variance are expected be proportional to $r$ at large $r$. The lines are least squares fits of the form $a + b r^{1/2} + c r$. This form is motivated by the behavior at criticality, for which the mean varies as $r^{1/2}$, and, in fact, the $r^{1/2}$ correction to scaling was effectively removed in Fig. 16 by factoring out the behavior at criticality. However it is not clear that the constant and the $r^{1/2}$ term give all the corrections to scaling in the disordered phase. The fit to the mean has $a = -0.140 , b =1.145 , c = 1.014$, while the fit to the variance has $a = 1.025 , b = -1.736, c =2.029$. According to the suggestion of Fisher[11], following Shankar and Murthy[5], the leading behavior for large $r$ should be given by Eqs. ([ctilde]) and ([varctilde]). Noting that here, $2\delta = \ln 3 \simeq 1.099$, we see that the large $r$ behavior predicted by the fits is is in rather good agreement with theory.](assets/young_rieger_1996/fig13b.png)
+**Figure 19.** The mean and variance of the distribution of $\ln C(r)$ in the disordered phase at $h_0=3$ for different values of $r$. Both the mean and variance are expected be proportional to $r$ at large $r$. The lines are least squares fits of the form $a + b r^{1/2} + c r$. This form is motivated by the behavior at criticality, for which the mean varies as $r^{1/2}$, and, in fact, the $r^{1/2}$ correction to scaling was effectively removed in Fig. 16 by factoring out the behavior at criticality. However it is not clear that the constant and the $r^{1/2}$ term give all the corrections to scaling in the disordered phase. The fit to the mean has $a = -0.140 , b =1.145 , c = 1.014$, while the fit to the variance has $a = 1.025 , b = -1.736, c =2.029$. According to the suggestion of Fisher[11], following Shankar and Murthy[5], the leading behavior for large $r$ should be given by Eqs. ([ctilde]) and ([varctilde]). Noting that here, $2\delta = \ln 3 \simeq 1.099$, we see that the large $r$ behavior predicted by the fits is is in rather good agreement with theory.
 
 ## VI. Local Susceptibility
 
@@ -551,7 +551,7 @@ In this section we discuss the *local* susceptibility rather than the uniform su
 
 <a id="fig15"></a>
 
-![Figure 20. The distribution of the log of the local susceptibility at the critical point for different sizes obtained by the Lanczos method. The number of samples is $50000/L$, so that 50000 values for $\chi_{\rm\scriptscriptstyle loc}$ were obtained for each size.](assets/young_rieger_1996/fig15.png)
+**Figure 20.** The distribution of the log of the local susceptibility at the critical point for different sizes obtained by the Lanczos method. The number of samples is $50000/L$, so that 50000 values for $\chi_{\rm\scriptscriptstyle loc}$ were obtained for each size.
 
 Since it is difficult to compute the susceptibility from the fermion method, particularly with periodic boundary conditions, we have used the Lanczos diagonalization technique on the original spin Hamiltonian, Eq. (1). Of course the price we pay is that the lattices are much smaller, $L \le 16$. The local susceptibility at $T=0$ is given by
 $$
@@ -563,11 +563,11 @@ where $|n\rangle$ denotes a many body state of the system and $|0\rangle$ is the
 
 <a id="fig16"></a>
 
-![Figure 21. A scaling plot of the data in Fig. 20. The data scales in the same way as that for the log of the gap, see Fig. 2.](assets/young_rieger_1996/fig16.png)
+**Figure 21.** A scaling plot of the data in Fig. 20. The data scales in the same way as that for the log of the gap, see Fig. 2.
 
 <a id="fig17"></a>
 
-![Figure 22. The distribution of the log of the local susceptibility in the disordered phase for different sizes obtained by the Lanczos method. The number of samples is 50000 / $L$.](assets/young_rieger_1996/fig17.png)
+**Figure 22.** The distribution of the log of the local susceptibility in the disordered phase for different sizes obtained by the Lanczos method. The number of samples is 50000 / $L$.
 
 Even though the range of sizes used in the Lanczos method is rather small, it is, nonetheless, capable of distinguishing $z=\infty$ scaling at the critical point from finite $z$ scaling $z$ away from the critical point. This can be seen by comparing Fig. 20 with Fig. 22, which plots the distribution of $\ln \chi_{\mbox{\tiny loc}}$ at $h_0 = 3$. In Fig. 22 the curves no longer broaden with increasing $L$ but the distributions are *independent* of size. The reason why there is no size dependence here but there is in the distributions of $\ln \Delta E$ in Fig. 3 is easy to understand. For $\Delta E$, we compute the probability *per sample* of getting a certain value, and this is proportional to $L$ in the disordered phase for small $\Delta E$, since the rare strongly correlated region can occur anywhere. We used this result in Section IV to relate the exponent in the distribution to $1/z$, see Eqs. (59) and (60). With $\chi_{\mbox{\tiny loc}}$, however, we compute the probability *per site*, so there is no factor of $L$ and the distribution is independent of size. This is, of course, the normal state of affairs when the lattice size is much larger than the correlation length. The slope of the straight line region in Fig. 22 agrees with the slopes in Fig. 3 and so gives the same value of z as obtained from the gap, i.e. $z \simeq 1.4$.
 
@@ -581,7 +581,7 @@ Although the distribution of individual terms in the sum is broad, it is interes
 
 <a id="fig18"></a>
 
-![Figure 23. A log-log plot of the average $q=0$ structure factor, $S_{\rm av}(0)$ and the standard deviation of the structure factor among different samples, $\delta S(0)$, for different sizes. The dashed line is a fit to the data for $S_{\rm av}(0)$ and has slope 0.64, in fairly good agreement with the theoretical expectation, obtained by integrating Eq. ([cav]), of $\phi - 1 \simeq 0.62$. The solid line is just a guide to the eye. The results are obtained by averaging over 10000 samples.](assets/young_rieger_1996/fig18.png)
+**Figure 23.** A log-log plot of the average $q=0$ structure factor, $S_{\rm av}(0)$ and the standard deviation of the structure factor among different samples, $\delta S(0)$, for different sizes. The dashed line is a fit to the data for $S_{\rm av}(0)$ and has slope 0.64, in fairly good agreement with the theoretical expectation, obtained by integrating Eq. ([cav]), of $\phi - 1 \simeq 0.62$. The solid line is just a guide to the eye. The results are obtained by averaging over 10000 samples.
 
 ## VIII. Conclusions
 
