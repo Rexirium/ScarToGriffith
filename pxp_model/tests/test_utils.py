@@ -1,10 +1,10 @@
-"""State matching checks: python -m unittest pxp_model.test_utils."""
+"""State matching checks: python -m unittest pxp_model.tests.test_utils."""
 
 import unittest
 
 import numpy as np
 
-from .utils import max_overlap_indices
+from ..utils import max_overlap_indices
 
 
 class MaxOverlapIndicesTest(unittest.TestCase):

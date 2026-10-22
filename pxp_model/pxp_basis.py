@@ -286,6 +286,54 @@ def pxp_project_from(self, v0, full_pxp_basis, enforce_pure=False):
     return np.asarray(projector @ v0)
 
 
+# Resolve ED degeneracies using a supplied reference state.
+
+
+def resolve_degeneracies(energies, eigenvectors, reference_state, atol=1e-10):
+    """Rotate degenerate eigenvectors in place to maximize reference overlap.
+
+    Assume valid finite inputs: ascending energies, orthonormal eigenvectors
+    stored as columns of a writable float/complex array, and a nonzero
+    reference vector in the same basis. Include each complete eigenspace.
+    The reference is normalized internally without modifying the input.
+
+    Return slices of blocks with total energy spread <= atol. Each block's
+    first column maximizes reference overlap; the others are orthogonal to
+    the reference. Zero-overlap blocks and nondegenerate columns are unchanged.
+    Choose atol at eigensolver precision to avoid mixing split levels.
+    """
+    reference = np.asarray(reference_state)
+    # Prevent silent loss of the rotated vectors' imaginary components.
+    if np.isrealobj(eigenvectors):
+        if np.any(reference.imag != 0):
+            raise ValueError("A complex reference_state requires complex eigenvectors")
+        reference = reference.real
+    reference = reference / np.linalg.norm(reference)
+
+    blocks = []
+    start = 0
+    while start < len(energies):
+        stop = start + 1
+        # Compare with the first level, avoiding chains of near-degenerate gaps.
+        while stop < len(energies) and energies[stop] - energies[start] <= atol:
+            stop += 1
+        if stop - start > 1:
+            blocks.append(slice(start, stop))
+        start = stop
+    roundoff = 10 * np.finfo(eigenvectors.real.dtype).eps
+    for block in blocks:
+        coefficients = eigenvectors[:, block].conj().T @ reference
+        norm = np.linalg.norm(coefficients)
+        if norm <= roundoff:
+            continue
+        coefficients /= norm
+        # A complete QR supplies the orthonormal complement in coefficient space.
+        rotation, _ = np.linalg.qr(coefficients[:, None], mode="complete")
+        rotation[:, 0] = coefficients
+        eigenvectors[:, block] = eigenvectors[:, block] @ rotation
+    return blocks
+
+
 # Forward scattering approximation from |Z2> = |1010...>.
 
 

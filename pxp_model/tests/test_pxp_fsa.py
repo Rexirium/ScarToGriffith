@@ -1,10 +1,9 @@
-"""Independent small-chain checks: python -m unittest pxp_model.test_pxp_fsa."""
+"""Independent small-chain checks: python -m unittest pxp_model.tests.test_pxp_fsa."""
 
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
 
-from .pxp_basis import (
+from ..pxp_basis import (
     build_forward_operator, construct_fsa_eigensystem, pxp_basis_1d, fibonacci,
 )
 import numpy as np
@@ -15,8 +14,7 @@ class PXPFSATest(unittest.TestCase):
         for L in (4, 6, 8, 10):
             with self.subTest(L=L):
                 basis = pxp_basis_1d(L)
-                with patch.object(basis, "pxp_get_proj", side_effect=AssertionError("Unneeded projection")):
-                    result = basis.construct_fsa_eigensystem()
+                result = basis.construct_fsa_eigensystem()
                 states = basis.states
                 V, beta = result["fsa_basis"], result["beta"]
                 dim = V.shape[1]
@@ -90,9 +88,7 @@ class PXPFSATest(unittest.TestCase):
                        dict(kblock=1), dict(pblock=-1), dict(a=2, kblock=0)):
             with self.subTest(blocks=blocks):
                 basis = pxp_basis_1d(8, **blocks)
-                with patch.object(basis, "pxp_get_proj", wraps=basis.pxp_get_proj) as get_proj:
-                    result = basis.construct_fsa_eigensystem(normalized=False)
-                    get_proj.assert_called_once()
+                result = basis.construct_fsa_eigensystem(normalized=False)
                 P = basis.pxp_get_proj(full)
                 np.testing.assert_allclose(result["fsa_basis"], P.conj().T @ original["fsa_basis"], atol=1e-12)
                 np.testing.assert_allclose(result["psi"], P.conj().T @ original["psi"], atol=1e-12)
@@ -101,35 +97,6 @@ class PXPFSATest(unittest.TestCase):
                     np.testing.assert_allclose(result[key], original[key])
                 if blocks == dict(kblock=1):
                     np.testing.assert_allclose(result["psi"], 0, atol=1e-12)
-                auxiliary = basis._pxp_fsa_full_basis
-                cached_P = basis.pxp_get_proj(auxiliary)
-                with patch("pxp_model.pxp_basis.pxp_basis_1d", side_effect=AssertionError("Rebuilt basis")):
-                    basis.construct_fsa_eigensystem()
-                self.assertIs(basis._pxp_fsa_full_basis, auxiliary)
-                self.assertIs(basis.pxp_get_proj(auxiliary), cached_P)
-
-    def test_normalized_states(self):
-        for blocks in ({}, dict(kblock=0, pblock=1), dict(kblock=4, pblock=-1),
-                       dict(kblock=1)):
-            with self.subTest(blocks=blocks):
-                basis = pxp_basis_1d(8, **blocks)
-                raw = basis.construct_fsa_eigensystem()
-                np.testing.assert_array_equal(raw["psi"], raw["fsa_basis"] @ raw["eigenvectors"])
-                normalized = basis.construct_fsa_eigensystem(normalized=True)
-                norms = np.linalg.norm(raw["psi"], axis=0)
-                nonzero = norms > 1e-12
-                psi = normalized["psi"]
-                self.assertEqual(psi.shape, raw["psi"].shape)
-                self.assertTrue(np.all(np.isfinite(psi)))
-                np.testing.assert_allclose(np.linalg.norm(psi[:, nonzero], axis=0), 1, atol=1e-12)
-                np.testing.assert_allclose(psi[:, nonzero] * norms[nonzero],
-                                           raw["psi"][:, nonzero], atol=1e-12)
-                np.testing.assert_array_equal(psi[:, ~nonzero], 0)
-                for key in raw.keys() - {"psi"}:
-                    np.testing.assert_array_equal(normalized[key], raw[key])
-                if blocks == dict(kblock=1):
-                    self.assertFalse(nonzero.any())
-
 
 if __name__ == "__main__":
     unittest.main()

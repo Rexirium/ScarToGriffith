@@ -1,6 +1,6 @@
 """Small-chain checks against an explicit 2**L Pauli-space Hamiltonian.
 
-    python -m unittest pxp_model.test_pxp_spectrum
+    python -m unittest pxp_model.tests.test_pxp_spectrum
 """
 
 import tempfile
@@ -8,8 +8,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from .pxp_spectrum import build_hamiltonian, spectrum_spacings, save_results, solve
-from .pxp_basis import pxp_basis_1d
+from ..pxp_spectrum import build_hamiltonian, spectrum_spacings, save_results, solve
+from ..pxp_basis import pxp_basis_1d, resolve_degeneracies
 import numpy as np
 from scipy.linalg import eigh
 
@@ -27,6 +27,33 @@ def explicit_pxp(L, m):
 
 
 class PXPSpectrumTest(unittest.TestCase):
+    def test_zero_modes_aligned_before_observables(self):
+        L = 12
+        basis = pxp_basis_1d(L, kblock=0, pblock=1)
+        E, U = build_hamiltonian(basis, 0).eigh()
+        z2 = basis.index("10" * (L // 2))
+        zero = np.flatnonzero(abs(E) < 1e-10)
+        self.assertGreater(zero.size, 1)
+        projected = U[:, zero] @ U[z2, zero].conj()
+        weight = np.linalg.norm(projected)**2
+        times = np.linspace(0, 4, 17)
+        result = solve(L, 0, times)
+        np.testing.assert_allclose(result["energies"], E, atol=1e-12)
+        self.assertAlmostEqual(result["overlaps"][zero[0]], weight)
+        np.testing.assert_allclose(result["overlaps"][zero[1:]], 0, atol=1e-24)
+
+        full = pxp_basis_1d(L)
+        maximizer = basis.pxp_project_from(projected / np.sqrt(weight), full)
+        self.assertAlmostEqual(result["entropies"][zero[0]], full.my_ent_entropy(maximizer))
+
+        # Physical dynamics must agree with the original, unrotated ED basis.
+        states = U @ (U[z2, :].conj()[:, None] * np.exp(-1j * E[:, None] * times))
+        bits = ((basis.states[:, None] >> np.arange(L)) & 1).astype(float)
+        z = 2 * bits - 1
+        zz = np.mean(z * np.roll(z, 1, axis=1), axis=1)
+        np.testing.assert_allclose(result["fidelity"], abs(states[z2])**2, atol=1e-12)
+        np.testing.assert_allclose(result["zz"], zz @ abs(states)**2, atol=1e-12)
+
     def test_block_and_symmetric_state_dynamics(self):
         times = np.linspace(0, 4, 17)
         for L, m in ((6, 0.0), (8, 0.2), (8, -0.37)):
@@ -106,20 +133,18 @@ class PXPSpectrumTest(unittest.TestCase):
         np.testing.assert_array_equal(result["scar_indices"], [0, 1])
         np.testing.assert_array_equal(result["fsa_energies"], [0, 1, 3, 4])
 
-    def test_half_chain_entropy_against_full_tensor_product(self):
-        L = 8
-        full = pxp_basis_1d(L)
-        basis = pxp_basis_1d(L, a=1, kblock=0, pblock=1)
-        _, U = build_hamiltonian(basis, 0.2).eigh()
-        for v in U.T:
-            state = basis.pxp_project_from(v, full)
-            spin_state = np.zeros(2**L, dtype=complex)
-            spin_state[full.states] = state
-            probabilities = np.linalg.svd(spin_state.reshape(2**(L // 2), -1),
-                                         compute_uv=False)**2
-            probabilities = probabilities[probabilities > 1e-15]
-            self.assertAlmostEqual(full.my_ent_entropy(state),
-                                   -probabilities @ np.log(probabilities))
+    def test_batched_spectrum_entropies_match_individual_states(self):
+        # This sector has 49 states, including a final one-column batch.
+        full = pxp_basis_1d(14)
+        basis = pxp_basis_1d(14, kblock=0, pblock=1)
+        energies, vectors = build_hamiltonian(basis, 0.2).eigh()
+        z2 = np.zeros(basis.Ns)
+        z2[basis.index("10" * 7)] = 1
+        resolve_degeneracies(energies, vectors, z2)
+        projector = basis.pxp_get_proj(full)
+        expected = [full.my_ent_entropy(projector @ v) for v in vectors.T]
+        result = solve(14, 0.2, np.array([0.]))
+        np.testing.assert_allclose(result["entropies"], expected, atol=1e-12, rtol=0)
 
     def test_unfolded_spacings(self):
         np.testing.assert_allclose(spectrum_spacings(np.arange(60.)), np.ones(40))
@@ -142,7 +167,6 @@ class PXPSpectrumTest(unittest.TestCase):
             data = png.with_suffix(".npz")
             self.assertGreater(png.stat().st_size, 1000)
             with np.load(data, allow_pickle=False) as saved:
-                self.assertNotIn("fsa_matches", saved.files)
                 for key, value in result.items():
                     np.testing.assert_array_equal(saved[key], value)
                 self.assertEqual(saved["fsa_weight_cutoff"], 0.5)

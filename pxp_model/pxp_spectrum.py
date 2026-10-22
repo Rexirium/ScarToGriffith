@@ -14,6 +14,9 @@ Translation is by ONE site (a=1). Only the (k=0, reflection=+1) sector
 is diagonalized, with reflection i -> L-1-i. The normalized initial state
 is |Z2,+> = (|1010...> + |0101...>)/sqrt(2). All overlaps, correlations
 and return probabilities refer to this symmetric state within this sector.
+After ED, degenerate eigenspaces are rotated to concentrate their |Z2,+>
+overlap in the first state (energy tolerance 1e-10). All subsequent
+calculations use these rotated eigenvectors.
 Entropy is the half-chain von Neumann entropy, using natural logarithms.
 Of the L+1 FSA eigenstates constructed at the same m, retain only
 those with projection weight > 1/2 in this sector, then normalize them.
@@ -50,10 +53,10 @@ import numpy as np
 from quspin.operators import hamiltonian
 
 if __package__:
-    from .pxp_basis import fibonacci, pxp_basis_1d
+    from .pxp_basis import fibonacci, pxp_basis_1d, resolve_degeneracies
     from .utils import max_overlap_indices, unfolded_spacings
 else:
-    from pxp_basis import fibonacci, pxp_basis_1d
+    from pxp_basis import fibonacci, pxp_basis_1d, resolve_degeneracies
     from utils import max_overlap_indices, unfolded_spacings
 
 
@@ -98,6 +101,7 @@ def solve(L=20, m=0.2, times=None):
         raise ValueError("L must be an even integer between 4 and 32")
     if not np.isfinite(m):
         raise ValueError("m must be finite")
+
     if times is None:
         times = np.linspace(0.0, 100.0, 1001)
     times = np.asarray(times, dtype=float)
@@ -105,6 +109,7 @@ def solve(L=20, m=0.2, times=None):
             or np.any(times < 0) or np.any(np.diff(times) <= 0)):
         raise ValueError("times must be a nonempty, finite, increasing array with t >= 0")
 
+    # Build the constrained bases once for ED, FSA and entropy calculations.
     full_basis = pxp_basis_1d(L)
     assert full_basis.Ns == fibonacci(L - 1) + fibonacci(L + 1)
     basis = pxp_basis_1d(L, a=1, kblock=0, pblock=1)
@@ -114,12 +119,21 @@ def solve(L=20, m=0.2, times=None):
         f"dense H + eigenvectors >= {16 * dim**2 / 2**20:.1f} MiB",
         flush=True,
     )
+
     H = build_hamiltonian(basis, m)
     E, U = H.eigh()
+
+    # This representative denotes the normalized |Z2,+> in this sector.
+    z2_index = basis.index("10" * (L // 2))
+    z2_plus = np.zeros(dim)
+    z2_plus[z2_index] = 1.0
+    resolve_degeneracies(E, U, z2_plus)
+
     residual = np.max(np.linalg.norm(H.dot(U) - U * E, axis=0))
     if residual > 1e-9 * max(1.0, np.max(np.abs(E))):
         raise RuntimeError(f"Eigenpair residual too large: {residual:g}")
 
+    # Project and normalize the retained FSA states before matching them to ED.
     basis._pxp_fsa_full_basis = full_basis
     fsa = basis.construct_fsa_eigensystem(normalized=False, m=m)
     fsa_projection_weights = np.sum(np.abs(fsa["psi"])**2, axis=0)
@@ -127,30 +141,37 @@ def solve(L=20, m=0.2, times=None):
     psi_fsa = fsa["psi"][:, valid_fsa] / np.sqrt(fsa_projection_weights[valid_fsa])
     scar_indices = np.unique(max_overlap_indices(psi_fsa, U))
 
-    # This representative denotes the normalized symmetric cat in this block.
-    z2_index = basis.index("10" * (L // 2))
     fsa_overlaps = np.abs(psi_fsa[z2_index, :])**2
     coefficients = U[z2_index, :].conj()
     cat_overlaps = np.abs(coefficients)**2
+
+    # Reuse the entropy buffer within small batches. Limit projected states
+    # to 16 MiB per batch, unless a single vector already exceeds that size.
+    projector = basis.pxp_get_proj(full_basis)
     entropies = np.empty(dim)
-    # Lift one eigenvector at a time, avoiding a full_dim x dim allocation.
-    for n in range(dim):
-        state = basis.pxp_project_from(U[:, n], full_basis, enforce_pure=True)
-        entropies[n] = full_basis.my_ent_entropy(state)
+    batch_size = max(1, min(16, (16 * 2**20) // (full_basis.Ns * U.dtype.itemsize)))
+    for start in range(0, dim, batch_size):
+        block = slice(start, start + batch_size)
+        states = projector @ U[:, block]
+        entropies[block] = full_basis.my_ent_entropy(states, enforce_pure=True)
+        del states
 
     # ZZ averaged over all bonds is diagonal and invariant under both maps.
     bits = ((basis.states[:, None] >> np.arange(L)) & 1).astype(float)
     z = 2 * bits - 1
     zz_diagonal = np.mean(z * np.roll(z, 1, axis=1), axis=1)
-    return_amplitude = np.empty(times.size, dtype=complex)
+    fidelity_t = np.empty(times.size)
     zz_t = np.empty(times.size)
+
     # Keep memory bounded when many time points are requested.
     for start in range(0, times.size, 128):
         block = slice(start, start + 128)
         phases = np.exp(-1j * E[:, None] * times[block])
         states_t = U @ (coefficients[:, None] * phases)
-        zz_t[block] = zz_diagonal @ np.abs(states_t)**2
-        return_amplitude[block] = cat_overlaps @ phases
+        probabilities = np.abs(states_t)**2
+        zz_t[block] = zz_diagonal @ probabilities
+        # |Z2,+> is one basis vector, so its population is the return probability.
+        fidelity_t[block] = probabilities[z2_index]
 
     spacings = spectrum_spacings(E)
     print(
@@ -163,7 +184,7 @@ def solve(L=20, m=0.2, times=None):
         energies=E, overlaps=cat_overlaps, entropies=entropies,
         spacings=spacings, scar_indices=scar_indices,
         fsa_energies=fsa["energies"][valid_fsa], fsa_overlaps=fsa_overlaps,
-        zz=zz_t, fidelity=np.abs(return_amplitude)**2,
+        zz=zz_t, fidelity=fidelity_t,
         fsa_projection_weights=fsa_projection_weights,
     )
 
@@ -195,6 +216,7 @@ def save_results(result, output_dir):
         statistics = fig.add_subplot(grid[0, 1])
         correlation = fig.add_subplot(grid[1, :])
         fidelity = fig.add_subplot(grid[2, :], sharex=correlation)
+
         weights = result["overlaps"]
         scars = result["scar_indices"]
         background = weights > 1e-15
@@ -217,12 +239,17 @@ def save_results(result, output_dir):
             color="red", marker="x", s=40, linewidths=1.2,
             label="FSA eigenstates", zorder=4,
         )
+
         spacings = result["spacings"]
         if spacings.size:
             statistics.hist(
                 spacings, bins=30, density=True,
                 histtype="stepfilled", alpha=0.7,
             )
+        else:
+            statistics.text(0.5, 0.5, "Too few nondegenerate levels", ha="center",
+                            transform=statistics.transAxes)
+
         spectrum.axvline(0, color="0.5", linestyle="--", lw=1, label=r"$E_{\mathbb{Z}_2^{+}}=0$")
         spectrum.set(
             xlabel=r"$E_n$", ylabel=r"$|\langle \mathbb{Z}_2^{+}|E_n\rangle|^2$",
@@ -230,6 +257,7 @@ def save_results(result, output_dir):
         )
         spectrum.legend()
         fig.colorbar(points, ax=spectrum, pad=0.02, label=r"$S_{L/2}$ (nats)")
+
         statistics.set(
             xlabel=r"$s$", ylabel=r"$P(s)$",
         )
@@ -239,14 +267,13 @@ def save_results(result, output_dir):
             ha="right", va="top", transform=statistics.transAxes,
         )
         statistics.set_ylim(top=statistics.get_ylim()[1] * 1.15)
-        if not spacings.size:
-            statistics.text(0.5, 0.5, "Too few nondegenerate levels", ha="center",
-                            transform=statistics.transAxes)
+
         correlation.plot(result["times"], result["zz"])
         correlation.set(ylabel=r"$\langle Z_i Z_{i+1}\rangle_t$", ylim=(-1.05, 1.05))
         correlation.tick_params(labelbottom=False)
         fidelity.plot(result["times"], result["fidelity"])
         fidelity.set(xlabel=r"$t$", ylabel=r"$|\langle \mathbb{Z}_2^{+}|\psi(t)\rangle|^2$", ylim=(-0.02, 1.02))
+
         fig.suptitle(
             rf"$H=\sum_i P_{{i-1}}X_iP_{{i+1}}-m\sum_i Z_i$"
             f"\nPBC, L={L}, m={m:g}, a=1; "

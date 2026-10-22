@@ -49,10 +49,18 @@ def my_ent_entropy(self, psi, cut=None, enforce_pure=False):
     if not enforce_pure and psi.shape == (self.Ns, self.Ns):
         # Partial trace over the right subsystem:
         # rho_left[l, l'] = sum_r rho[(l, r), (l', r)].
-        reduced = np.zeros((n_left, n_left), dtype=psi.dtype)
-        for right in range(n_right):
-            indices = np.flatnonzero(r_idx == right)
-            left_indices = l_idx[indices]
+        key = self.N // 2 if cut is None else cut
+        cache = getattr(self, "_ent_entropy_right_groups", {})
+        groups = cache.get(key)
+        if groups is None:
+            groups = []
+            for right in range(n_right):
+                indices = np.flatnonzero(r_idx == right)
+                groups.append((indices, l_idx[indices]))
+            cache[key] = groups
+            self._ent_entropy_right_groups = cache
+        reduced = np.zeros((n_left, n_left), dtype=psi.dtype, order="F")
+        for indices, left_indices in groups:
             reduced[np.ix_(left_indices, left_indices)] += psi[
                 np.ix_(indices, indices)
             ]
@@ -73,7 +81,7 @@ def my_ent_entropy(self, psi, cut=None, enforce_pure=False):
         )
 
     entropies = np.empty(states.shape[1], dtype=np.float64)
-    mat = np.zeros((n_left, n_right), dtype=psi.dtype, order="F")
+    mat = np.empty((n_left, n_right), dtype=psi.dtype, order="F")
     for j, state in enumerate(states.T):
         # Arrange each state's amplitudes as a bipartite coefficient matrix.
         # Its squared singular values are the eigenvalues of the reduced
@@ -186,8 +194,13 @@ def ops_ent_entropy(self, rho, cut=None):
     operator_state = np.zeros((n_rows, n_cols), dtype=rho.dtype, order="F")
     row_offsets = l_idx * n_left + n_rows * r_idx * n_right
     column_offsets = l_idx + n_rows * r_idx
-    destination = row_offsets[:, None] + column_offsets[None, :]
-    operator_state.ravel(order="F")[destination] = rho
+    flat = operator_state.ravel(order="F")
+    # Bound temporary indices to 128 rows instead of an Ns-by-Ns array.
+    for start in range(0, self.Ns, 128):
+        block = slice(start, start + 128)
+        destination = row_offsets[block, None] + column_offsets[None, :]
+        flat[destination] = rho[block]
+        del destination
 
     if n_rows <= n_cols:
         gram = operator_state @ operator_state.conj().T

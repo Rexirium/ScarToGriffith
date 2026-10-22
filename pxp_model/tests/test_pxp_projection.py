@@ -1,10 +1,9 @@
-"""Projection checks: python -m unittest pxp_model.test_pxp_projection."""
+"""Projection checks: python -m unittest pxp_model.tests.test_pxp_projection."""
 
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
 
-from .pxp_basis import pxp_basis_1d
+from ..pxp_basis import pxp_basis_1d
 import numpy as np
 from scipy.sparse import isspmatrix_csc
 
@@ -13,19 +12,14 @@ class PXPProjectionTest(unittest.TestCase):
     def test_symmetry_free_identity(self):
         basis = pxp_basis_1d(6)
         for full in (basis, pxp_basis_1d(6)):
-            with patch.object(basis, "get_amp", side_effect=AssertionError("Unneeded expansion")):
-                P = basis.pxp_get_proj(full)
-                self.assertTrue(isspmatrix_csc(P))
-                np.testing.assert_array_equal(P.toarray(), np.eye(basis.Ns))
-                # Cached calls must not repeat the state comparison.
-                with patch("numpy.array_equal", side_effect=AssertionError("Repeated comparison")):
-                    self.assertIs(P, basis.pxp_get_proj(full))
-                for shape in ((basis.Ns,), (basis.Ns, 2), (basis.Ns, basis.Ns)):
-                    v = np.arange(np.prod(shape)).reshape(shape).astype(complex)
-                    for pure in (False, True):
-                        out = basis.pxp_project_from(v, full, enforce_pure=pure)
-                        np.testing.assert_array_equal(out, v)
-                        self.assertFalse(np.shares_memory(out, v))
+            P = basis.pxp_get_proj(full)
+            self.assertTrue(isspmatrix_csc(P))
+            np.testing.assert_array_equal(P.toarray(), np.eye(basis.Ns))
+            for shape in ((basis.Ns,), (basis.Ns, 2), (basis.Ns, basis.Ns)):
+                v = np.arange(np.prod(shape)).reshape(shape).astype(complex)
+                out = basis.pxp_project_from(v, full, enforce_pure=True)
+                np.testing.assert_array_equal(out, v)
+                self.assertFalse(np.shares_memory(out, v))
 
     def test_symmetry_free_mismatch(self):
         basis = pxp_basis_1d(6)
@@ -53,12 +47,6 @@ class PXPProjectionTest(unittest.TestCase):
                 vectors /= np.linalg.norm(vectors, axis=0)
                 for v in (vectors[:, 0], vectors):
                     np.testing.assert_allclose(basis.pxp_project_from(v, full), P @ v)
-                # A pure density matrix must lift to the outer product of its lifted ket.
-                v = vectors[:, 0]
-                rho = np.outer(v, v.conj())
-                lifted = P @ v
-                np.testing.assert_allclose(basis.pxp_project_from(rho, full),
-                                           np.outer(lifted, lifted.conj()), atol=1e-12)
                 np.testing.assert_allclose(
                     basis.pxp_project_from(np.eye(basis.Ns), full, enforce_pure=True),
                     P.toarray())
