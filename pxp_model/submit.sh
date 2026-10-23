@@ -6,7 +6,6 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=56
-#SBATCH --mem=128G
 #SBATCH --time=7200
 #SBATCH --chdir=/lustre/home/2501110202/work/ScarToGriffith
 #SBATCH --output=pxp_scan.%j.out
