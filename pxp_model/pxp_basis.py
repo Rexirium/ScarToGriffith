@@ -362,9 +362,11 @@ def construct_fsa_eigensystem(self, m=0, normalized=False):
     is True, psi columns with norm > 1e-12 are normalized; smaller
     columns are set to zero and retained to preserve eigenstate indexing.
     If False (default), psi retains the raw projection amplitudes.
-    fsa_basis is never rescaled.
-    The auxiliary symmetry-free basis and its projector are reused on later
-    calls; as with pxp_get_proj, the bases must remain unchanged.
+    fsa_basis is never rescaled. The forward recurrence, its projection and
+    field coefficients are cached on self, as are the auxiliary symmetry-free
+    basis and projector. The bases must remain unchanged, as with pxp_get_proj.
+    Returned fsa_basis and beta share read-only cached arrays; copy before
+    modifying them. Each call recomputes the m-dependent eigenpairs and psi.
 
     V[:, n] = |n> follows self.states after projection; beta[n] = ||H+|n>||.
     H+ lowers occupied even sites and raises empty odd sites. H_fsa has
@@ -386,40 +388,47 @@ def construct_fsa_eigensystem(self, m=0, normalized=False):
         raise ValueError("L must be an even integer between 4 and 32")
     if not np.isfinite(m):
         raise ValueError("m must be finite")
-    if getattr(self, "blocks", {}):
-        full_basis = getattr(self, "_pxp_fsa_full_basis", None)
-        if full_basis is None:
-            full_basis = pxp_basis_1d(L)
-            self._pxp_fsa_full_basis = full_basis
-    else:
-        full_basis = self
-    forward = build_forward_operator(full_basis)
-    # X +/- iY is real in this product basis; keep the large arrays real.
-    forward = hamiltonian([forward.tocsr().real], [], dtype=np.float64)
-    V = np.zeros((full_basis.Ns, L + 1))
-    V[full_basis.index("10" * (L // 2)), 0] = 1.0
-    beta = []
-    for n in range(L):
-        next_vector = forward.dot(V[:, n])
-        norm = np.linalg.norm(next_vector)
-        if not np.isfinite(norm) or norm == 0:
-            raise RuntimeError(f"FSA recurrence broke down at n={n}")
-        beta.append(norm)
-        V[:, n + 1] = next_vector / norm
+    cached = getattr(self, "_pxp_fsa_cache", None)
+    if cached is None:
+        if getattr(self, "blocks", {}):
+            full_basis = getattr(self, "_pxp_fsa_full_basis", None)
+            if full_basis is None:
+                full_basis = pxp_basis_1d(L)
+                self._pxp_fsa_full_basis = full_basis
+        else:
+            full_basis = self
+        forward = build_forward_operator(full_basis)
+        # X +/- iY is real in this product basis; keep the large arrays real.
+        forward = hamiltonian([forward.tocsr().real], [], dtype=np.float64)
+        V = np.zeros((full_basis.Ns, L + 1))
+        V[full_basis.index("10" * (L // 2)), 0] = 1.0
+        beta = np.empty(L)
+        for n in range(L):
+            next_vector = forward.dot(V[:, n])
+            norm = np.linalg.norm(next_vector)
+            if not np.isfinite(norm) or norm == 0:
+                raise RuntimeError(f"FSA recurrence broke down at n={n}")
+            beta[n] = norm
+            V[:, n + 1] = next_vector / norm
 
-    beta = np.asarray(beta)
-    H_fsa = np.diag(beta, 1) + np.diag(beta, -1)
-    if m != 0:
         magnetization = np.fromiter(
             (2 * int(s).bit_count() - L for s in full_basis.states),
             dtype=np.float64, count=full_basis.Ns,
         )
-        H_fsa += np.diag(-m * np.einsum("ij,i,ij->j", V, magnetization, V))
+        # These expectations belong to the unprojected, orthonormal FSA basis.
+        field_diagonal = np.einsum("ij,i,ij->j", V, magnetization, V)
+        if full_basis is not self:
+            V = self.pxp_get_proj(full_basis).conj().T @ V
+        for array in (V, beta, field_diagonal):
+            array.setflags(write=False)
+        cached = self._pxp_fsa_cache = (V, beta, field_diagonal)
+
+    V, beta, field_diagonal = cached
+    H_fsa = np.diag(beta, 1) + np.diag(beta, -1)
+    H_fsa[np.diag_indices(L + 1)] = -m * field_diagonal
 
     effective = hamiltonian([H_fsa], [], dtype=np.float64)
     energies, eigenvectors = effective.eigh()
-    if full_basis is not self:
-        V = self.pxp_get_proj(full_basis).conj().T @ V
     psi = V @ eigenvectors
     if normalized:
         norms = np.linalg.norm(psi, axis=0)

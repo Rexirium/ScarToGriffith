@@ -5,22 +5,28 @@
 
 The default sizes are 16, 18, ..., 28. Each spawned process scans one L
 and writes its own NPZ; m points remain sequential for scar tracking.
+Each L reuses its two Hilbert-space bases, projector, operators, entropy
+partition and m-independent FSA recurrence throughout the scan.
 --threads sets OpenMP/BLAS thread limits before the child imports NumPy.
 Allocate at least workers * threads CPUs on a single node.
 
 Uses the Pauli conventions of pxp_spectrum.py and
-.knowledge/models/rydberg-pxp/MODEL.md. At m=0, resolve degeneracies
+.knowledge/models/rydberg-pxp/MODEL.md. At every m, resolve degeneracies
 against |Z2,+> and match normalized FSA projections of weight > 1/2.
-Subsequent points use independent maximum-overlap matches to the previous
-scars, without rotating degenerate eigenspaces. scar_indices are zero-based
-indices into ascending energies; their order follows the initial scars,
-and repeated matches are retained (no one-to-one assignment).
+matched_scar_indices follows the retained FSA states in ascending FSA energy.
+tracked_scar_indices starts with the unique m=0 matches and follows independent
+maximum-overlap matches to the previous scars at subsequent points.
+Both contain zero-based indices into ascending ED energies; repeated matches
+are retained (no one-to-one assignment).
 
-One pxp_scan_L=<L>.npz contains L, ms, times, energies, scar_indices,
+One pxp_scan_L=<L>.npz contains L, ms, times, energies,
+matched_scar_indices, tracked_scar_indices, fsa_energies,
+fsa_overlaps = |<FSA|Z2,+>|**2 (after projection and normalization),
 z1_expectations, overlaps = |<E_n|Z2,+>|**2, entropies (half-chain,
 natural log), and z1_t. All observables have m as their first axis:
-spectrum arrays are (11, dim), scar_indices is (11, n_scars), and
-z1_t is (11, len(times)). L and times are stored only once.
+spectrum arrays are (11, dim), matched_scar_indices and FSA arrays are
+(11, n_fsa), tracked_scar_indices is (11, n_initial_scars), and z1_t is
+(11, len(times)). L and times are stored only once.
 Default times are [0] followed by np.geomspace(0.1, 1e6, 1001).
 Evolution is exp(-i H t) from t=0, with hbar=1.
 """
@@ -74,17 +80,20 @@ def scan(L, times=None):
     for m in np.linspace(0.0, 1.0, 11):
         H = H0 - m * field
         E, U = H.eigh()
+        resolve_degeneracies(E, U, z2_plus)
+        fsa = basis.construct_fsa_eigensystem(normalized=False, m=m)
+        weights = np.sum(np.abs(fsa["psi"])**2, axis=0)
+        valid = weights > FSA_WEIGHT_CUTOFF
+        psi_fsa = fsa["psi"][:, valid] / np.sqrt(weights[valid])
+        matched_scar_indices = max_overlap_indices(psi_fsa, U)
+        fsa_energies = fsa["energies"][valid]
+        fsa_overlaps = np.abs(psi_fsa[z2_index, :])**2
+        del fsa, psi_fsa
         if m == 0:
-            resolve_degeneracies(E, U, z2_plus)
-            fsa = basis.construct_fsa_eigensystem(normalized=False, m=0)
-            weights = np.sum(np.abs(fsa["psi"])**2, axis=0)
-            valid = weights > FSA_WEIGHT_CUTOFF
-            psi_fsa = fsa["psi"][:, valid] / np.sqrt(weights[valid])
-            scar_indices = np.unique(max_overlap_indices(psi_fsa, U))
-            del fsa, psi_fsa
+            tracked_scar_indices = np.unique(matched_scar_indices)
         else:
-            scar_indices = max_overlap_indices(previous_scars, U)
-        previous_scars = U[:, scar_indices]
+            tracked_scar_indices = max_overlap_indices(previous_scars, U)
+        previous_scars = U[:, tracked_scar_indices]
         entropies = np.empty(dim)
         z1_expectations = np.empty(dim)
         residual = 0.0
@@ -102,8 +111,11 @@ def scan(L, times=None):
             block = slice(start, start + 128)
             states_t = U @ (coefficients[:, None] * np.exp(-1j * E[:, None] * times[block]))
             z1_t[block] = z1_diagonal @ np.abs(states_t)**2
-        print(f"L={L}, m={m:g}: scars={scar_indices.tolist()}, max residual={residual:.2e}", flush=True)
-        yield dict(L=L, m=m, times=times, energies=E, scar_indices=scar_indices,
+        print(f"L={L}, m={m:g}: matched={matched_scar_indices.tolist()}, "
+              f"tracked={tracked_scar_indices.tolist()}, max residual={residual:.2e}", flush=True)
+        yield dict(L=L, m=m, times=times, energies=E,
+                   matched_scar_indices=matched_scar_indices, tracked_scar_indices=tracked_scar_indices,
+                   fsa_energies=fsa_energies, fsa_overlaps=fsa_overlaps,
                    z1_expectations=z1_expectations, overlaps=np.abs(coefficients)**2,
                    entropies=entropies, z1_t=z1_t)
         del U, vectors, states_t, coefficients, H
@@ -118,12 +130,14 @@ def save_results(results, output_dir):
     if any(r["L"] != L or not np.array_equal(r["times"], times) for r in results):
         raise ValueError("all results must have the same L and times")
     arrays = {key: np.stack([r[key] for r in results]) for key in
-              ("energies", "scar_indices", "z1_expectations", "overlaps", "entropies", "z1_t")}
+              ("energies", "matched_scar_indices", "tracked_scar_indices", "fsa_energies",
+               "fsa_overlaps", "z1_expectations", "overlaps", "entropies", "z1_t")}
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / f"pxp_scan_L={L}.npz"
     np.savez_compressed(path, L=L, ms=np.array([r["m"] for r in results]), times=times,
                         **arrays, kblock=0, parity=1, initial_state="Z2_plus",
+                        fsa_weight_cutoff=FSA_WEIGHT_CUTOFF,
                         entropy_cut=L // 2, entropy_log_base="e")
     return path
 

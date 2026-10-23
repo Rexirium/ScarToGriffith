@@ -2,7 +2,9 @@
 
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
+from .. import pxp_basis
 from ..pxp_basis import (
     build_forward_operator, construct_fsa_eigensystem, pxp_basis_1d, fibonacci,
 )
@@ -10,6 +12,39 @@ import numpy as np
 
 
 class PXPFSATest(unittest.TestCase):
+    def test_reuse_across_fields_and_normalization(self):
+        for blocks in ({}, dict(kblock=0, pblock=1), dict(kblock=1)):
+            with self.subTest(blocks=blocks):
+                basis = pxp_basis_1d(8, **blocks)
+                first = basis.construct_fsa_eigensystem(m=0.3)
+                with patch.object(pxp_basis, "build_forward_operator") as forward, \
+                     patch.object(pxp_basis, "pxp_basis_1d") as make_basis:
+                    raw = basis.construct_fsa_eigensystem(m=-0.2)
+                    normalized = basis.construct_fsa_eigensystem(m=-0.2, normalized=True)
+                    zero = basis.construct_fsa_eigensystem(m=0)
+                forward.assert_not_called()
+                make_basis.assert_not_called()
+                self.assertIs(raw["fsa_basis"], first["fsa_basis"])
+                self.assertIs(raw["beta"], first["beta"])
+                self.assertFalse(raw["fsa_basis"].flags.writeable)
+                self.assertFalse(raw["beta"].flags.writeable)
+                fresh = pxp_basis_1d(8, **blocks).construct_fsa_eigensystem(m=-0.2)
+                for key in raw:
+                    np.testing.assert_allclose(raw[key], fresh[key], atol=1e-12)
+                norms = np.linalg.norm(raw["psi"], axis=0)
+                expected = raw["psi"].copy()
+                nonzero = norms > 1e-12
+                expected[:, nonzero] /= norms[nonzero]
+                expected[:, ~nonzero] = 0
+                np.testing.assert_allclose(normalized["psi"], expected, atol=1e-12)
+                np.testing.assert_array_equal(np.diag(zero["H_fsa"]), 0)
+                # Mutating per-call outputs must not poison later cached solves.
+                raw["H_fsa"][:] = 0
+                raw["psi"][:] = 0
+                again = basis.construct_fsa_eigensystem(m=-0.2)
+                np.testing.assert_allclose(again["H_fsa"], fresh["H_fsa"], atol=1e-12)
+                np.testing.assert_allclose(again["psi"], fresh["psi"], atol=1e-12)
+
     def test_against_explicit_spin_flips(self):
         for L in (4, 6, 8, 10):
             with self.subTest(L=L):

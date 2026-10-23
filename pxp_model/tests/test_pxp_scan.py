@@ -9,7 +9,7 @@ import subprocess
 import sys
 from unittest.mock import patch
 
-from .. import pxp_scan
+from .. import pxp_basis, pxp_scan
 from ..pxp_basis import pxp_basis_1d, resolve_degeneracies
 from ..pxp_spectrum import build_hamiltonian, solve
 from .test_pxp_spectrum import explicit_pxp
@@ -48,7 +48,8 @@ class PXPScanTest(unittest.TestCase):
             for L in (4, 6):
                 with np.load(Path(directory) / f"pxp_scan_L={L}.npz", allow_pickle=False) as saved:
                     for i, result in enumerate(pxp_scan.scan(L)):
-                        for key in ("energies", "scar_indices", "z1_expectations", "overlaps", "entropies", "z1_t"):
+                        for key in ("energies", "matched_scar_indices", "tracked_scar_indices",
+                                    "fsa_energies", "fsa_overlaps", "z1_expectations", "overlaps", "entropies", "z1_t"):
                             np.testing.assert_allclose(saved[key][i], result[key], atol=1e-8, rtol=1e-10)
 
     def test_tracking_and_reuse(self):
@@ -58,28 +59,58 @@ class PXPScanTest(unittest.TestCase):
         basis = pxp_basis_1d(L, kblock=0, pblock=1)
         construct = type(basis).construct_fsa_eigensystem
         with patch.object(pxp_scan, "pxp_basis_1d", wraps=pxp_basis_1d) as make_basis, \
+             patch.object(pxp_basis, "pxp_basis_1d", wraps=pxp_basis_1d) as extra_basis, \
+             patch.object(pxp_basis, "build_forward_operator", wraps=pxp_basis.build_forward_operator) as forward, \
              patch.object(pxp_scan, "resolve_degeneracies", wraps=resolve_degeneracies) as rotate, \
              patch.object(type(basis), "construct_fsa_eigensystem", autospec=True, side_effect=construct) as fsa:
             results = list(pxp_scan.scan(L, times))
         self.assertEqual(make_basis.call_count, 2)
-        self.assertEqual(rotate.call_count, 1)
-        self.assertEqual(fsa.call_count, 1)
-        for key in ("energies", "overlaps", "entropies", "scar_indices"):
+        extra_basis.assert_not_called()
+        forward.assert_called_once()
+        self.assertEqual(rotate.call_count, 11)
+        self.assertEqual(fsa.call_count, 11)
+        np.testing.assert_array_equal([call.kwargs["m"] for call in fsa.call_args_list], np.linspace(0, 1, 11))
+        for key in ("energies", "overlaps", "entropies", "fsa_energies", "fsa_overlaps"):
             np.testing.assert_allclose(results[0][key], baseline[key], atol=1e-12)
         z2 = np.zeros(basis.Ns)
         z2[basis.index("10" * (L // 2))] = 1
+        for call in rotate.call_args_list:
+            np.testing.assert_array_equal(call.args[2], z2)
         previous = None
         for result in results:
             E, U = build_hamiltonian(basis, result["m"]).eigh()
+            resolve_degeneracies(E, U, z2)
             if previous is None:
-                resolve_degeneracies(E, U, z2)
                 indices = baseline["scar_indices"]
             else:
                 indices = np.argmax(abs(U.T @ previous)**2, axis=0)
-            np.testing.assert_array_equal(result["scar_indices"], indices)
+            np.testing.assert_array_equal(result["tracked_scar_indices"], indices)
             np.testing.assert_allclose(result["energies"], E, atol=1e-12)
             np.testing.assert_allclose(result["overlaps"], abs(z2 @ U)**2, atol=1e-12)
+            single = solve(L, result["m"], times)
+            np.testing.assert_array_equal(np.unique(result["matched_scar_indices"]), single["scar_indices"])
+            for key in ("fsa_energies", "fsa_overlaps"):
+                np.testing.assert_allclose(result[key], single[key], atol=1e-12)
             previous = U[:, indices]
+
+    def test_fsa_matching_preserves_order_and_duplicates(self):
+        basis = pxp_basis_1d(6, kblock=0, pblock=1)
+        E, U = build_hamiltonian(basis, 0).eigh()
+        z2_index = basis.index("10" * 3)
+        z2 = np.eye(basis.Ns)[:, z2_index]
+        resolve_degeneracies(E, U, z2)
+        # Exclude low-weight projections; keep repeated matches in FSA order.
+        psi = np.column_stack([
+            0.9 * U[:, 2], U[:, 0], 0.1 * U[:, 1],
+            0.8 * U[:, 2], U[:, 1], 0.7 * U[:, 1], np.zeros(basis.Ns),
+        ])
+        with patch.object(type(basis), "construct_fsa_eigensystem",
+                          return_value=dict(psi=psi, energies=np.arange(7.))):
+            result = next(pxp_scan.scan(6, [0.]))
+        np.testing.assert_array_equal(result["matched_scar_indices"], [2, 0, 2, 1])
+        np.testing.assert_array_equal(result["tracked_scar_indices"], [0, 1, 2])
+        np.testing.assert_array_equal(result["fsa_energies"], [0, 1, 3, 4])
+        np.testing.assert_allclose(result["fsa_overlaps"], abs(U[z2_index, [2, 0, 2, 1]])**2, atol=1e-12)
 
     def test_local_observables_against_full_spin_space(self):
         L = 8
@@ -94,8 +125,7 @@ class PXPScanTest(unittest.TestCase):
         for result in pxp_scan.scan(L, times):
             H = explicit_pxp(L, result["m"])
             E, U = build_hamiltonian(basis, result["m"]).eigh()
-            if result["m"] == 0:
-                resolve_degeneracies(E, U, P.T @ initial[full.states])
+            resolve_degeneracies(E, U, P.T @ initial[full.states])
             states = np.zeros((2**L, basis.Ns))
             states[full.states] = P @ U
             np.testing.assert_allclose(H @ states, states * E, atol=1e-12)
@@ -123,9 +153,11 @@ class PXPScanTest(unittest.TestCase):
                 np.testing.assert_array_equal(saved["times"], result["times"])
                 np.testing.assert_array_equal(saved["ms"], np.linspace(0, 1, 11))
                 for i, point in enumerate(results):
-                    for key in ("energies", "scar_indices", "z1_expectations", "overlaps", "entropies", "z1_t"):
+                    for key in ("energies", "matched_scar_indices", "tracked_scar_indices",
+                                "fsa_energies", "fsa_overlaps", "z1_expectations", "overlaps", "entropies", "z1_t"):
                         np.testing.assert_array_equal(saved[key][i], point[key])
                 self.assertEqual((saved["kblock"], saved["parity"]), (0, 1))
+                self.assertEqual(saved["fsa_weight_cutoff"], 0.5)
             with self.assertRaises(ValueError):
                 pxp_scan.save_results([], directory)
             with self.assertRaises(ValueError):
