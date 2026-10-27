@@ -49,7 +49,8 @@ class PXPScanTest(unittest.TestCase):
                 with np.load(Path(directory) / f"pxp_scan_L={L}.npz", allow_pickle=False) as saved:
                     for i, result in enumerate(pxp_scan.scan(L)):
                         for key in ("energies", "matched_scar_indices", "tracked_scar_indices",
-                                    "fsa_energies", "fsa_overlaps", "z1_expectations", "overlaps", "entropies", "z1_t"):
+                                    "fsa_energies", "fsa_overlaps", "fsa_z1_expectations",
+                                    "z1_expectations", "overlaps", "entropies", "z1_t"):
                             np.testing.assert_allclose(saved[key][i], result[key], atol=1e-8, rtol=1e-10)
 
     def test_tracking_and_reuse(self):
@@ -111,6 +112,8 @@ class PXPScanTest(unittest.TestCase):
         np.testing.assert_array_equal(result["tracked_scar_indices"], [0, 1, 2])
         np.testing.assert_array_equal(result["fsa_energies"], [0, 1, 3, 4])
         np.testing.assert_allclose(result["fsa_overlaps"], abs(U[z2_index, [2, 0, 2, 1]])**2, atol=1e-12)
+        np.testing.assert_allclose(result["fsa_z1_expectations"],
+                                   result["z1_expectations"][[2, 0, 2, 1]], atol=1e-12)
 
     def test_local_observables_against_full_spin_space(self):
         L = 8
@@ -130,6 +133,13 @@ class PXPScanTest(unittest.TestCase):
             states[full.states] = P @ U
             np.testing.assert_allclose(H @ states, states * E, atol=1e-12)
             np.testing.assert_allclose(result["z1_expectations"], z1 @ abs(states)**2, atol=1e-12)
+            fsa = basis.construct_fsa_eigensystem(m=result["m"], normalized=False)
+            weights = np.sum(abs(fsa["psi"])**2, axis=0)
+            valid = weights > pxp_scan.FSA_WEIGHT_CUTOFF
+            fsa_states = P @ fsa["psi"][:, valid]
+            fsa_states /= np.linalg.norm(fsa_states, axis=0)
+            np.testing.assert_allclose(result["fsa_z1_expectations"],
+                                       z1[full.states] @ abs(fsa_states)**2, atol=1e-12)
             entropy = []
             for state in states.T:
                 probabilities = np.linalg.svd(state.reshape(2**(L // 2), -1), compute_uv=False)**2
@@ -154,7 +164,8 @@ class PXPScanTest(unittest.TestCase):
                 np.testing.assert_array_equal(saved["ms"], np.linspace(0, 1, 11))
                 for i, point in enumerate(results):
                     for key in ("energies", "matched_scar_indices", "tracked_scar_indices",
-                                "fsa_energies", "fsa_overlaps", "z1_expectations", "overlaps", "entropies", "z1_t"):
+                                "fsa_energies", "fsa_overlaps", "fsa_z1_expectations",
+                                "z1_expectations", "overlaps", "entropies", "z1_t"):
                         np.testing.assert_array_equal(saved[key][i], point[key])
                 self.assertEqual((saved["kblock"], saved["parity"]), (0, 1))
                 self.assertEqual(saved["fsa_weight_cutoff"], 0.5)

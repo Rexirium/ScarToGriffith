@@ -22,6 +22,7 @@ are retained (no one-to-one assignment).
 One pxp_scan_L=<L>.npz contains L, ms, times, energies,
 matched_scar_indices, tracked_scar_indices, fsa_energies,
 fsa_overlaps = |<FSA|Z2,+>|**2 (after projection and normalization),
+fsa_z1_expectations = <FSA|Z_1|FSA> for the same retained, normalized states,
 z1_expectations, overlaps = |<E_n|Z2,+>|**2, entropies (half-chain,
 natural log), and z1_t. All observables have m as their first axis:
 spectrum arrays are (11, dim), matched_scar_indices and FSA arrays are
@@ -88,6 +89,7 @@ def scan(L, times=None):
         matched_scar_indices = max_overlap_indices(psi_fsa, U)
         fsa_energies = fsa["energies"][valid]
         fsa_overlaps = np.abs(psi_fsa[z2_index, :])**2
+        fsa_z1_expectations = z1_diagonal @ np.abs(psi_fsa)**2
         del fsa, psi_fsa
         if m == 0:
             tracked_scar_indices = np.unique(matched_scar_indices)
@@ -116,6 +118,7 @@ def scan(L, times=None):
         yield dict(L=L, m=m, times=times, energies=E,
                    matched_scar_indices=matched_scar_indices, tracked_scar_indices=tracked_scar_indices,
                    fsa_energies=fsa_energies, fsa_overlaps=fsa_overlaps,
+                   fsa_z1_expectations=fsa_z1_expectations,
                    z1_expectations=z1_expectations, overlaps=np.abs(coefficients)**2,
                    entropies=entropies, z1_t=z1_t)
         del U, vectors, states_t, coefficients, H
@@ -131,7 +134,7 @@ def save_results(results, output_dir):
         raise ValueError("all results must have the same L and times")
     arrays = {key: np.stack([r[key] for r in results]) for key in
               ("energies", "matched_scar_indices", "tracked_scar_indices", "fsa_energies",
-               "fsa_overlaps", "z1_expectations", "overlaps", "entropies", "z1_t")}
+               "fsa_overlaps", "fsa_z1_expectations", "z1_expectations", "overlaps", "entropies", "z1_t")}
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / f"pxp_scan_L={L}.npz"
