@@ -51,6 +51,10 @@ class PXPScanTest(unittest.TestCase):
             pool.submit.side_effect = completed
             pxp_scan.main()
             self.assertEqual([call.args[1] for call in pool.submit.call_args_list], list(range(16, 29, 2)))
+            output_dirs = [call.args[2] for call in pool.submit.call_args_list]
+            self.assertEqual(len(set(output_dirs)), 1)
+            self.assertEqual(output_dirs[0].parent, Path(pxp_scan.__file__).resolve().parent / "data")
+            self.assertRegex(output_dirs[0].name, r"^\d{8}_\d{6}$")
             self.assertEqual(executor.call_args.kwargs["max_workers"], 7)
             self.assertEqual(executor.call_args.kwargs["mp_context"].get_start_method(), "spawn")
             for name in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "BLIS_NUM_THREADS"):
@@ -65,9 +69,12 @@ class PXPScanTest(unittest.TestCase):
                 capture_output=True, text=True, timeout=90,
             )
             self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
-            self.assertEqual(len(list(Path(directory).glob("*.npz"))), 2)
+            run_dirs = list(Path(directory).iterdir())
+            self.assertEqual(len(run_dirs), 1)
+            self.assertRegex(run_dirs[0].name, r"^\d{8}_\d{6}$")
+            self.assertEqual(len(list(run_dirs[0].glob("*.npz"))), 2)
             for L in (4, 6):
-                with np.load(Path(directory) / f"pxp_scan_L={L}.npz", allow_pickle=False) as saved:
+                with np.load(run_dirs[0] / f"pxp_scan_L={L}.npz", allow_pickle=False) as saved:
                     for i, result in enumerate(pxp_scan.scan(L)):
                         for key in ("energies", "matched_scar_indices", "tracked_scar_indices",
                                     "fsa_energies", "fsa_overlaps", "fsa_z1_expectations",

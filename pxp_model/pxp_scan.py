@@ -5,6 +5,8 @@
 
 The default sizes are 16, 18, ..., 28. Each spawned process scans one L
 and writes its own NPZ; m points remain sequential for scar tracking.
+Each invocation writes to <output-dir>/YYYYMMDD_HHMMSS (UTC+08:00),
+with one shared timestamp for all L workers.
 Each L reuses its two Hilbert-space bases, projector, operators, entropy
 partition and m-independent FSA recurrence throughout the scan.
 --threads sets OpenMP/BLAS thread limits before the child imports NumPy.
@@ -37,6 +39,7 @@ Evolution is exp(-i H t) from t=0, with hbar=1.
 
 import argparse
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from datetime import datetime, timedelta, timezone
 import multiprocessing as mp
 import os
 from pathlib import Path
@@ -205,7 +208,8 @@ def main():
                         help="even chain lengths (default: 16 18 20 22 24 26 28)")
     parser.add_argument("--workers", type=int, default=7, help="maximum concurrent sizes (default: 7)")
     parser.add_argument("--threads", type=int, default=8, help="OpenMP/BLAS threads per worker (default: 8)")
-    parser.add_argument("--output-dir", type=Path, default=Path(__file__).resolve().parent / "data")
+    parser.add_argument("--output-dir", type=Path, default=Path(__file__).resolve().parent / "data",
+                        help="parent directory for a YYYYMMDD_HHMMSS run subdirectory (UTC+08:00)")
     args = parser.parse_args()
     if any(L < 4 or L > 32 or L % 2 for L in args.L) or len(set(args.L)) != len(args.L):
         parser.error("--L must contain distinct even integers between 4 and 32")
@@ -218,9 +222,11 @@ def main():
     for name in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "BLIS_NUM_THREADS"):
         os.environ[name] = str(args.threads)
     os.environ["OMP_MAX_ACTIVE_LEVELS"] = "1"
+    output_dir = args.output_dir / datetime.now(timezone(timedelta(hours=8))).strftime("%Y%m%d_%H%M%S")
     print(f"Sizes={args.L}; workers={workers}, threads/worker={args.threads}", flush=True)
+    print(f"Output directory: {output_dir}", flush=True)
     with ProcessPoolExecutor(max_workers=workers, mp_context=mp.get_context("spawn")) as pool:
-        futures = [pool.submit(run_size, L, args.output_dir) for L in args.L]
+        futures = [pool.submit(run_size, L, output_dir) for L in args.L]
         for future in as_completed(futures):
             print(f"Saved {future.result()}", flush=True)
 
