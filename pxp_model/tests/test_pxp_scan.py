@@ -18,6 +18,27 @@ from scipy.linalg import expm
 
 
 class PXPScanTest(unittest.TestCase):
+    def test_canonical_weights_two_levels(self):
+        for shift in (0., 1e4):
+            for excitation_probability in (0.25, 0.5, 0.75):
+                with self.subTest(shift=shift, probability=excitation_probability):
+                    beta, weights = pxp_scan.canonical_weights(
+                        np.array([0., 2.]) + shift, shift + 2 * excitation_probability)
+                    expected_beta = np.log((1 - excitation_probability) / excitation_probability) / 2
+                    self.assertAlmostEqual(beta, expected_beta, places=11)
+                    np.testing.assert_allclose(weights, [1 - excitation_probability, excitation_probability],
+                                               atol=1e-12)
+        # Large beta and an energy offset would overflow/underflow raw exponentials.
+        beta, weights = pxp_scan.canonical_weights([1e4, 1e4 + 2], 1e4 + 1e-6)
+        self.assertTrue(np.isfinite(beta))
+        self.assertAlmostEqual(weights.sum(), 1.)
+        self.assertAlmostEqual(weights[1], 5e-7, delta=1e-12)
+        for energies, target in (([0., 2.], -1.), ([0., 2.], 0.), ([0., 2.], 2.),
+                                 ([1., 1.], 1.), ([], 0.), ([[0., 2.]], 1.),
+                                 ([0., np.nan], 1.), ([0., 2.], np.inf)):
+            with self.subTest(energies=energies, target=target), self.assertRaises(ValueError):
+                pxp_scan.canonical_weights(energies, target)
+
     def test_default_parallel_sizes(self):
         def completed(*args):
             future = Future()
@@ -50,7 +71,7 @@ class PXPScanTest(unittest.TestCase):
                     for i, result in enumerate(pxp_scan.scan(L)):
                         for key in ("energies", "matched_scar_indices", "tracked_scar_indices",
                                     "fsa_energies", "fsa_overlaps", "fsa_z1_expectations",
-                                    "z1_expectations", "overlaps", "entropies", "z1_t"):
+                                    "z1_expectations", "overlaps", "entropies", "z1_t", "beta_th", "z1_th"):
                             np.testing.assert_allclose(saved[key][i], result[key], atol=1e-8, rtol=1e-10)
 
     def test_tracking_and_reuse(self):
@@ -135,6 +156,17 @@ class PXPScanTest(unittest.TestCase):
             states[full.states] = P @ U
             np.testing.assert_allclose(H @ states, states * E, atol=1e-12)
             np.testing.assert_allclose(result["z1_expectations"], z1 @ abs(states)**2, atol=1e-12)
+            # Independent matrix-exponential check in the same symmetry sector.
+            H_sector = P.T @ H[np.ix_(full.states, full.states)] @ P
+            rho_sector = expm(-result["beta_th"] * H_sector)
+            rho_sector /= np.trace(rho_sector)
+            initial_energy = initial @ H @ initial
+            self.assertAlmostEqual(np.trace(rho_sector @ H_sector), initial_energy, places=10)
+            z1_sector = P.T @ (z1[full.states, None] * P)
+            self.assertAlmostEqual(result["z1_th"], np.trace(rho_sector @ z1_sector), places=11)
+            if result["m"] == 0:
+                self.assertEqual(result["beta_th"], 0.)
+                self.assertAlmostEqual(result["z1_th"], np.trace(z1_sector) / basis.Ns)
             fsa = basis.construct_fsa_eigensystem(m=result["m"], normalized=False)
             weights = np.sum(abs(fsa["psi"])**2, axis=0)
             valid = weights > pxp_scan.FSA_WEIGHT_CUTOFF
@@ -169,8 +201,10 @@ class PXPScanTest(unittest.TestCase):
                 for i, point in enumerate(results):
                     for key in ("energies", "matched_scar_indices", "tracked_scar_indices",
                                 "fsa_energies", "fsa_overlaps", "fsa_z1_expectations",
-                                "z1_expectations", "overlaps", "entropies", "z1_t"):
+                                "z1_expectations", "overlaps", "entropies", "z1_t", "beta_th", "z1_th"):
                         np.testing.assert_array_equal(saved[key][i], point[key])
+                self.assertEqual(saved["beta_th"].shape, (21,))
+                self.assertEqual(saved["z1_th"].shape, (21,))
                 self.assertEqual((saved["kblock"], saved["parity"]), (0, 1))
                 self.assertEqual(saved["fsa_weight_cutoff"], 0.5)
             with self.assertRaises(ValueError):

@@ -24,10 +24,13 @@ matched_scar_indices, tracked_scar_indices, fsa_energies,
 fsa_overlaps = |<FSA|Z2,+>|**2 (after projection and normalization),
 fsa_z1_expectations = <FSA|Z_1|FSA> for the same retained, normalized states,
 z1_expectations, overlaps = |<E_n|Z2,+>|**2, entropies (half-chain,
-natural log), and z1_t. All observables have m as their first axis:
+natural log), z1_t, beta_th, and z1_th. The thermal values use the canonical
+ensemble within k=0, p=+, matching the energy of |Z2,+> at each m.
+All observables have m as their first axis:
 spectrum arrays are (21, dim), matched_scar_indices and FSA arrays are
 (21, n_fsa), tracked_scar_indices is (21, n_initial_scars), and z1_t is
-(21, len(times)). L and times are stored only once.
+(21, len(times)); beta_th and z1_th have shape (21,).
+L and times are stored only once.
 Default times are [0] followed by np.geomspace(0.1, 1e6, 1001).
 Evolution is exp(-i H t) from t=0, with hbar=1.
 """
@@ -48,7 +51,47 @@ else:
     from utils import max_overlap_indices
 import numpy as np
 from quspin.operators import hamiltonian
+from scipy.optimize import brentq
 from scipy.sparse import diags
+
+
+def canonical_weights(energies, target_energy):
+    """Return finite beta and Gibbs weights matching a sector's mean energy.
+
+    The target must lie strictly inside a nonconstant spectrum. Spectral-edge
+    targets require infinite beta and are not part of this scan.
+    """
+    energies = np.asarray(energies, dtype=float)
+    if (energies.ndim != 1 or energies.size < 2
+            or not np.all(np.isfinite(energies)) or not np.isfinite(target_energy)):
+        raise ValueError("energies must be a finite 1D spectrum and target_energy finite")
+    low, high = energies.min(), energies.max()
+    if not low < target_energy < high:
+        raise ValueError("target_energy must lie strictly inside the spectrum")
+    width = high - low
+    scaled = (energies - target_energy) / width
+
+    def weights(x):
+        # Anchor at the favored spectral edge so all exponents are nonpositive.
+        anchor = scaled.min() if x >= 0 else scaled.max()
+        values = np.exp(-x * (scaled - anchor))
+        return values / values.sum()
+
+    def residual(x):
+        return float(weights(x) @ scaled)
+
+    at_zero = residual(0.0)
+    if abs(at_zero) <= 1e-12:
+        return 0.0, weights(0.0)
+    bound = float(np.sign(at_zero))
+    for _ in range(64):
+        if residual(bound) * at_zero <= 0:
+            break
+        bound *= 2
+    else:
+        raise RuntimeError("could not bracket the energy-matching inverse temperature")
+    x = brentq(residual, min(0.0, bound), max(0.0, bound), xtol=1e-12, rtol=1e-12)
+    return x / width, weights(x)
 
 
 def scan(L, times=None):
@@ -110,6 +153,9 @@ def scan(L, times=None):
         if residual > 1e-9 * max(1.0, np.max(np.abs(E))):
             raise RuntimeError(f"m={m:g}: eigenpair residual too large: {residual:g}")
         coefficients = U[z2_index, :].conj()
+        overlaps = np.abs(coefficients)**2
+        beta_th, thermal_weights = canonical_weights(E, overlaps @ E)
+        z1_th = float(thermal_weights @ z1_expectations)
         z1_t = np.empty(times.size)
         for start in range(0, times.size, 128):
             block = slice(start, start + 128)
@@ -121,8 +167,8 @@ def scan(L, times=None):
                    matched_scar_indices=matched_scar_indices, tracked_scar_indices=tracked_scar_indices,
                    fsa_energies=fsa_energies, fsa_overlaps=fsa_overlaps,
                    fsa_z1_expectations=fsa_z1_expectations,
-                   z1_expectations=z1_expectations, overlaps=np.abs(coefficients)**2,
-                   entropies=entropies, z1_t=z1_t)
+                   z1_expectations=z1_expectations, overlaps=overlaps,
+                   entropies=entropies, z1_t=z1_t, beta_th=beta_th, z1_th=z1_th)
         del U, vectors, states_t, coefficients, H
 
 
@@ -136,7 +182,8 @@ def save_results(results, output_dir):
         raise ValueError("all results must have the same L and times")
     arrays = {key: np.stack([r[key] for r in results]) for key in
               ("energies", "matched_scar_indices", "tracked_scar_indices", "fsa_energies",
-               "fsa_overlaps", "fsa_z1_expectations", "z1_expectations", "overlaps", "entropies", "z1_t")}
+               "fsa_overlaps", "fsa_z1_expectations", "z1_expectations", "overlaps", "entropies", "z1_t",
+               "beta_th", "z1_th")}
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / f"pxp_scan_L={L}.npz"
