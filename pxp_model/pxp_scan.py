@@ -25,9 +25,9 @@ fsa_overlaps = |<FSA|Z2,+>|**2 (after projection and normalization),
 fsa_z1_expectations = <FSA|Z_1|FSA> for the same retained, normalized states,
 z1_expectations, overlaps = |<E_n|Z2,+>|**2, entropies (half-chain,
 natural log), and z1_t. All observables have m as their first axis:
-spectrum arrays are (11, dim), matched_scar_indices and FSA arrays are
-(11, n_fsa), tracked_scar_indices is (11, n_initial_scars), and z1_t is
-(11, len(times)). L and times are stored only once.
+spectrum arrays are (21, dim), matched_scar_indices and FSA arrays are
+(21, n_fsa), tracked_scar_indices is (21, n_initial_scars), and z1_t is
+(21, len(times)). L and times are stored only once.
 Default times are [0] followed by np.geomspace(0.1, 1e6, 1001).
 Evolution is exp(-i H t) from t=0, with hbar=1.
 """
@@ -52,7 +52,7 @@ from scipy.sparse import diags
 
 
 def scan(L, times=None):
-    """Yield one result dictionary per m=0, 0.1, ..., 1, reusing bases/operators."""
+    """Scan m=0:0.05:1, replacing 0.65 with m_c=0.655, reusing bases/operators."""
     if not isinstance(L, (int, np.integer)) or L < 4 or L > 32 or L % 2:
         raise ValueError("L must be an even integer between 4 and 32")
     times = np.r_[0.0, np.geomspace(0.1, 1e6, 1001)] if times is None else np.asarray(times, dtype=float)
@@ -78,7 +78,9 @@ def scan(L, times=None):
     z2_plus[z2_index] = 1
     entropy_batch = max(1, min(16, (16 * 2**20) // (full_basis.Ns * 8)))
     previous_scars = None
-    for m in np.linspace(0.0, 1.0, 11):
+    ms = np.linspace(0.0, 1.0, 21)
+    ms[13] = 0.655  # Replace m=0.65 with m_c.
+    for m in ms:
         H = H0 - m * field
         E, U = H.eigh()
         resolve_degeneracies(E, U, z2_plus)

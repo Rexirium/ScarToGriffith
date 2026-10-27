@@ -68,9 +68,11 @@ class PXPScanTest(unittest.TestCase):
         self.assertEqual(make_basis.call_count, 2)
         extra_basis.assert_not_called()
         forward.assert_called_once()
-        self.assertEqual(rotate.call_count, 11)
-        self.assertEqual(fsa.call_count, 11)
-        np.testing.assert_array_equal([call.kwargs["m"] for call in fsa.call_args_list], np.linspace(0, 1, 11))
+        self.assertEqual(rotate.call_count, 21)
+        self.assertEqual(fsa.call_count, 21)
+        expected_ms = np.linspace(0, 1, 21)
+        expected_ms[13] = 0.655
+        np.testing.assert_array_equal([call.kwargs["m"] for call in fsa.call_args_list], expected_ms)
         for key in ("energies", "overlaps", "entropies", "fsa_energies", "fsa_overlaps"):
             np.testing.assert_allclose(results[0][key], baseline[key], atol=1e-12)
         z2 = np.zeros(basis.Ns)
@@ -161,7 +163,9 @@ class PXPScanTest(unittest.TestCase):
             with np.load(path, allow_pickle=False) as saved:
                 self.assertEqual(saved["L"], 4)
                 np.testing.assert_array_equal(saved["times"], result["times"])
-                np.testing.assert_array_equal(saved["ms"], np.linspace(0, 1, 11))
+                expected_ms = np.linspace(0, 1, 21)
+                expected_ms[13] = 0.655
+                np.testing.assert_array_equal(saved["ms"], expected_ms)
                 for i, point in enumerate(results):
                     for key in ("energies", "matched_scar_indices", "tracked_scar_indices",
                                 "fsa_energies", "fsa_overlaps", "fsa_z1_expectations",
