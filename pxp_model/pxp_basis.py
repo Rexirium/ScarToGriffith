@@ -7,7 +7,6 @@ module registers projection, entanglement and FSA methods on user_basis.
     result = basis.construct_fsa_eigensystem(m=0.2)
 """
 
-from functools import lru_cache
 from math import gcd
 
 import numpy as np
@@ -109,15 +108,6 @@ def parity(x, N, sign_ptr, args):
 
 
 # Basis construction.
-
-
-@lru_cache(maxsize=None)
-def fibonacci(n: int):
-    if n <= 0:
-        return 0
-    if n == 1:
-        return 1
-    return fibonacci(n - 2) + fibonacci(n - 1)
 
 
 def pxp_basis_1d(N: int, a: int = 1, kblock=None, pblock=None):

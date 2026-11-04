@@ -11,7 +11,7 @@ from unittest.mock import patch
 from ..pxp_spectrum import build_hamiltonian, spectrum_spacings, save_results, solve
 from ..pxp_basis import pxp_basis_1d, resolve_degeneracies
 import numpy as np
-from scipy.linalg import eigh
+from scipy.linalg import eigh, expm
 
 
 def explicit_pxp(L, m):
@@ -55,7 +55,8 @@ class PXPSpectrumTest(unittest.TestCase):
         np.testing.assert_allclose(result["zz"], zz @ abs(states)**2, atol=1e-12)
 
     def test_block_and_symmetric_state_dynamics(self):
-        times = np.linspace(0, 4, 17)
+        # Cross both batch boundaries and exercise a partial final batch.
+        times = np.linspace(0, 4, 131)
         for L, m in ((6, 0.0), (8, 0.2), (8, -0.37)):
             with self.subTest(L=L, m=m):
                 full = pxp_basis_1d(L)
@@ -92,10 +93,34 @@ class PXPSpectrumTest(unittest.TestCase):
                 result = solve(L, m, times)
                 np.testing.assert_allclose(result["fidelity"], np.abs(initial @ states)**2, atol=1e-11)
                 np.testing.assert_allclose(result["zz"], zz @ np.abs(states)**2, atol=1e-11)
+                zero_initial = np.zeros(full.Ns)
+                zero_initial[full.index("0" * L)] = 1
+                zero_states = U @ (
+                    (U.conj().T @ zero_initial)[:, None] * np.exp(-1j * E[:, None] * times)
+                )
+                np.testing.assert_allclose(
+                    result["zz_zero"], zz @ np.abs(zero_states)**2, atol=1e-11,
+                )
+                self.assertAlmostEqual(result["zz_zero"][0], 1)
+                np.testing.assert_allclose(
+                    result["fidelity_zero"], np.abs(zero_initial @ zero_states)**2, atol=1e-11,
+                )
+                self.assertAlmostEqual(result["fidelity_zero"][0], 1)
                 self.assertAlmostEqual(result["overlaps"].sum(), 1)
                 self.assertAlmostEqual(result["fidelity"][0], 1)
                 self.assertAlmostEqual(result["zz"][0], -1)
                 self.assertAlmostEqual(result["energies"] @ result["overlaps"], 0)
+
+                # Check the thermal trace independently via a matrix exponential.
+                H_sector = P.T @ H @ P
+                rho = expm(-result["beta_th"] * H_sector)
+                rho /= np.trace(rho)
+                zz_sector = P.T @ (zz[:, None] * P)
+                self.assertAlmostEqual(np.trace(rho @ H_sector), 0, places=10)
+                self.assertAlmostEqual(result["zz_th"], np.trace(rho @ zz_sector), places=11)
+                if m == 0:
+                    self.assertEqual(result["beta_th"], 0.)
+                    self.assertAlmostEqual(result["zz_th"], np.trace(zz_sector) / basis.Ns)
 
                 # Compare matching in the reduced basis with full-space overlaps.
                 _, reduced_U = build_hamiltonian(basis, m).eigh()
@@ -147,10 +172,10 @@ class PXPSpectrumTest(unittest.TestCase):
         np.testing.assert_allclose(result["entropies"], expected, atol=1e-12, rtol=0)
 
     def test_unfolded_spacings(self):
-        np.testing.assert_allclose(spectrum_spacings(np.arange(60.)), np.ones(40))
+        np.testing.assert_allclose(spectrum_spacings(np.arange(60.)), np.ones(48))
         energies = np.arange(60.)**3
         energies[30] = energies[29]
-        indices = np.arange(10, 50)
+        indices = np.arange(6, 54)
         gaps = np.diff(energies)[indices]
         local_means = (energies[indices + 5] - energies[indices - 5]) / 10
         expected = (gaps / local_means)[gaps > 1e-8]
@@ -159,8 +184,18 @@ class PXPSpectrumTest(unittest.TestCase):
         self.assertEqual(spectrum_spacings(np.zeros(60)).size, 0)
         self.assertEqual(spectrum_spacings(np.arange(8.)).size, 0)
 
+    def test_residual_check_reaches_last_eigenvector_batch(self):
+        def corrupt_last_vector(energies, vectors, reference):
+            resolve_degeneracies(energies, vectors, reference)
+            vectors[:, -1] += 0.01 * vectors[:, 0]
+
+        with patch("pxp_model.pxp_spectrum.resolve_degeneracies", side_effect=corrupt_last_vector):
+            with self.assertRaisesRegex(RuntimeError, "Eigenpair residual too large"):
+                solve(14, 0.2, np.array([0.]))
+
     def test_saved_outputs(self):
         result = solve(6, 0.2, np.linspace(0, 1, 3))
+        result["L"] = np.asarray(result["L"])  # Also accept scalars reloaded from NPZ.
         with tempfile.TemporaryDirectory() as directory:
             save_results(result, directory)
             png = Path(directory) / "pxp_spectrum_L=6_m=0.2.png"
@@ -172,6 +207,7 @@ class PXPSpectrumTest(unittest.TestCase):
                 self.assertEqual(saved["fsa_weight_cutoff"], 0.5)
                 self.assertEqual((saved["kblock"], saved["parity"]), (0, 1))
                 self.assertEqual(saved["initial_state"], "Z2_plus")
+                self.assertEqual(saved["zz_zero_initial_state"], "0" * int(result["L"]))
                 self.assertEqual(saved["unfolding_window"], 5)
                 self.assertEqual(saved["spacing_etol"], 1e-8)
 

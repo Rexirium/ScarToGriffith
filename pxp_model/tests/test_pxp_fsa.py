@@ -6,8 +6,9 @@ from unittest.mock import patch
 
 from .. import pxp_basis
 from ..pxp_basis import (
-    build_forward_operator, construct_fsa_eigensystem, pxp_basis_1d, fibonacci,
+    build_forward_operator, construct_fsa_eigensystem, pxp_basis_1d,
 )
+from ..utils import fibonacci
 import numpy as np
 
 

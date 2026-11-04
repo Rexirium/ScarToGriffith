@@ -46,55 +46,15 @@ from pathlib import Path
 
 if __package__:
     from .pxp_spectrum import build_hamiltonian, FSA_WEIGHT_CUTOFF
-    from .pxp_basis import fibonacci, pxp_basis_1d, resolve_degeneracies
-    from .utils import max_overlap_indices
+    from .pxp_basis import pxp_basis_1d, resolve_degeneracies
+    from .utils import canonical_weights, fibonacci, max_overlap_indices
 else:
     from pxp_spectrum import build_hamiltonian, FSA_WEIGHT_CUTOFF
-    from pxp_basis import fibonacci, pxp_basis_1d, resolve_degeneracies
-    from utils import max_overlap_indices
+    from pxp_basis import pxp_basis_1d, resolve_degeneracies
+    from utils import canonical_weights, fibonacci, max_overlap_indices
 import numpy as np
 from quspin.operators import hamiltonian
-from scipy.optimize import brentq
 from scipy.sparse import diags
-
-
-def canonical_weights(energies, target_energy):
-    """Return finite beta and Gibbs weights matching a sector's mean energy.
-
-    The target must lie strictly inside a nonconstant spectrum. Spectral-edge
-    targets require infinite beta and are not part of this scan.
-    """
-    energies = np.asarray(energies, dtype=float)
-    if (energies.ndim != 1 or energies.size < 2
-            or not np.all(np.isfinite(energies)) or not np.isfinite(target_energy)):
-        raise ValueError("energies must be a finite 1D spectrum and target_energy finite")
-    low, high = energies.min(), energies.max()
-    if not low < target_energy < high:
-        raise ValueError("target_energy must lie strictly inside the spectrum")
-    width = high - low
-    scaled = (energies - target_energy) / width
-
-    def weights(x):
-        # Anchor at the favored spectral edge so all exponents are nonpositive.
-        anchor = scaled.min() if x >= 0 else scaled.max()
-        values = np.exp(-x * (scaled - anchor))
-        return values / values.sum()
-
-    def residual(x):
-        return float(weights(x) @ scaled)
-
-    at_zero = residual(0.0)
-    if abs(at_zero) <= 1e-12:
-        return 0.0, weights(0.0)
-    bound = float(np.sign(at_zero))
-    for _ in range(64):
-        if residual(bound) * at_zero <= 0:
-            break
-        bound *= 2
-    else:
-        raise RuntimeError("could not bracket the energy-matching inverse temperature")
-    x = brentq(residual, min(0.0, bound), max(0.0, bound), xtol=1e-12, rtol=1e-12)
-    return x / width, weights(x)
 
 
 def scan(L, times=None):
