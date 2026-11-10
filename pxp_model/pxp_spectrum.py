@@ -245,13 +245,13 @@ def _save_figure(result, path):
         points = spectrum.scatter(
             result["energies"][background], weights[background],
             c=result["entropies"][background], **colors,
-            marker="o", s=9, label=r"$k=0,\ p=+$",
+            marker="o", s=6, label=r"$k=0,\ p=+$",
         )
         # Keep selected states visible even below the logarithmic plotting floor.
         spectrum.scatter(
             result["energies"][scars], np.maximum(weights[scars], 1e-15),
             c=result["entropies"][scars], **colors,
-            marker="o", s=40, edgecolors="black", linewidths=0.4,
+            marker="o", s=36, edgecolors="black", linewidths=0.4,
             label="FSA-matched scars", zorder=3,
         )
         spectrum.scatter(
