@@ -67,8 +67,8 @@ else:
 FSA_WEIGHT_CUTOFF = 0.5
 
 
-def build_hamiltonian(basis, m):
-    """The existing constrained user_basis implements the neighbor projectors."""
+def build_hamiltonian(basis, m, *, dtype=np.float64):
+    """Build PXP; use complex dtype for general momentum sectors."""
     static = [
         ["x", [[1.0, i] for i in range(basis.N)]],
         ["z", [[-m, i] for i in range(basis.N)]],
@@ -76,7 +76,7 @@ def build_hamiltonian(basis, m):
     # user_basis does not implement QuSpin's automatic symmetry checks.
     # Independent small-chain tests check the projected matrix and symmetries.
     return hamiltonian(
-        static, [], basis=basis, dtype=np.float64,
+        static, [], basis=basis, dtype=dtype,
         check_symm=False, check_pcon=False, check_herm=False,
     )
 
