@@ -1,0 +1,34 @@
+# Scan with 51 field values, 101 temperatures and 201 points per time grid.
+# Both input time grids: 0.1..1e4 (inclusive endpoints).
+# Run: python pxp_model/pxp_autocorrelation_scan.py --config pxp_model/pxp_autocorrelation_scan.toml
+# Six Slurm nodes: sbatch pxp_model/submit_autocorrelation.sh
+# Node/task counts belong to Slurm, not this config. Use one Slurm task per node.
+# All ranks must read the same config on shared storage.
+# Arrays or ranges; log10 start/stop are base-10 exponents.
+# Arrays retain their order. sizes and ms must not contain duplicates.
+sizes = [16, 18, 20, 22, 24, 26, 28]
+ms = { start = 0.0, stop = 1.0, length = 51, scale = "linear" }
+temperatures = { start = 0.0, stop = 1.0, length = 101, scale = "linear" }
+# T=0 selects the ground-state mixture; TOML inf gives infinite temperature.
+real_times = { start = -1, stop = 4, length = 201, scale = "log10" }
+imaginary_times = { start = -1, stop = 4, length = 201, scale = "log10" }
+# The correlation functions use tau = ts/max(ts)/T at T>0.
+# At T=0, ts is used unchanged, giving 0.1..1e4.
+# NPZ imaginary_times is the 2D actual grid (time, temperature).
+
+# Per node: at most workers independent (L,m) points run concurrently.
+# Starting point: 8 workers * 8 threads = 64 CPUs/node (384 over six nodes).
+# Match submit_autocorrelation.sh's --cpus-per-task and budget RAM per worker.
+# These are starting values, not measured optima. Reduce workers for large L.
+workers = 8
+threads = 8
+# Memory preflight uses Slurm's allocated per-node memory. An optional budget
+# below is in GiB and may only LOWER a known Slurm limit. Set it explicitly
+# for local runs or if Slurm reports no numeric memory limit (--mem=0).
+# memory_gib = 128.0  # Example only: replace with your usable per-node budget.
+# Estimates include all sectors, solver buffers and concurrent workers;
+# they are heuristic, not a guaranteed RSS bound. Oversized scans fail before ED.
+# Relative to this TOML file; must be shared across nodes.
+# Slurm outputs: <output_dir>/<run-id>/rank_0000/*.npz, rank_0001/*.npz, ...
+# Local runs without --run-id retain a flat timestamped directory.
+output_dir = "data/autocorrelation"
