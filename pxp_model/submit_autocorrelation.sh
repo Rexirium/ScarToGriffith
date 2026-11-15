@@ -19,7 +19,7 @@ set -euo pipefail
 # Submit from the repository: sbatch pxp_model/submit_autocorrelation.sh
 # Optional config: sbatch pxp_model/submit_autocorrelation.sh --config /shared/scan.toml
 # Request the measured per-node budget with sbatch --mem=... when needed;
-# Python checks that allocation before ED. --mem=0 needs TOML memory_gib.
+# The scanner does not automatically check memory before ED.
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate Quantum
 

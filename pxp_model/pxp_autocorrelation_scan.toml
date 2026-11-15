@@ -20,14 +20,15 @@ imaginary_times = { start = -1, stop = 4, length = 201, scale = "log10" }
 # Per task: 16 workers * 4 threads = 64 CPUs/node (512 over eight nodes).
 # Match submit_autocorrelation.sh's --cpus-per-task and budget RAM per worker.
 # These are starting values, not measured optima. Reduce workers for large L.
-workers = 16
-threads = 4
-# Memory preflight uses Slurm's allocated per-node memory. An optional budget
-# below is in GiB and may only LOWER a known Slurm limit. Set it explicitly
-# for local runs or if Slurm reports no numeric memory limit (--mem=0).
+workers = 8
+threads = 8
+# Normal runs skip memory checks. For manual check_memory calls, the optional
+# budget below is in GiB per node and may only LOWER a known Slurm limit.
+# Manual checks need this if Slurm reports no numeric memory limit.
 # memory_gib = 128.0  # Example only: replace with your usable per-node budget.
 # Estimates include all sectors, solver buffers and concurrent workers;
-# they are heuristic, not a guaranteed RSS bound. Oversized scans fail before ED.
+# array estimates carry a 25% safety margin plus 512 MiB per process.
+# they are heuristic, not a guaranteed RSS bound.
 # Relative to this TOML file; must be shared across nodes.
 # Slurm outputs: <output_dir>/<run-id>/rank_0000/*.npz, rank_0001/*.npz, ...
 # Local runs without --run-id retain a flat timestamped directory.

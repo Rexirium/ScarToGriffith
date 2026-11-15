@@ -317,7 +317,7 @@ imaginary_times = { start = -1, stop = 4, length = 201, scale = "log10" }
                 with self.assertRaises(ValueError):
                     scan.memory_budget({})
 
-    def test_memory_check_counts_concurrent_points_and_rejects_before_pool(self):
+    def test_manual_memory_check_counts_concurrent_points_and_rejects_overflow(self):
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {}, clear=True):
             config_path = self.write_config(directory)
             config, _ = scan.load_config(config_path)
@@ -328,13 +328,8 @@ imaginary_times = { start = -1, stop = 4, length = 201, scale = "log10" }
                 with self.assertRaisesRegex(ValueError, "exceeds budget"):
                     scan.check_memory(config, points, 2)
             self.assertGreater(scan.estimate_point_memory(30, config), 1024 * 2**30)
-            config_path = self.write_config(directory, self.template.replace("sizes = [4, 6]", "sizes = [30]"))
-            with patch.object(sys, "argv", ["scan", "--config", str(config_path)]), \
-                 patch.object(scan, "ProcessPoolExecutor") as executor, redirect_stdout(io.StringIO()), \
-                 patch("sys.stderr", new_callable=io.StringIO) as stderr, self.assertRaises(SystemExit):
-                scan.main()
-            self.assertIn("exceeds budget", stderr.getvalue())
-            executor.assert_not_called()
+            with redirect_stdout(io.StringIO()), self.assertRaisesRegex(ValueError, "exceeds budget"):
+                scan.check_memory(config, [(30, 0, 0.)], 1)
             self.assertFalse(config["output_dir"].exists())
         with patch.dict(os.environ, {}, clear=True):
             scan.check_memory({}, [], 0)

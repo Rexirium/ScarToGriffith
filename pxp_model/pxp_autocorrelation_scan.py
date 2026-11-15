@@ -11,9 +11,9 @@ process. Thread limits are inherited before workers import NumPy/QuSpin.
 No additional pools are created for temperatures, times or momentum blocks.
 imaginary_times specifies the input grid: the correlation functions use
 ts/max(ts)/T for T>0 and retain ts at T=0. No scaling is done by the scanner.
-Memory is checked before starting workers using Slurm's allocation and/or
-memory_gib, a per-node budget in GiB. One Slurm task per node is required
-for this memory accounting. Without an identifiable allocation, set memory_gib.
+Memory estimation/check functions remain available for manual use; normal
+runs do not check memory before starting workers. Manual checks use Slurm's
+allocation and/or memory_gib (GiB per node) and require one Slurm task per node.
 
 For Slurm, use submit_autocorrelation.sh: srun launches one copy per node.
 The supplied Slurm script and TOML use 8 nodes, 1 task/node, 16 worker
@@ -155,8 +155,8 @@ def estimate_point_memory(L, config):
     """Heuristic peak bytes, not a guaranteed upper bound or measured RSS.
 
     Count stored real/complex eigenvectors exactly, then budget eight complex
-    largest-block buffers, thermal arrays and returned matrices. Double these
-    arrays for solver/allocator uncertainty and add 512 MiB for the runtime.
+    largest-block buffers, thermal arrays and returned matrices. Add 25% for
+    solver/allocator uncertainty and 512 MiB for the runtime.
     """
     dimensions = momentum_dimensions(L)
     eigenvectors = sum((8 if (2 * k) % L == 0 else 16) * d**2
@@ -164,7 +164,7 @@ def estimate_point_memory(L, config):
     buffers = 128 * max(dimensions)**2
     thermal = 64 * sum(dimensions) * len(config["temperatures"])
     outputs = (32 * len(config["real_times"]) + 24 * len(config["imaginary_times"])) * len(config["temperatures"])
-    return 2 * (eigenvectors + buffers + thermal + outputs) + 512 * 2**20
+    return 1.25 * (eigenvectors + buffers + thermal + outputs) + 512 * 2**20
 
 
 def memory_budget(config):
@@ -281,7 +281,6 @@ def main():
         if "SLURM_CPUS_PER_TASK" in os.environ:
             if workers * threads > int(os.environ["SLURM_CPUS_PER_TASK"]):
                 raise ValueError("workers * threads exceeds SLURM_CPUS_PER_TASK")
-        check_memory(config, points, workers)
     except (OSError, ValueError) as error:
         parser.error(str(error))
     total = len(config["sizes"]) * len(config["ms"])
