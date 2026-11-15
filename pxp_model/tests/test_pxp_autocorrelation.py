@@ -8,7 +8,8 @@ from unittest.mock import patch
 
 from ..pxp_autocorrelation import (
     connected_autocorrelation, average_connected_autocorrelation, local_connected_autocorrelation,
-    _momentum_eigensystems, _thermal_log_weights, _uniform_connected,
+    _momentum_eigensystems, _thermal_log_weights, _uniform_connected, _spectral_correlation,
+    _eigenbasis_product, _magnetization_in_eigenbasis, _full_ensemble, _local_from_average,
 )
 from ..pxp_basis import pxp_basis_1d
 from ..pxp_spectrum import build_hamiltonian
@@ -24,6 +25,90 @@ def full_matrices(L, m):
     z = np.array([[2 * ((int(s) >> j) & 1) - 1 for s in full.states]
                   for j in range(L)])
     return full, H, z
+
+
+class SpectralBatchTest(unittest.TestCase):
+    def test_batches_match_dense_sum_without_modifying_inputs(self):
+        rng = np.random.default_rng(1729)
+        energies = np.linspace(-1., 1., 517)
+        intermediate = np.linspace(-.8, 1.2, 13)
+        # A transposed, read-only input also covers the reverse-transition path.
+        strengths = rng.random((13, 517)).T
+        logs = _thermal_log_weights(
+            np.concatenate((energies, intermediate)), np.array([0., .2, np.inf]),
+        )[:energies.size]
+        for array in (energies, intermediate, strengths, logs):
+            array.setflags(write=False)
+        gaps = energies[:, None] - intermediate[None, :]
+        for imaginary in (False, True):
+            times = (np.array([[0., 0., 0.], [.2, 2.5, 0.], [1e4, 5., 0.]])
+                     if imaginary else np.array([.3, 0., -.3, .3]))
+            expected = np.zeros((len(times), 3), dtype=float if imaginary else complex)
+            for row, time in enumerate(times):
+                for column in range(3):
+                    exponent = logs[:, column, None] + (time[column] if imaginary else 1j * time) * gaps
+                    expected[row, column] = np.sum(strengths * np.exp(exponent))
+            for batch_rows in (7, 512):
+                with self.subTest(imaginary=imaginary, batch_rows=batch_rows), \
+                     patch('pxp_model.pxp_autocorrelation._SPECTRAL_BLOCK_ROWS', batch_rows):
+                    actual = _spectral_correlation(energies, intermediate, strengths, logs, times, imaginary)
+                np.testing.assert_allclose(actual, expected, rtol=2e-13, atol=2e-13)
+
+    def test_empty_times_and_zero_weight_sector(self):
+        energies = np.array([0., 1.])
+        strengths = np.ones((2, 2))
+        logs = np.full((2, 1), -np.inf)
+        for imaginary in (False, True):
+            times = np.zeros((2, 1)) if imaginary else np.zeros(2)
+            actual = _spectral_correlation(energies, energies, strengths, logs, times, imaginary)
+            np.testing.assert_array_equal(actual, np.zeros((2, 1)))
+            self.assertEqual(_spectral_correlation(
+                energies, energies, strengths, logs, times[:0], imaginary).shape, (0, 1))
+
+    def test_imaginary_overflow_still_raises(self):
+        with self.assertRaises(FloatingPointError):
+            _spectral_correlation(np.array([1000.]), np.array([0.]), np.ones((1, 1)),
+                                  np.zeros((1, 1)), np.ones((1, 1)), True)
+
+
+class SharedEigenvectorTest(unittest.TestCase):
+    def test_blas_product_matches_explicit_adjoint_without_changing_inputs(self):
+        rng = np.random.default_rng(2901)
+        for complex_vectors in (False, True):
+            for complex_shifted in (False, True):
+                vectors = rng.normal(size=(7, 5))
+                shifted = rng.normal(size=(7, 3))
+                if complex_vectors:
+                    vectors = vectors + 1j * rng.normal(size=vectors.shape)
+                if complex_shifted:
+                    shifted = shifted + 1j * rng.normal(size=shifted.shape)
+                before_vectors, before_shifted = vectors.copy(), shifted.copy()
+                for conjugated in (False, True):
+                    with self.subTest(complex_vectors=complex_vectors,
+                                      complex_shifted=complex_shifted, conjugated=conjugated):
+                        actual_vectors = vectors.conj() if conjugated else vectors
+                        expected = actual_vectors.conj().T @ shifted
+                        actual = _eigenbasis_product(vectors, shifted, conjugated)
+                        np.testing.assert_allclose(actual, expected, atol=2e-14)
+                        self.assertTrue(actual.flags.c_contiguous)
+                        np.testing.assert_array_equal(vectors, before_vectors)
+                        np.testing.assert_array_equal(shifted, before_shifted)
+
+    def test_shared_vectors_survive_both_time_domains(self):
+        for L in (5, 6):
+            sectors, logs = _full_ensemble(L, .2, np.array([0., .5, np.inf]))
+            before = [vectors.copy() for _, _, vectors, _ in sectors]
+            for imaginary in (False, True):
+                times = (np.array([[0., 0., 0.], [.2, 2., 0.]])
+                         if imaginary else np.array([0., .2]))
+                average = _uniform_connected(sectors, logs, times, imaginary)
+                _local_from_average(sectors, logs, times, imaginary, average)
+                for (basis, _, vectors, conjugated), original in zip(sectors, before):
+                    np.testing.assert_array_equal(vectors, original)
+                    if conjugated and basis.Ns:
+                        actual = _magnetization_in_eigenbasis(basis, vectors.conj())
+                        canonical = _magnetization_in_eigenbasis(basis, vectors)
+                        np.testing.assert_allclose(actual, canonical.conj(), atol=1e-14)
 
 
 class PXPAutocorrelationTest(unittest.TestCase):
@@ -116,7 +201,7 @@ class PXPAutocorrelationTest(unittest.TestCase):
         delta = 2.**-28
         temperatures = np.array([0., .5, 1., np.inf])
         logs = _thermal_log_weights(np.array([0., 1.]), temperatures)
-        sectors = [(None, np.array([energy]), np.ones((1, 1))) for energy in (0., 1.)]
+        sectors = [(None, np.array([energy]), np.ones((1, 1)), False) for energy in (0., 1.)]
         p = np.exp(logs[1])
         expected = p * (1 - p) * (2 * delta)**2
         for imaginary in (False, True):
@@ -241,11 +326,17 @@ class PXPLocalAutocorrelationTest(unittest.TestCase):
         for L in (5, 10):
             full, H, z = full_matrices(L, .2)
             sectors = _momentum_eigensystems(L, .2)
-            self.assertEqual(sum(basis.Ns for basis, _, _ in sectors), full.Ns)
-            all_E = np.concatenate([E for _, E, _ in sectors])
+            self.assertEqual(sum(basis.Ns for basis, _, _, _ in sectors), full.Ns)
+            all_E = np.concatenate([E for _, E, _, _ in sectors])
             np.testing.assert_allclose(np.sort(all_E), eigh(H, eigvals_only=True), atol=2e-12)
             projectors = []
-            for basis, E, U in sectors:
+            for k, (basis, E, stored, conjugated) in enumerate(sectors):
+                self.assertEqual(conjugated, k > L // 2)
+                self.assertTrue(stored.flags.c_contiguous)
+                if conjugated:
+                    self.assertIs(stored, sectors[L - k][2])
+                    self.assertIs(E, sectors[L - k][1])
+                U = stored.conj() if conjugated else stored
                 P = basis.get_proj(np.complex128).toarray()[2**L - 1 - full.states]
                 projectors.append(P)
                 Hk = build_hamiltonian(basis, .2, dtype=np.complex128).toarray()
@@ -254,8 +345,10 @@ class PXPLocalAutocorrelationTest(unittest.TestCase):
                 np.testing.assert_allclose(U.conj().T @ U, np.eye(basis.Ns), atol=1e-12)
             # Check general initial k and wraparound, not just k=0 -> q.
             for k, target_k in ((0, 1), (1, 3), (L - 1, 1)):
-                source, _, U = sectors[k]
-                target, _, V = sectors[target_k]
+                source, _, U, source_conjugated = sectors[k]
+                target, _, V, target_conjugated = sectors[target_k]
+                U = U.conj() if source_conjugated else U
+                V = V.conj() if target_conjugated else V
                 q = (target_k - k) % L
                 phases = np.exp(2j * np.pi * q * np.arange(L) / L) / L
                 ops = [["z", [j], phases[j]] for j in range(L)]

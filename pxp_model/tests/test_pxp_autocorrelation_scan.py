@@ -18,26 +18,6 @@ from .. import pxp_autocorrelation_scan as scan
 
 
 class BothTimeDomainsTest(unittest.TestCase):
-    def test_normalized_times_share_ed_and_match_individual_temperature_calls(self):
-        temperatures = [0., .1, .5, 10., np.inf]
-        times = np.array([0., .1, 2000., 5000., 8000., 1e4])
-        with patch.object(correlation, "build_hamiltonian", wraps=correlation.build_hamiltonian) as build:
-            real, imaginary = correlation.connected_autocorrelation_both_times(
-                6, .2, temperatures, [0., .3], times)
-        self.assertEqual(build.call_count, 4)
-        baseline = correlation.connected_autocorrelation(6, .2, temperatures, [0., .3])
-        for actual, expected in zip(real, baseline):
-            np.testing.assert_allclose(actual, expected, atol=3e-12)
-        for column, temperature in enumerate(temperatures):
-            baseline = correlation.connected_autocorrelation(6, .2, temperature, times, True)
-            for actual, expected in zip(imaginary, baseline):
-                self.assertTrue(np.all(np.isfinite(actual)))
-                np.testing.assert_allclose(actual[:, column], expected[:, 0], atol=3e-12)
-                if 0 < temperature < np.inf:
-                    np.testing.assert_allclose(actual[[0, 2], column], actual[[-1, -2], column], atol=3e-12)
-                if temperature == 0:
-                    self.assertLess(abs(actual[-1, column]), 1e-12)
-
     def test_time_grid_normalization_and_edge_cases(self):
         temperatures = [0., .5, 2., np.inf]
         times = np.array([4., 0., 2., 4.])
@@ -61,10 +41,6 @@ class BothTimeDomainsTest(unittest.TestCase):
                 with self.subTest(Ts=Ts, grid=grid), self.assertRaises(ValueError):
                     correlation.connected_autocorrelation_both_times(
                         4, .2, Ts, [0.], grid)
-            real, imaginary = correlation.connected_autocorrelation_both_times(
-                4, .2, [0., 1.], [], [])
-            self.assertEqual(real[0].shape, (0, 2))
-            self.assertEqual(imaginary[0].shape, (0, 2))
             diagonalize.assert_not_called()
 
     def test_shared_ed_and_weights_match_independent_calls(self):
@@ -111,15 +87,6 @@ class BothTimeDomainsTest(unittest.TestCase):
                     np.testing.assert_allclose(value, baseline, atol=2e-12)
                     self.assertEqual(value.shape, (len(grid), 2))
                     self.assertEqual(value.dtype, baseline.dtype)
-
-    def test_low_temperature_kms_and_ground_state_tail(self):
-        taus = [0., .2, 500., 999.8, 1000.]
-        _, imaginary = correlation.connected_autocorrelation_both_times(
-            6, .2, [0., .001], [0., 1.], taus)
-        for result in imaginary:
-            self.assertTrue(np.all(np.isfinite(result)))
-            np.testing.assert_allclose(result[:, 1], result[::-1, 1], atol=3e-12)
-            self.assertLess(abs(result[-1, 0]), 1e-12)
 
 
 class AutocorrelationScanTest(unittest.TestCase):

@@ -17,7 +17,11 @@ else:
     from pxp_spectrum import build_hamiltonian
 
 import numpy as np
+from scipy.linalg.blas import get_blas_funcs
 from scipy.special import logsumexp
+
+
+_SPECTRAL_BLOCK_ROWS = 512
 
 
 def _thermal_log_weights(energies, temperatures):
@@ -42,26 +46,55 @@ def _thermal_log_weights(energies, temperatures):
 
 def _spectral_correlation(energies, intermediate_energies, strengths,
                           log_weights, times, imaginary):
-    """Sum w_n |A_rn|^2 exp(s t (E_n-E_r)); strengths has axes (n, r)."""
-    gaps = energies[:, None] - intermediate_energies[None, :]
+    """Sum w_n |A_rn|^2 exp(s t (E_n-E_r)) in bounded batches of n rows.
+
+    strengths has axes (n, r); only gaps and the evolution workspace are
+    batched. Reuse both buffers across all times, temperatures and batches.
+    """
     result = np.zeros((times.shape[0], log_weights.shape[1]),
                       dtype=np.float64 if imaginary else np.complex128)
-    if not np.any(np.isfinite(log_weights)):
+    if not times.shape[0] or not np.any(np.isfinite(log_weights)):
         return result
-    if not imaginary:
-        weights = np.exp(log_weights)
-    for row, time in enumerate(times):
-        if imaginary:
-            for column in range(log_weights.shape[1]):
-                # Combine Gibbs and evolution exponents before exponentiating:
-                # separate factors would produce 0 * inf at low temperature.
-                exponent = log_weights[:, column, None] + time[column] * gaps
-                with np.errstate(over="raise", invalid="raise"):
-                    result[row, column] = np.sum(strengths * np.exp(exponent))
-        else:
-            correlations = np.sum(strengths * np.exp(1j * time * gaps), axis=1)
-            result[row] = correlations @ weights
+    shape = (min(_SPECTRAL_BLOCK_ROWS, energies.size), intermediate_energies.size)
+    gap_buffer = np.empty(shape, dtype=np.float64)
+    work_buffer = np.empty(shape, dtype=result.dtype)
+    for start in range(0, energies.size, _SPECTRAL_BLOCK_ROWS):
+        stop = min(start + _SPECTRAL_BLOCK_ROWS, energies.size)
+        gaps = gap_buffer[:stop - start]
+        work = work_buffer[:stop - start]
+        np.subtract(energies[start:stop, None], intermediate_energies[None, :], out=gaps)
+        block_strengths = strengths[start:stop]
+        block_logs = log_weights[start:stop]
+        if not imaginary:
+            weights = np.exp(block_logs)
+        for row, time in enumerate(times):
+            if imaginary:
+                for column in range(log_weights.shape[1]):
+                    # Combine exponents before exp to avoid low-T 0 * inf.
+                    np.multiply(gaps, time[column], out=work)
+                    np.add(work, block_logs[:, column, None], out=work)
+                    with np.errstate(over="raise", invalid="raise"):
+                        np.exp(work, out=work)
+                        np.multiply(work, block_strengths, out=work)
+                        result[row, column] += np.sum(work)
+            else:
+                np.multiply(gaps, 1j * time, out=work)
+                np.exp(work, out=work)
+                np.multiply(work, block_strengths, out=work)
+                correlations = np.sum(work, axis=1)
+                result[row] += correlations @ weights
     return result
+
+
+def _eigenbasis_product(vectors, shifted, conjugated=False):
+    """Return V_actual.dagger @ shifted; V_actual is V or V.conj().
+
+    C-contiguous inputs have F-contiguous transpose views. Compute the
+    transposed product so BLAS needs no layout or explicit conjugate copy
+    when both inputs already have the same dtype.
+    """
+    gemm = get_blas_funcs("gemm", (vectors, shifted))
+    return gemm(1., shifted.T, vectors.T, trans_b=1 if conjugated else 2).T
 
 
 def _magnetization_in_eigenbasis(basis, vectors):
@@ -70,7 +103,7 @@ def _magnetization_in_eigenbasis(basis, vectors):
         (2 * int(state).bit_count() / basis.N - 1 for state in basis.states),
         dtype=float, count=basis.Ns,
     )
-    return vectors.conj().T @ (diagonal[:, None] * vectors)
+    return _eigenbasis_product(vectors, diagonal[:, None] * vectors)
 
 
 def prepare_time_grid(Ts, ts, imaginary=False):
@@ -120,28 +153,33 @@ def _momentum_eigensystems(L, m):
     """All translation-only blocks; reuse H_{L-k}=H_k.conj() for real PXP.
 
     Conjugate blocks have identical representatives and normalization in
-    pxp_basis_1d. Their eigenvectors are conjugated without another ED.
+    pxp_basis_1d. Entries are (basis, energies, stored_vectors, conjugated):
+    the actual eigenvectors are stored_vectors.conj() when conjugated is true.
+    Conjugate partners share arrays instead of storing a second copy; callers
+    must not modify them. QuSpin requires writable input buffers.
     """
     sectors = []
     for k in range(L):
         basis = pxp_basis_1d(L, kblock=k)
-        if k > L // 2:
-            _, energies, vectors = sectors[L - k]
-            vectors = vectors.conj()
+        conjugated = k > L // 2
+        if conjugated:
+            _, energies, vectors, _ = sectors[L - k]
         elif basis.Ns:
             dtype = np.float64 if (2 * k) % L == 0 else np.complex128
             energies, vectors = build_hamiltonian(basis, m, dtype=dtype).eigh()
         else:
             energies, vectors = np.empty(0), np.empty((0, 0))
-        sectors.append((basis, energies, vectors))
+        # QuSpin consumes C-order inputs; BLAS can use their transpose views.
+        vectors = np.ascontiguousarray(vectors)
+        sectors.append((basis, energies, vectors, conjugated))
     return sectors
 
 
 def _full_ensemble(L, m, temperatures):
     """Diagonalize once, normalize Gibbs weights globally, then split by k."""
     sectors = _momentum_eigensystems(L, m)
-    sizes = [len(energies) for _, energies, _ in sectors]
-    energies = np.concatenate([energies for _, energies, _ in sectors])
+    sizes = [len(energies) for _, energies, _, _ in sectors]
+    energies = np.concatenate([energies for _, energies, _, _ in sectors])
     logs = _thermal_log_weights(energies, temperatures)
     return sectors, np.split(logs, np.cumsum(sizes)[:-1])
 
@@ -156,17 +194,21 @@ def _uniform_connected(sectors, log_weights, times, imaginary):
     result = np.zeros((times.shape[0], log_weights[0].shape[1]),
                       dtype=np.float64 if imaginary else np.complex128)
     diagonals, weights = [], []
-    for (basis, energies, vectors), logs in zip(sectors, log_weights):
+    for (basis, energies, vectors, _), logs in zip(sectors, log_weights):
         if not energies.size or not np.any(np.isfinite(logs)):
             continue
+        # Real diagonal M gives identical real diagonals and |M_nr|^2 for V*.
         observable = _magnetization_in_eigenbasis(basis, vectors)
         diagonals.append(observable.diagonal().real.copy())
         weights.append(np.exp(logs))
-        strengths = np.abs(observable)**2
+        strengths = np.abs(observable)
+        del observable
+        np.square(strengths, out=strengths)
         np.fill_diagonal(strengths, 0.)
         result += _spectral_correlation(
             energies, energies, strengths, logs, times, imaginary,
         )
+        del strengths
     diagonal = np.concatenate(diagonals)
     weights = np.concatenate(weights, axis=0)
     # Remove a common offset before forming the mean, preserving small fluctuations.
@@ -214,7 +256,7 @@ def average_connected_autocorrelation(L, m, Ts, ts, imaginary=False):
     -----
     M preserves momentum, so only within-block matrix elements are needed.
     Each independent momentum block is diagonalized once per function call;
-    conjugate k and L-k blocks share eigenvalues and conjugated eigenvectors.
+    conjugate k and L-k blocks share eigenvalues and eigenvector storage.
     Spectra are reused for every temperature and time, with no persistent
     cache. Eigensystem storage is O(sum_k D_k**2), plus thermal weights and
     the output. No full-space dense Hamiltonian or time-by-D-by-D array is
@@ -268,11 +310,13 @@ def _local_from_average(sectors, logs, times, imaginary, average):
     """Add q!=0 contributions without modifying the supplied average matrix."""
     L = len(sectors)
     result = average.copy()
-    for k, (source, energies, vectors) in enumerate(sectors):
+    for k, (source, energies, stored_vectors, conjugated) in enumerate(sectors[:-1]):
         if not energies.size:
             continue
+        # Only the current source may need a temporary conjugated copy.
+        vectors = stored_vectors.conj() if conjugated else stored_vectors
         for target_k in range(k + 1, L):
-            target, target_energies, target_vectors = sectors[target_k]
+            target, target_energies, target_vectors, target_conjugated = sectors[target_k]
             if (not target_energies.size or not
                     (np.any(np.isfinite(logs[k])) or np.any(np.isfinite(logs[target_k])))):
                 continue
@@ -282,13 +326,18 @@ def _local_from_average(sectors, logs, times, imaginary, average):
             shifted = target.Op_shift_sector(source, op_list, vectors,
                                              dtype=np.complex128)
             shifted = shifted.reshape(target.Ns, source.Ns)
-            strengths = np.abs(target_vectors.conj().T @ shifted).T**2
+            strengths = np.abs(_eigenbasis_product(
+                target_vectors, shifted, target_conjugated)).T
+            del shifted
+            np.square(strengths, out=strengths)
             result += _spectral_correlation(
                 energies, target_energies, strengths, logs[k], times, imaginary,
             )
             result += _spectral_correlation(
                 target_energies, energies, strengths.T, logs[target_k], times, imaginary,
             )
+            del strengths
+        del vectors
     return result
 
 

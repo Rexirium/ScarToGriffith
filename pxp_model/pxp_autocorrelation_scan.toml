@@ -17,7 +17,8 @@ imaginary_times = { start = -1, stop = 4, length = 201, scale = "log10" }
 # NPZ imaginary_times is the 2D actual grid (time, temperature).
 
 # Per node: at most workers independent (L,m) points run concurrently.
-# Per task: 16 workers * 4 threads = 64 CPUs/node (512 over eight nodes).
+# At most one L=28 point runs per node; other sizes fill remaining worker slots.
+# Per task: 8 workers * 8 threads = 64 CPUs/node (512 over eight nodes).
 # Match submit_autocorrelation.sh's --cpus-per-task and budget RAM per worker.
 # These are starting values, not measured optima. Reduce workers for large L.
 workers = 8

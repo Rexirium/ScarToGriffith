@@ -16,11 +16,13 @@ runs do not check memory before starting workers. Manual checks use Slurm's
 allocation and/or memory_gib (GiB per node) and require one Slurm task per node.
 
 For Slurm, use submit_autocorrelation.sh: srun launches one copy per node.
-The supplied Slurm script and TOML use 8 nodes, 1 task/node, 16 worker
-processes/task and 4 threads/process (64 CPUs/node, 512 CPUs total).
+The supplied Slurm script uses 8 nodes, 1 task/node and 64 CPUs/task.
+The TOML controls worker processes/task and threads/process.
 SLURM_PROCID and SLURM_NTASKS partition (L,m) points without MPI dependencies.
 Larger sizes are queued first, with each size spread across ranks. Each rank
 has its own local pool; there is no work stealing between nodes.
+Each rank runs at most one L=28 point at a time (one per node with the
+supplied Slurm script). Other sizes continue filling available worker slots.
 
 output_dir is relative to the TOML file, unless absolute. Each invocation
 creates a new YYYYMMDD_HHMMSS_microseconds directory (UTC+08:00), copies the
@@ -46,7 +48,7 @@ operator matrix elements. Eigenvectors remain inside the worker and are not save
 """
 
 import argparse
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from datetime import datetime, timedelta, timezone
 import math
 import multiprocessing as mp
@@ -154,13 +156,14 @@ def momentum_dimensions(L):
 def estimate_point_memory(L, config):
     """Heuristic peak bytes, not a guaranteed upper bound or measured RSS.
 
-    Count stored real/complex eigenvectors exactly, then budget eight complex
-    largest-block buffers, thermal arrays and returned matrices. Add 25% for
+    Count independent real/complex eigenvectors once, then budget eight complex
+    largest-block buffers (including a temporary conjugate source), thermal
+    arrays and returned matrices. Add 25% for
     solver/allocator uncertainty and 512 MiB for the runtime.
     """
     dimensions = momentum_dimensions(L)
     eigenvectors = sum((8 if (2 * k) % L == 0 else 16) * d**2
-                       for k, d in enumerate(dimensions))
+                       for k, d in enumerate(dimensions[:L // 2 + 1]))
     buffers = 128 * max(dimensions)**2
     thermal = 64 * sum(dimensions) * len(config["temperatures"])
     outputs = (32 * len(config["real_times"]) + 24 * len(config["imaginary_times"])) * len(config["temperatures"])
@@ -198,7 +201,10 @@ def check_memory(config, points, workers):
         return
     budget = memory_budget(config)
     estimates = {L: estimate_point_memory(L, config) for L in {point[0] for point in points}}
-    peak = 512 * 2**20 + sum(sorted((estimates[L] for L, _, _ in points), reverse=True)[:workers])
+    concurrent = [estimates[L] for L, _, _ in points if L != 28]
+    if 28 in estimates:
+        concurrent.append(estimates[28])
+    peak = 512 * 2**20 + sum(sorted(concurrent, reverse=True)[:workers])
     print(f"Memory estimate: {peak / 2**30:.1f} GiB/node with {workers} workers; "
           f"budget={budget / 2**30:.1f} GiB/node (heuristic, not an RSS guarantee)", flush=True)
     if peak > budget:
@@ -302,20 +308,31 @@ def main():
         print("No assigned points; exiting without a worker pool.", flush=True)
         return
     with ProcessPoolExecutor(max_workers=workers, mp_context=mp.get_context("spawn")) as pool:
-        futures = {
-            pool.submit(run_point, L, index, m, config["temperatures"],
-                        config["real_times"], config["imaginary_times"], output_dir): (L, m)
-            for L, index, m in points
-        }
-        for completed, future in enumerate(as_completed(futures), 1):
-            L, m = futures[future]
-            try:
-                path = future.result()
-            except Exception as error:
-                for pending in futures:
-                    pending.cancel()
-                raise RuntimeError(f"Autocorrelation task failed: L={L}, m={m!r}") from error
-            print(f"[rank {rank}: {completed}/{len(points)}] L={L}, m={m!r}: {path.name}", flush=True)
+        queued = list(points)
+        futures = {}
+        completed = 0
+        while queued or futures:
+            while queued and len(futures) < workers:
+                running_28 = any(L == 28 for L, _ in futures.values())
+                eligible = next((i for i, (L, _, _) in enumerate(queued)
+                                 if L != 28 or not running_28), None)
+                if eligible is None:
+                    break
+                L, index, m = queued.pop(eligible)
+                future = pool.submit(run_point, L, index, m, config["temperatures"],
+                                     config["real_times"], config["imaginary_times"], output_dir)
+                futures[future] = (L, m)
+            done, _ = wait(futures, return_when=FIRST_COMPLETED)
+            for future in done:
+                L, m = futures.pop(future)
+                try:
+                    path = future.result()
+                except Exception as error:
+                    for pending in futures:
+                        pending.cancel()
+                    raise RuntimeError(f"Autocorrelation task failed: L={L}, m={m!r}") from error
+                completed += 1
+                print(f"[rank {rank}: {completed}/{len(points)}] L={L}, m={m!r}: {path.name}", flush=True)
 
 
 if __name__ == "__main__":

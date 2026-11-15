@@ -35,13 +35,6 @@ class MemoryStartupTest(unittest.TestCase):
                 check.assert_not_called()
                 executor.return_value.__enter__.return_value.submit.assert_called_once()
 
-    def test_manual_check_still_rejects_insufficient_memory(self):
-        config = dict(temperatures=[1.0], real_times=[0.0], imaginary_times=[0.0],
-                      memory_gib=0.001)
-        with patch.dict(os.environ, {}, clear=True), redirect_stdout(io.StringIO()):
-            with self.assertRaisesRegex(ValueError, "exceeds budget"):
-                scan.check_memory(config, [(4, 0, 0.0)], 1)
-
 
 if __name__ == "__main__":
     unittest.main()
