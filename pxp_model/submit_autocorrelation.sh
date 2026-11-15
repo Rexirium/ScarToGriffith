@@ -1,10 +1,10 @@
 #!/bin/bash
 #SBATCH -A hpc1906185151
-#SBATCH --partition=C064M1024G
+#SBATCH --partition=C064M0256G
 #SBATCH --qos=low
 #SBATCH --job-name=pxp-autocorrelation
-#SBATCH --nodes=6
-#SBATCH --ntasks=6
+#SBATCH --nodes=8
+#SBATCH --ntasks=8
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=64
 #SBATCH --time=7200

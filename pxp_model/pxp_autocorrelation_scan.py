@@ -16,6 +16,8 @@ memory_gib, a per-node budget in GiB. One Slurm task per node is required
 for this memory accounting. Without an identifiable allocation, set memory_gib.
 
 For Slurm, use submit_autocorrelation.sh: srun launches one copy per node.
+The supplied Slurm script and TOML use 8 nodes, 1 task/node, 16 worker
+processes/task and 4 threads/process (64 CPUs/node, 512 CPUs total).
 SLURM_PROCID and SLURM_NTASKS partition (L,m) points without MPI dependencies.
 Larger sizes are queued first, with each size spread across ranks. Each rank
 has its own local pool; there is no work stealing between nodes.
