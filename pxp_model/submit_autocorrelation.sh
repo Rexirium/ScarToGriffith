@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH -A hpc1906185151
-#SBATCH --partition=C064M1024G
+#SBATCH --partition=C064M0256G
 #SBATCH --qos=low
 #SBATCH --job-name=pxp-autocorrelation
 #SBATCH --nodes=8
