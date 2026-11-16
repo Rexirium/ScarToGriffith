@@ -21,8 +21,9 @@ The TOML controls worker processes/task and threads/process.
 SLURM_PROCID and SLURM_NTASKS partition (L,m) points without MPI dependencies.
 Larger sizes are queued first, with each size spread across ranks. Each rank
 has its own local pool; there is no work stealing between nodes.
-Each rank runs at most one L=28 point at a time (one per node with the
-supplied Slurm script). Other sizes continue filling available worker slots.
+Each rank runs at most one L=Lmax point at a time, where Lmax=max(sizes)
+from the TOML config (one per node with the supplied Slurm script).
+Other sizes continue filling available worker slots.
 
 output_dir is relative to the TOML file, unless absolute. Each invocation
 creates a new YYYYMMDD_HHMMSS_microseconds directory (UTC+08:00), copies the
@@ -200,10 +201,11 @@ def check_memory(config, points, workers):
     if not points:
         return
     budget = memory_budget(config)
+    Lmax = max(config["sizes"])
     estimates = {L: estimate_point_memory(L, config) for L in {point[0] for point in points}}
-    concurrent = [estimates[L] for L, _, _ in points if L != 28]
-    if 28 in estimates:
-        concurrent.append(estimates[28])
+    concurrent = [estimates[L] for L, _, _ in points if L != Lmax]
+    if Lmax in estimates:
+        concurrent.append(estimates[Lmax])
     peak = 512 * 2**20 + sum(sorted(concurrent, reverse=True)[:workers])
     print(f"Memory estimate: {peak / 2**30:.1f} GiB/node with {workers} workers; "
           f"budget={budget / 2**30:.1f} GiB/node (heuristic, not an RSS guarantee)", flush=True)
@@ -307,15 +309,16 @@ def main():
     if not points:
         print("No assigned points; exiting without a worker pool.", flush=True)
         return
+    Lmax = max(config["sizes"])
     with ProcessPoolExecutor(max_workers=workers, mp_context=mp.get_context("spawn")) as pool:
         queued = list(points)
         futures = {}
         completed = 0
         while queued or futures:
             while queued and len(futures) < workers:
-                running_28 = any(L == 28 for L, _ in futures.values())
+                running_max = any(L == Lmax for L, _ in futures.values())
                 eligible = next((i for i, (L, _, _) in enumerate(queued)
-                                 if L != 28 or not running_28), None)
+                                 if L != Lmax or not running_max), None)
                 if eligible is None:
                     break
                 L, index, m = queued.pop(eligible)

@@ -16,6 +16,7 @@ from .. import pxp_autocorrelation_scan as scan
 class ScanSchedulingTest(unittest.TestCase):
     def run_schedule(self, sizes, workers, *, large_first=False, fail=False):
         submitted, batches, active = [], [], {}
+        Lmax = max(sizes)
 
         def submit(function, L, index, m, *args):
             self.assertIs(function, scan.run_point)
@@ -24,7 +25,7 @@ class ScanSchedulingTest(unittest.TestCase):
             submitted.append(point)
             active[future] = point
             self.assertLessEqual(len(active), workers)
-            self.assertLessEqual(sum(p[0] == 28 for p in active.values()), 1)
+            self.assertLessEqual(sum(p[0] == Lmax for p in active.values()), 1)
             return future
 
         def finish(futures, *, return_when):
@@ -32,8 +33,8 @@ class ScanSchedulingTest(unittest.TestCase):
             self.assertEqual(set(futures), set(active))
             self.assertTrue(active)
             batches.append(list(active.values()))
-            # Exercise either a slow L=28 or L=28 finishing before its peers.
-            future = next((f for f, p in active.items() if (p[0] == 28) == large_first),
+            # Exercise either a slow largest-size task or one finishing first.
+            future = next((f for f, p in active.items() if (p[0] == Lmax) == large_first),
                           next(iter(active)))
             active.pop(future)
             if fail:
@@ -63,8 +64,8 @@ class ScanSchedulingTest(unittest.TestCase):
         return submitted, batches, active
 
     def test_limit_and_coverage_under_different_completion_orders(self):
-        for sizes, workers in (([28, 26, 24], 3), ([28], 4), ([26, 24], 3),
-                               ([28, 26], 1), ([30, 28, 26], 4)):
+        for sizes, workers in (([28, 26, 24], 3), ([28], 4), ([26], 4), ([26, 24], 3),
+                               ([28, 26], 1), ([30, 28, 26], 4), ([26, 30, 28], 4)):
             for large_first in (False, True):
                 with self.subTest(sizes=sizes, workers=workers, large_first=large_first):
                     submitted, batches, active = self.run_schedule(
@@ -72,6 +73,8 @@ class ScanSchedulingTest(unittest.TestCase):
                     expected = [(L, i, m) for L in sizes for i, m in enumerate([0., .1, .2])]
                     self.assertCountEqual(submitted, expected)
                     self.assertFalse(active)
+                    if max(sizes) == 30:
+                        self.assertEqual([p[0] for p in batches[0]], [30, 28, 28, 28])
                     if sizes == [28, 26, 24]:
                         self.assertEqual([p[0] for p in batches[0]], [28, 26, 26])
                         if not large_first:
@@ -86,14 +89,24 @@ class ScanSchedulingTest(unittest.TestCase):
         self.assertEqual(len(active), 2)
         self.assertTrue(all(future.cancelled() for future in active))
 
-    def test_manual_memory_estimate_accounts_for_l28_limit(self):
-        config = {"memory_gib": 8}
+    def test_rank_without_configured_maximum_does_not_limit_smaller_sizes(self):
+        points = [(26, i, m) for i, m in enumerate([0., .1, .2])]
+        with patch.object(scan, "slurm_tasks", return_value=(0, 1, points)):
+            submitted, batches, active = self.run_schedule([26, 30], 3)
+        self.assertEqual(batches[0], points)
+        self.assertCountEqual(submitted, points)
+        self.assertFalse(active)
+
+    def test_manual_memory_estimate_accounts_for_configured_maximum(self):
         with patch.dict(os.environ, {}, clear=True), \
              patch.object(scan, "estimate_point_memory", return_value=3 * 2**30), \
              redirect_stdout(io.StringIO()):
-            scan.check_memory(config, [(28, i, float(i)) for i in range(4)], 4)
-            with self.assertRaisesRegex(ValueError, "exceeds budget"):
-                scan.check_memory(config, [(26, i, float(i)) for i in range(4)], 4)
+            for Lmax in (26, 28, 30):
+                with self.subTest(Lmax=Lmax):
+                    config = {"memory_gib": 8, "sizes": [Lmax - 2, Lmax]}
+                    scan.check_memory(config, [(Lmax, i, float(i)) for i in range(4)], 4)
+                    with self.assertRaisesRegex(ValueError, "exceeds budget"):
+                        scan.check_memory(config, [(Lmax - 2, i, float(i)) for i in range(4)], 4)
 
 
 if __name__ == "__main__":
