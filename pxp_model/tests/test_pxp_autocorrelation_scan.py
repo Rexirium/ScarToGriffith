@@ -155,8 +155,9 @@ output_dir = "data/autocorrelation"
                 executor.return_value.__enter__.return_value.submit.side_effect = completed
                 scan.main()
                 calls = executor.return_value.__enter__.return_value.submit.call_args_list
-                self.assertEqual([(call.args[1], call.args[3]) for call in calls],
-                                 [(6, 0.), (6, .2), (4, 0.), (4, .2)])
+                # Scheduling interleaves sizes to limit concurrent largest-L jobs.
+                self.assertCountEqual([(call.args[1], call.args[3]) for call in calls],
+                                      [(6, 0.), (6, .2), (4, 0.), (4, .2)])
                 self.assertTrue(all(len(call.args[4]) == 100 for call in calls))
                 self.assertEqual(executor.call_args.kwargs["max_workers"], 2)
                 self.assertEqual(executor.call_args.kwargs["mp_context"].get_start_method(), "spawn")

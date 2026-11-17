@@ -4,12 +4,15 @@
 """
 
 import unittest
+from collections import Counter
+from itertools import combinations
 from unittest.mock import patch
 
 from ..pxp_autocorrelation import (
     connected_autocorrelation, average_connected_autocorrelation, local_connected_autocorrelation,
     _momentum_eigensystems, _thermal_log_weights, _uniform_connected, _spectral_correlation,
     _eigenbasis_product, _magnetization_in_eigenbasis, _full_ensemble, _local_from_average,
+    _momentum_z_shift, prepare_time_grid,
 )
 from ..pxp_basis import pxp_basis_1d
 from ..pxp_spectrum import build_hamiltonian
@@ -49,10 +52,13 @@ class SpectralBatchTest(unittest.TestCase):
                     exponent = logs[:, column, None] + (time[column] if imaginary else 1j * time) * gaps
                     expected[row, column] = np.sum(strengths * np.exp(exponent))
             for batch_rows in (7, 512):
-                with self.subTest(imaginary=imaginary, batch_rows=batch_rows), \
-                     patch('pxp_model.pxp_autocorrelation._SPECTRAL_BLOCK_ROWS', batch_rows):
-                    actual = _spectral_correlation(energies, intermediate, strengths, logs, times, imaginary)
-                np.testing.assert_allclose(actual, expected, rtol=2e-13, atol=2e-13)
+                for batch_queries in (1, 7, 128):
+                    with self.subTest(imaginary=imaginary, batch_rows=batch_rows,
+                                      batch_queries=batch_queries), \
+                         patch('pxp_model.pxp_autocorrelation._SPECTRAL_BLOCK_ROWS', batch_rows), \
+                         patch('pxp_model.pxp_autocorrelation._SPECTRAL_BLOCK_QUERIES', batch_queries):
+                        actual = _spectral_correlation(energies, intermediate, strengths, logs, times, imaginary)
+                    np.testing.assert_allclose(actual, expected, rtol=2e-13, atol=2e-13)
 
     def test_empty_times_and_zero_weight_sector(self):
         energies = np.array([0., 1.])
@@ -64,6 +70,43 @@ class SpectralBatchTest(unittest.TestCase):
             np.testing.assert_array_equal(actual, np.zeros((2, 1)))
             self.assertEqual(_spectral_correlation(
                 energies, energies, strengths, logs, times[:0], imaginary).shape, (0, 1))
+            np.testing.assert_array_equal(_spectral_correlation(
+                energies, np.empty(0), np.empty((2, 0)), np.zeros((2, 1)),
+                times, imaginary), np.zeros((2, 1)))
+
+    def test_long_real_times_and_common_energy_shift(self):
+        energies, intermediate = np.arange(9) / 8, np.arange(7) / 16
+        strengths = np.arange(63, dtype=float).reshape(9, 7) / 63
+        logs = _thermal_log_weights(np.r_[energies, intermediate], np.array([0., .2, np.inf]))[:9]
+        times = np.r_[np.linspace(-1e4, 1e4, 131), 0., 1e4]
+        expected = np.array([
+            (np.sum(strengths * np.exp(1j * t * (energies[:, None] - intermediate)), axis=1)
+             @ np.exp(logs)) for t in times
+        ])
+        for offset in (0., 1e8):
+            actual = _spectral_correlation(energies + offset, intermediate + offset,
+                                           strengths, logs, times, False)
+            np.testing.assert_allclose(actual, expected, atol=3e-12, rtol=3e-12)
+
+    def test_imaginary_low_temperature_endpoint_and_tiny_tail(self):
+        # exp(log_weight) underflows, but its tau=beta contribution is one.
+        actual = _spectral_correlation(np.array([1.]), np.array([0.]), np.ones((1, 1)),
+                                      np.array([[-1000.]]), np.array([[0.], [500.], [1000.]]), True)
+        np.testing.assert_allclose(actual[:, 0], [0., np.exp(-500.), 1.], rtol=1e-14, atol=0.)
+        tail = _spectral_correlation(np.array([0.]), np.array([1.]), np.ones((1, 1)),
+                                    np.zeros((1, 1)), np.array([[700.]]), True)
+        np.testing.assert_allclose(tail, [[np.exp(-700.)]], rtol=1e-14, atol=0.)
+
+    def test_imaginary_growing_factors_preserve_underflowed_intermediates(self):
+        # Separate exponentials would lose finite products outside [0, beta].
+        for energy, intermediate, strengths, time, exponent in (
+            (100., [0., 400.], [[0., 1.]], 2., -700.),
+            (0., [0., 800.], [[1., 0.]], -1., -100.),
+        ):
+            actual = _spectral_correlation(np.array([energy]), np.array(intermediate),
+                                           np.array(strengths), np.array([[-100.]]),
+                                           np.array([[time]]), True)
+            np.testing.assert_allclose(actual, [[np.exp(exponent)]], rtol=1e-14, atol=0.)
 
     def test_imaginary_overflow_still_raises(self):
         with self.assertRaises(FloatingPointError):
@@ -226,6 +269,33 @@ class PXPAutocorrelationTest(unittest.TestCase):
             self.assertLess(expected[-1], np.finfo(float).eps)
             np.testing.assert_allclose(actual, expected, rtol=2e-12, atol=0)
 
+    def test_uniform_conjugate_weights_preserve_tiny_variance_and_ground_mixture(self):
+        delta = 2.**-28
+        temperatures = np.array([0., .5, 1., np.inf])
+        for L in (3, 4):
+            energies = np.ones(L)
+            energies[[1, L - 1]] = 0.
+            if L % 2 == 0:
+                energies[L // 2] = 0.
+            logs = _thermal_log_weights(energies, temperatures)
+            sectors = [(None, np.array([energy]), np.ones((1, 1)), k > L // 2)
+                       for k, energy in enumerate(energies)]
+            # The conjugate pair has M=1+delta; self-conjugate sectors have 1-delta.
+            probability = np.exp(logs[1]) + np.exp(logs[-1])
+            expected = probability * (1 - probability) * (2 * delta)**2
+            for imaginary in (False, True):
+                times = np.zeros((2, len(temperatures))) if imaginary else np.array([0., .2])
+                observables = [np.array([[1 + delta if k == 1 else 1 - delta]])
+                               for k in range(L // 2 + 1)]
+                with self.subTest(L=L, imaginary=imaginary), patch(
+                        'pxp_model.pxp_autocorrelation._magnetization_in_eigenbasis',
+                        side_effect=observables) as magnetization:
+                    actual = _uniform_connected(
+                        sectors, [logs[k:k + 1] for k in range(L)], times, imaginary,
+                    )
+                self.assertEqual(magnetization.call_count, L // 2 + 1)
+                np.testing.assert_allclose(actual, np.tile(expected, (2, 1)), rtol=2e-15, atol=0.)
+
     def test_combined_results_share_computation_but_not_output_storage(self):
         times = [0., .2, 1.]
         for imaginary in (False, True):
@@ -286,6 +356,71 @@ class PXPAutocorrelationTest(unittest.TestCase):
 
 
 class PXPLocalAutocorrelationTest(unittest.TestCase):
+    def test_orbit_z_matrices_match_quspin_in_every_momentum_pair(self):
+        for L in range(2, 9):
+            bases = [pxp_basis_1d(L, kblock=k) for k in range(L)]
+            for k, source in enumerate(bases):
+                vectors = np.eye(source.Ns, dtype=complex)
+                for target_k, target in enumerate(bases):
+                    q = target_k - k
+                    ops = [["z", [j], np.exp(2j * np.pi * q * j / L) / L]
+                           for j in range(L)]
+                    expected = target.Op_shift_sector(source, ops, vectors,
+                                                      dtype=np.complex128)
+                    expected = expected.reshape(target.Ns, source.Ns)
+                    with self.subTest(L=L, k=k, target_k=target_k):
+                        actual = _momentum_z_shift(source, target, vectors, q)
+                        np.testing.assert_allclose(actual, expected, atol=2e-14, rtol=2e-14)
+                np.testing.assert_array_equal(vectors, np.eye(source.Ns))
+
+    def test_conjugate_pair_coverage_and_infinite_temperature_sum_rule(self):
+        for L in range(2, 13):
+            sectors, logs = _full_ensemble(L, .2, np.array([np.inf]))
+            indices = {id(basis): k for k, (basis, _, _, _) in enumerate(sectors)}
+            visited = []
+
+            def shift(source, target, *args, **kwargs):
+                visited.append((indices[id(source)], indices[id(target)]))
+                return _momentum_z_shift(source, target, *args, **kwargs)
+
+            times = np.array([0.])
+            average = _uniform_connected(sectors, logs, times, False)
+            before = average.copy()
+            with self.subTest(L=L), patch('pxp_model.pxp_autocorrelation._momentum_z_shift', shift):
+                actual = _local_from_average(sectors, logs, times, False, average)
+            covered = Counter()
+            for pair in visited:
+                covered.update({pair, tuple(sorted(((-pair[0]) % L, (-pair[1]) % L)))})
+            self.assertEqual(covered, Counter(combinations(range(L), 2)))
+            # Fixed pairs: k+k'=L, plus {0,L/2} for even L.
+            fixed = (L - 1) // 2 + int(L % 2 == 0)
+            self.assertEqual(len(visited), (L * (L - 1) // 2 + fixed) // 2)
+            full = pxp_basis_1d(L)
+            mean = np.mean([2 * (int(state) & 1) - 1 for state in full.states])
+            np.testing.assert_allclose(actual, [[1 - mean**2]], atol=2e-12)
+            np.testing.assert_array_equal(average, before)
+
+    def test_conjugate_reuse_matches_full_space_thermal_spectrum(self):
+        for L, m in ((4, .2), (7, 0.), (8, -.3)):
+            _, H, z = full_matrices(L, m)
+            energies, vectors = eigh(H)
+            observable = vectors.conj().T @ (z[0, :, None] * vectors)
+            strengths = np.abs(observable.T)**2
+            for temperatures in (np.array([0.]), np.array([0., .001, .5, np.inf])):
+                sectors, logs = _full_ensemble(L, m, temperatures)
+                full_logs = _thermal_log_weights(energies, temperatures)
+                mean = observable.diagonal().real @ np.exp(full_logs)
+                for imaginary in (False, True):
+                    grid = [0., .5, 1.] if imaginary else [.4, 0., -.2, .4]
+                    _, times = prepare_time_grid(temperatures, grid, imaginary)
+                    average = _uniform_connected(sectors, logs, times, imaginary)
+                    actual = _local_from_average(sectors, logs, times, imaginary, average)
+                    expected = _spectral_correlation(
+                        energies, energies, strengths, full_logs, times, imaginary,
+                    ) - mean**2
+                    with self.subTest(L=L, imaginary=imaginary, temperatures=temperatures):
+                        np.testing.assert_allclose(actual, expected, atol=3e-12, rtol=3e-12)
+
     def test_local_against_full_space_matrix_exponentials(self):
         temperatures = [0, 0.3, 1.2, np.inf]
         times = np.array([0.4, 0, -0.2, 0.4])
@@ -354,12 +489,16 @@ class PXPLocalAutocorrelationTest(unittest.TestCase):
                 ops = [["z", [j], phases[j]] for j in range(L)]
                 forward = target.Op_shift_sector(source, ops, U, dtype=np.complex128)
                 forward = forward.reshape(target.Ns, source.Ns)
+                np.testing.assert_allclose(_momentum_z_shift(source, target, U, q),
+                                           forward, atol=1e-12)
                 # Callback site 0 is the MSB, opposite to z's bit order.
                 explicit = (z[::-1].T @ phases)[:, None] * (projectors[k] @ U)
                 np.testing.assert_allclose(projectors[target_k] @ forward, explicit, atol=1e-12)
                 reverse_ops = [["z", [j], phases[j].conjugate()] for j in range(L)]
                 reverse = source.Op_shift_sector(target, reverse_ops, V, dtype=np.complex128)
                 reverse = reverse.reshape(source.Ns, target.Ns)
+                np.testing.assert_allclose(_momentum_z_shift(target, source, V, -q),
+                                           reverse, atol=1e-12)
                 np.testing.assert_allclose(V.conj().T @ forward,
                                            (U.conj().T @ reverse).conj().T, atol=1e-12)
 

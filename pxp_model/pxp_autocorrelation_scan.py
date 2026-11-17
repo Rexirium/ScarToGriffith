@@ -158,16 +158,17 @@ def estimate_point_memory(L, config):
     """Heuristic peak bytes, not a guaranteed upper bound or measured RSS.
 
     Count independent real/complex eigenvectors once, then budget eight complex
-    largest-block buffers (including a temporary conjugate source), thermal
-    arrays and returned matrices. Add 25% for
-    solver/allocator uncertainty and 512 MiB for the runtime.
+    largest-block buffers for operator products and workspace, thermal arrays
+    and returned matrices. Add 25% for solver/allocator uncertainty and
+    512 MiB for the runtime.
     """
     dimensions = momentum_dimensions(L)
     eigenvectors = sum((8 if (2 * k) % L == 0 else 16) * d**2
                        for k, d in enumerate(dimensions[:L // 2 + 1]))
     buffers = 128 * max(dimensions)**2
     thermal = 64 * sum(dimensions) * len(config["temperatures"])
-    outputs = (32 * len(config["real_times"]) + 24 * len(config["imaginary_times"])) * len(config["temperatures"])
+    outputs = ((32 * len(config["real_times"]) + 24 * len(config["imaginary_times"]))
+               * len(config["temperatures"]))
     return 1.25 * (eigenvectors + buffers + thermal + outputs) + 512 * 2**20
 
 
@@ -224,8 +225,8 @@ def slurm_tasks(sizes, ms):
     rank = int(os.environ.get("SLURM_PROCID", "0"))
     if ranks < 1 or not 0 <= rank < ranks:
         raise ValueError("Require SLURM_NTASKS >= 1 and 0 <= SLURM_PROCID < SLURM_NTASKS")
-    points = [(L, index, m) for L in sorted(sizes, reverse=True)
-              for index, m in enumerate(ms)]
+    points = [(L, m_index, m) for L in sorted(sizes, reverse=True)
+              for m_index, m in enumerate(ms)]
     return rank, ranks, points[rank::ranks]
 
 
@@ -240,14 +241,14 @@ def run_point(L, m_index, m, temperatures, real_times, imaginary_times, output_d
 
     started = perf_counter()
     _, actual_imaginary_times = prepare_time_grid(temperatures, imaginary_times, imaginary=True)
-    (average, local), (average_imaginary, local_imaginary) = (
+    (average_real, local_real), (average_imaginary, local_imaginary) = (
         connected_autocorrelation_both_times(L, m, temperatures, real_times, imaginary_times)
     )
     arrays = dict(
-        average_real_time_real=average.real,
-        average_real_time_imag=average.imag,
-        local_real_time_real=local.real,
-        local_real_time_imag=local.imag,
+        average_real_time_real=average_real.real,
+        average_real_time_imag=average_real.imag,
+        local_real_time_real=local_real.real,
+        local_real_time_imag=local_real.imag,
         average_imaginary_time=average_imaginary,
         local_imaginary_time=local_imaginary,
     )
@@ -269,6 +270,37 @@ def run_point(L, m_index, m, temperatures, real_times, imaginary_times, output_d
     return path
 
 
+def _run_points(config, points, output_dir, workers, rank):
+    """Run local tasks, allowing at most one configured largest-L point at a time."""
+    Lmax = max(config["sizes"])
+    with ProcessPoolExecutor(max_workers=workers, mp_context=mp.get_context("spawn")) as pool:
+        queued = list(points)
+        futures = {}
+        completed = 0
+        while queued or futures:
+            while queued and len(futures) < workers:
+                running_max = any(L == Lmax for L, _ in futures.values())
+                eligible = next((i for i, (L, _, _) in enumerate(queued)
+                                 if L != Lmax or not running_max), None)
+                if eligible is None:
+                    break
+                L, m_index, m = queued.pop(eligible)
+                future = pool.submit(run_point, L, m_index, m, config["temperatures"],
+                                     config["real_times"], config["imaginary_times"], output_dir)
+                futures[future] = (L, m)
+            done, _ = wait(futures, return_when=FIRST_COMPLETED)
+            for future in done:
+                L, m = futures.pop(future)
+                try:
+                    path = future.result()
+                except Exception as error:
+                    for pending in futures:
+                        pending.cancel()
+                    raise RuntimeError(f"Autocorrelation task failed: L={L}, m={m!r}") from error
+                completed += 1
+                print(f"[rank {rank}: {completed}/{len(points)}] L={L}, m={m!r}: {path.name}", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -286,9 +318,9 @@ def main():
             raise ValueError("--run-id must start with a letter/digit and contain only letters, digits, _, . or -")
         workers = min(config["workers"], len(points))
         threads = config["threads"]
-        if "SLURM_CPUS_PER_TASK" in os.environ:
-            if workers * threads > int(os.environ["SLURM_CPUS_PER_TASK"]):
-                raise ValueError("workers * threads exceeds SLURM_CPUS_PER_TASK")
+        if ("SLURM_CPUS_PER_TASK" in os.environ
+                and workers * threads > int(os.environ["SLURM_CPUS_PER_TASK"])):
+            raise ValueError("workers * threads exceeds SLURM_CPUS_PER_TASK")
     except (OSError, ValueError) as error:
         parser.error(str(error))
     total = len(config["sizes"]) * len(config["ms"])
@@ -309,33 +341,7 @@ def main():
     if not points:
         print("No assigned points; exiting without a worker pool.", flush=True)
         return
-    Lmax = max(config["sizes"])
-    with ProcessPoolExecutor(max_workers=workers, mp_context=mp.get_context("spawn")) as pool:
-        queued = list(points)
-        futures = {}
-        completed = 0
-        while queued or futures:
-            while queued and len(futures) < workers:
-                running_max = any(L == Lmax for L, _ in futures.values())
-                eligible = next((i for i, (L, _, _) in enumerate(queued)
-                                 if L != Lmax or not running_max), None)
-                if eligible is None:
-                    break
-                L, index, m = queued.pop(eligible)
-                future = pool.submit(run_point, L, index, m, config["temperatures"],
-                                     config["real_times"], config["imaginary_times"], output_dir)
-                futures[future] = (L, m)
-            done, _ = wait(futures, return_when=FIRST_COMPLETED)
-            for future in done:
-                L, m = futures.pop(future)
-                try:
-                    path = future.result()
-                except Exception as error:
-                    for pending in futures:
-                        pending.cancel()
-                    raise RuntimeError(f"Autocorrelation task failed: L={L}, m={m!r}") from error
-                completed += 1
-                print(f"[rank {rank}: {completed}/{len(points)}] L={L}, m={m!r}: {path.name}", flush=True)
+    _run_points(config, points, output_dir, workers, rank)
 
 
 if __name__ == "__main__":
