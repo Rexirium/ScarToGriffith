@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH -A hpc1906185151
-#SBATCH --partition=C064M0256G
+#SBATCH --partition=C064M1024G
 #SBATCH --qos=low
 #SBATCH --job-name=pxp-autocorrelation
 #SBATCH --nodes=8
@@ -18,8 +18,8 @@ set -euo pipefail
 # Adjust them and the memory request for your cluster/allocation as needed.
 # Submit from the repository: sbatch pxp_model/submit_autocorrelation.sh
 # Optional config: sbatch pxp_model/submit_autocorrelation.sh --config /shared/scan.toml
-# Request the measured per-node budget with sbatch --mem=... when needed;
-# The scanner does not automatically check memory before ED.
+# Supply a numeric budget with sbatch --mem=... or memory_gib in TOML.
+# The scanner checks individual points and limits concurrent estimated memory.
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate Quantum
 

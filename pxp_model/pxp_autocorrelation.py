@@ -24,7 +24,7 @@ from scipy.special import logsumexp
 
 
 _SPECTRAL_BLOCK_ROWS = 512
-_SPECTRAL_BLOCK_QUERIES = 128
+_SPECTRAL_BLOCK_QUERIES = 256
 
 
 def prepare_time_grid(Ts, ts, imaginary=False):
@@ -469,7 +469,8 @@ if __name__ == "__main__":
     corrs = local_connected_autocorrelation(L, m, Ts, ts, imaginary=False)
 
     fig, ax = plt.subplots()
-    ax.plot(ts, corrs.real)
-    ax.set(xlabel="$\\tau$", ylabel="$C(\\tau)$")
+    for i, T in enumerate(Ts):
+        ax.plot(ts, corrs[:, i].real, label=rf"$T = {T:g}$")
+    ax.set(xlabel=r"$\tau$", ylabel=r"$C(\tau)$")
     ax.legend()
     plt.show()

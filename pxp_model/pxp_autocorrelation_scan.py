@@ -11,9 +11,10 @@ process. Thread limits are inherited before workers import NumPy/QuSpin.
 No additional pools are created for temperatures, times or momentum blocks.
 imaginary_times specifies the input grid: the correlation functions use
 ts/max(ts)/T for T>0 and retain ts at T=0. No scaling is done by the scanner.
-Memory estimation/check functions remain available for manual use; normal
-runs do not check memory before starting workers. Manual checks use Slurm's
-allocation and/or memory_gib (GiB per node) and require one Slurm task per node.
+Memory-limited scheduling uses the smaller of Slurm's allocation and
+memory_gib (GiB per node), requiring at least one known budget and one Slurm
+task per node. Unknown budgets or individually oversized points fail before
+creating output or workers. Estimates are heuristic, not an RSS guarantee.
 
 For Slurm, use submit_autocorrelation.sh: srun launches one copy per node.
 The supplied Slurm script uses 8 nodes, 1 task/node and 64 CPUs/task.
@@ -21,18 +22,20 @@ The TOML controls worker processes/task and threads/process.
 SLURM_PROCID and SLURM_NTASKS partition (L,m) points without MPI dependencies.
 Larger sizes are queued first, with each size spread across ranks. Each rank
 has its own local pool; there is no work stealing between nodes.
-Each rank runs at most one L=Lmax point at a time, where Lmax=max(sizes)
-from the TOML config (one per node with the supplied Slurm script).
-Other sizes continue filling available worker slots.
+Each rank reserves 512 MiB for the parent and admits tasks while their summed
+memory estimates fit the remaining budget, up to workers concurrent points.
+Smaller sizes can fill slots when a larger queued point does not fit.
 
-output_dir is relative to the TOML file, unless absolute. Each invocation
-creates a new YYYYMMDD_HHMMSS_microseconds directory (UTC+08:00), copies the
-config there, and saves one NPZ per (L, m). Completed files survive a later
-task failure; failed tasks cause a nonzero exit. Existing runs are preserved.
-Multi-rank runs require the SAME --run-id on every rank and shared storage
-for the code, config and output. Results and config copies go under
-output_dir/<run-id>/rank_<rank>/; an existing rank directory is rejected.
-Single-rank runs keep the flat timestamped layout unless --run-id is given.
+output_dir is relative to the TOML file, unless absolute. Each run uses a new
+YYYYMMDD_HHMMSS_microseconds directory (UTC+08:00) or the supplied --run-id.
+Rank zero creates this directory and atomically publishes its only config.toml.
+Results go under <run>/L=<L>/, with one NPZ per (L, m). Completed files survive
+a later task failure; failed tasks cause a nonzero exit. Existing runs and
+results are never overwritten.
+Multi-rank runs require the SAME unique --run-id and config on every rank,
+and shared storage for code, config and output. Other ranks wait up to 60 s
+for config.toml, then verify the config, rank count and Slurm job/step IDs.
+Hidden .rank_<rank> files reject duplicate rank launches; do not remove them.
 
 Each NPZ contains L, m, m_index (zero-based index into ms), temperatures,
 real_times, imaginary_times_input, imaginary_times,
@@ -51,13 +54,17 @@ operator matrix elements. Eigenvectors remain inside the worker and are not save
 import argparse
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from datetime import datetime, timedelta, timezone
+import json
 import math
 import multiprocessing as mp
 import os
 from pathlib import Path
 import re
-from time import perf_counter
+from time import perf_counter, sleep
 import tomllib
+
+
+_OUTPUT_WAIT_SECONDS = 60
 
 
 def _range_grid(value, name):
@@ -175,7 +182,7 @@ def estimate_point_memory(L, config):
 def memory_budget(config):
     """Use the smaller of an explicit budget and a known Slurm allocation."""
     if int(os.environ.get("SLURM_NTASKS_PER_NODE", "1")) != 1:
-        raise ValueError("Memory preflight requires one Slurm task per node (--ntasks-per-node=1)")
+        raise ValueError("Memory scheduling requires one Slurm task per node (--ntasks-per-node=1)")
     budgets = []
     if "memory_gib" in config:
         budgets.append(config["memory_gib"] * 2**30)
@@ -198,23 +205,21 @@ def memory_budget(config):
 
 
 def check_memory(config, points, workers):
-    """Reject the heaviest possible local combination before allocating matrices."""
+    """Reject oversized points; return the worker budget and per-size estimates."""
     if not points:
         return
     budget = memory_budget(config)
-    Lmax = max(config["sizes"])
     estimates = {L: estimate_point_memory(L, config) for L in {point[0] for point in points}}
-    concurrent = [estimates[L] for L, _, _ in points if L != Lmax]
-    if Lmax in estimates:
-        concurrent.append(estimates[Lmax])
-    peak = 512 * 2**20 + sum(sorted(concurrent, reverse=True)[:workers])
-    print(f"Memory estimate: {peak / 2**30:.1f} GiB/node with {workers} workers; "
-          f"budget={budget / 2**30:.1f} GiB/node (heuristic, not an RSS guarantee)", flush=True)
+    largest = max(estimates, key=estimates.get)
+    peak = 512 * 2**20 + estimates[largest]
     if peak > budget:
-        largest = max(estimates, key=estimates.get)
         raise ValueError(f"Estimated memory {peak / 2**30:.1f} GiB exceeds budget {budget / 2**30:.1f} GiB; "
                          f"L={largest} needs about {estimates[largest] / 2**30:.1f} GiB per worker. "
-                         "Reduce sizes/workers or request sufficient memory; a single oversized point cannot be split across nodes.")
+                         "Reduce sizes or request sufficient memory; a single oversized point cannot be split across nodes.")
+    print(f"Memory budget={budget / 2**30:.1f} GiB/node, reserving 0.5 GiB for the parent; "
+          f"largest point L={largest}: {estimates[largest] / 2**30:.1f} GiB; "
+          f"up to {workers} workers, limited by memory (heuristic, not an RSS guarantee)", flush=True)
+    return budget - 512 * 2**20, estimates
 
 
 def slurm_tasks(sizes, ms):
@@ -228,6 +233,40 @@ def slurm_tasks(sizes, ms):
     points = [(L, m_index, m) for L in sorted(sizes, reverse=True)
               for m_index, m in enumerate(ms)]
     return rank, ranks, points[rank::ranks]
+
+
+def prepare_output(output_dir, source, rank, ranks):
+    """Publish one config, then admit each matching rank exactly once."""
+    config_path = output_dir / "config.toml"
+    owner_path = output_dir / ".rank_0000"
+    identity = {"ranks": ranks, "job_id": os.environ.get("SLURM_JOB_ID"),
+                "step_id": os.environ.get("SLURM_STEP_ID")}
+    if rank == 0:
+        output_dir.mkdir(parents=True, exist_ok=False)
+        with owner_path.open("x", encoding="utf-8") as handle:
+            json.dump(identity, handle)
+        temporary = config_path.with_suffix(".toml.tmp")
+        try:
+            temporary.write_text(source, encoding="utf-8")
+            temporary.replace(config_path)
+        finally:
+            temporary.unlink(missing_ok=True)
+        return
+    deadline = perf_counter() + _OUTPUT_WAIT_SECONDS
+    while True:
+        try:
+            saved_source = config_path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            if perf_counter() >= deadline:
+                raise TimeoutError(f"Timed out waiting for rank 0 to initialize {output_dir}")
+            sleep(.1)
+            continue
+        if json.loads(owner_path.read_text(encoding="utf-8")) != identity:
+            raise ValueError("Run directory belongs to a different Slurm job/step or rank count")
+        if saved_source != source:
+            raise ValueError("Run directory config.toml differs from this rank's config")
+        break
+    (output_dir / f".rank_{rank:04d}").touch(exist_ok=False)
 
 
 def run_point(L, m_index, m, temperatures, real_times, imaginary_times, output_dir):
@@ -254,10 +293,16 @@ def run_point(L, m_index, m, temperatures, real_times, imaginary_times, output_d
     )
     if any(not np.all(np.isfinite(values)) for values in arrays.values()):
         raise FloatingPointError(f"Nonfinite correlation at L={L}, m={m!r}")
-    path = Path(output_dir) / f"autocorrelation_L={L}_m_index={m_index:04d}.npz"
+    size_dir = Path(output_dir) / f"L={L}"
+    size_dir.mkdir(parents=True, exist_ok=True)
+    path = size_dir / f"autocorrelation_L={L}_m_index={m_index:04d}.npz"
     temporary = path.with_suffix(".npz.tmp")
+    # Acquire outside try so a competing writer's temporary file is never removed.
+    handle = temporary.open("xb")
     try:
-        with temporary.open("xb") as handle:
+        with handle:
+            if path.exists():
+                raise FileExistsError(f"Result already exists: {path}")
             np.savez_compressed(
                 handle, L=L, m=m, m_index=m_index, temperatures=temperatures,
                 real_times=real_times, imaginary_times=actual_imaginary_times,
@@ -265,23 +310,23 @@ def run_point(L, m_index, m, temperatures, real_times, imaginary_times, output_d
                 elapsed_seconds=perf_counter() - started, **arrays,
             )
         temporary.replace(path)
-    finally:
+    except BaseException:
         temporary.unlink(missing_ok=True)
+        raise
     return path
 
 
-def _run_points(config, points, output_dir, workers, rank):
-    """Run local tasks, allowing at most one configured largest-L point at a time."""
-    Lmax = max(config["sizes"])
+def _run_points(config, points, output_dir, workers, rank, budget, estimates):
+    """Run the first queued point that fits the remaining worker memory budget."""
     with ProcessPoolExecutor(max_workers=workers, mp_context=mp.get_context("spawn")) as pool:
         queued = list(points)
         futures = {}
         completed = 0
         while queued or futures:
             while queued and len(futures) < workers:
-                running_max = any(L == Lmax for L, _ in futures.values())
+                used = sum(estimates[L] for L, _ in futures.values())
                 eligible = next((i for i, (L, _, _) in enumerate(queued)
-                                 if L != Lmax or not running_max), None)
+                                 if used + estimates[L] <= budget), None)
                 if eligible is None:
                     break
                 L, m_index, m = queued.pop(eligible)
@@ -321,6 +366,8 @@ def main():
         if ("SLURM_CPUS_PER_TASK" in os.environ
                 and workers * threads > int(os.environ["SLURM_CPUS_PER_TASK"])):
             raise ValueError("workers * threads exceeds SLURM_CPUS_PER_TASK")
+        if points:
+            budget, estimates = check_memory(config, points, workers)
     except (OSError, ValueError) as error:
         parser.error(str(error))
     total = len(config["sizes"]) * len(config["ms"])
@@ -330,10 +377,7 @@ def main():
 
     stamp = datetime.now(timezone(timedelta(hours=8))).strftime("%Y%m%d_%H%M%S_%f")
     output_dir = config["output_dir"] / (args.run_id or stamp)
-    if ranks > 1:
-        output_dir = output_dir / f"rank_{rank:04d}"
-    output_dir.mkdir(parents=True, exist_ok=False)
-    (output_dir / "config.toml").write_text(source, encoding="utf-8")
+    prepare_output(output_dir, source, rank, ranks)
     print(f"Rank={rank}/{ranks}, local tasks={len(points)}/{total}, "
           f"temperatures={len(config['temperatures'])}, "
           f"workers={workers}, threads/worker={threads}", flush=True)
@@ -341,7 +385,7 @@ def main():
     if not points:
         print("No assigned points; exiting without a worker pool.", flush=True)
         return
-    _run_points(config, points, output_dir, workers, rank)
+    _run_points(config, points, output_dir, workers, rank, budget, estimates)
 
 
 if __name__ == "__main__":

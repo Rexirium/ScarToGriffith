@@ -155,9 +155,8 @@ output_dir = "data/autocorrelation"
                 executor.return_value.__enter__.return_value.submit.side_effect = completed
                 scan.main()
                 calls = executor.return_value.__enter__.return_value.submit.call_args_list
-                # Scheduling interleaves sizes to limit concurrent largest-L jobs.
-                self.assertCountEqual([(call.args[1], call.args[3]) for call in calls],
-                                      [(6, 0.), (6, .2), (4, 0.), (4, .2)])
+                self.assertEqual([(call.args[1], call.args[3]) for call in calls],
+                                 [(6, 0.), (6, .2), (4, 0.), (4, .2)])
                 self.assertTrue(all(len(call.args[4]) == 100 for call in calls))
                 self.assertEqual(executor.call_args.kwargs["max_workers"], 2)
                 self.assertEqual(executor.call_args.kwargs["mp_context"].get_start_method(), "spawn")
@@ -285,16 +284,17 @@ imaginary_times = { start = -1, stop = 4, length = 201, scale = "log10" }
                 with self.assertRaises(ValueError):
                     scan.memory_budget({})
 
-    def test_manual_memory_check_counts_concurrent_points_and_rejects_overflow(self):
+    def test_memory_preflight_allows_throttling_and_rejects_oversized_points(self):
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {}, clear=True):
             config_path = self.write_config(directory)
             config, _ = scan.load_config(config_path)
             config["memory_gib"] = 1.25
             points = [(4, 0, 0.), (4, 1, .2)]
             with redirect_stdout(io.StringIO()):
-                scan.check_memory(config, points, 1)
-                with self.assertRaisesRegex(ValueError, "exceeds budget"):
-                    scan.check_memory(config, points, 2)
+                for workers in (1, 2):
+                    budget, estimates = scan.check_memory(config, points, workers)
+                    self.assertEqual(budget, .75 * 2**30)
+                    self.assertEqual(estimates, {4: scan.estimate_point_memory(4, config)})
             self.assertGreater(scan.estimate_point_memory(30, config), 1024 * 2**30)
             with redirect_stdout(io.StringIO()), self.assertRaisesRegex(ValueError, "exceeds budget"):
                 scan.check_memory(config, [(30, 0, 0.)], 1)
@@ -306,6 +306,7 @@ imaginary_times = { start = -1, stop = 4, length = 201, scale = "log10" }
         temperatures, times = [0., 1., np.inf], [.1, 1e4]
         with tempfile.TemporaryDirectory() as directory:
             path = scan.run_point(4, 0, .2, temperatures, [0., .1], times, directory)
+            self.assertEqual(path.parent, Path(directory) / "L=4")
             with np.load(path, allow_pickle=False) as saved:
                 np.testing.assert_array_equal(saved["imaginary_times_input"], times)
                 np.testing.assert_allclose(saved["imaginary_times"], [[.1, 1e-5, 0.], [1e4, 1., 0.]], atol=1e-16)
@@ -338,7 +339,7 @@ imaginary_times = { start = -1, stop = 4, length = 201, scale = "log10" }
                 executor.assert_not_called()
             self.assertFalse((Path(directory) / "data").exists())
 
-    def test_six_simulated_ranks_share_run_without_duplicate_results(self):
+    def test_six_simulated_ranks_read_back_by_size_with_one_config(self):
         with tempfile.TemporaryDirectory() as directory:
             source = self.template.replace("workers = 2", "workers = 1")
             config_path = self.write_config(directory, source)
@@ -364,27 +365,39 @@ imaginary_times = { start = -1, stop = 4, length = 201, scale = "log10" }
                         process.communicate()
             config, _ = scan.load_config(config_path)
             run = config["output_dir"] / "six-ranks"
-            paths = list(run.glob("rank_*/*.npz"))
-            self.assertEqual(len(paths), 4)
-            self.assertEqual(len({path.name for path in paths}), 4)
+            saved_config, saved_source = scan.load_config(run / "config.toml")
+            self.assertEqual(saved_source, source)
+            for key in ("sizes", "ms", "temperatures", "real_times", "imaginary_times"):
+                self.assertEqual(saved_config[key], config[key])
+            expected = {
+                run / f"L={L}" / f"autocorrelation_L={L}_m_index={index:04d}.npz": (L, index, m)
+                for L in saved_config["sizes"] for index, m in enumerate(saved_config["ms"])
+            }
+            paths = list(run.glob("L=*/autocorrelation_L=*_m_index=*.npz"))
+            self.assertEqual(set(paths), set(expected))
             self.assertEqual(list(run.rglob("*.tmp")), [])
-            for rank in range(6):
-                self.assertEqual((run / f"rank_{rank:04d}" / "config.toml").read_text(encoding="utf-8"), source)
+            self.assertEqual(list(run.rglob("config.toml")), [run / "config.toml"])
+            self.assertEqual((run / "config.toml").read_text(encoding="utf-8"), source)
+            self.assertEqual({p.name for p in run.iterdir() if p.is_dir()}, {"L=4", "L=6"})
+            self.assertEqual(len(list(run.glob(".rank_*"))), 6)
             for path in paths:
                 with np.load(path, allow_pickle=False) as saved:
                     L, m = int(saved["L"]), float(saved["m"])
+                    self.assertEqual((L, int(saved["m_index"]), m), expected[path])
+                    self.assertEqual(path.parent.name, f"L={L}")
                     real, imaginary = correlation.connected_autocorrelation_both_times(
                         L, m, config["temperatures"], config["real_times"], config["imaginary_times"])
                     for name, real_values, imaginary_values in zip(("average", "local"), real, imaginary):
                         np.testing.assert_allclose(saved[f"{name}_real_time_real"], real_values.real, atol=3e-12)
                         np.testing.assert_allclose(saved[f"{name}_real_time_imag"], real_values.imag, atol=3e-12)
                         np.testing.assert_allclose(saved[f"{name}_imaginary_time"], imaginary_values, atol=3e-12)
-            before = {path: path.read_bytes() for path in paths}
-            retry = subprocess.run(command, env=dict(base_env, SLURM_NTASKS="6", SLURM_PROCID="0"),
-                                   capture_output=True, text=True, timeout=30)
-            self.assertNotEqual(retry.returncode, 0)
-            self.assertIn("FileExistsError", retry.stderr)
-            self.assertEqual(before, {path: path.read_bytes() for path in paths})
+            before = {path: path.read_bytes() for path in run.rglob("*") if path.is_file()}
+            for rank in (0, 1, 5):
+                retry = subprocess.run(command, env=dict(base_env, SLURM_NTASKS="6", SLURM_PROCID=str(rank)),
+                                       capture_output=True, text=True, timeout=30)
+                self.assertNotEqual(retry.returncode, 0)
+                self.assertIn("FileExistsError", retry.stderr)
+                self.assertEqual(before, {path: path.read_bytes() for path in run.rglob("*") if path.is_file()})
 
     def test_spawned_results_match_serial_for_all_temperatures(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -402,13 +415,19 @@ imaginary_times = { start = -1, stop = 4, length = 201, scale = "log10" }
             runs = list(config["output_dir"].iterdir())
             self.assertEqual(len(runs), 1)
             self.assertEqual((runs[0] / "config.toml").read_text(encoding="utf-8"), source)
-            paths = list(runs[0].glob("*.npz"))
-            self.assertEqual(len(paths), 4)
-            self.assertEqual(list(runs[0].glob("*.tmp")), [])
+            self.assertEqual(list(runs[0].rglob("config.toml")), [runs[0] / "config.toml"])
+            self.assertEqual({p.name for p in runs[0].iterdir() if p.is_dir()}, {"L=4", "L=6"})
+            paths = list(runs[0].glob("L=*/autocorrelation_L=*_m_index=*.npz"))
+            self.assertEqual(set(paths), {
+                runs[0] / f"L={L}" / f"autocorrelation_L={L}_m_index={index:04d}.npz"
+                for L in config["sizes"] for index in range(len(config["ms"]))
+            })
+            self.assertEqual(list(runs[0].rglob("*.tmp")), [])
             seen = set()
             for path in paths:
                 with np.load(path, allow_pickle=False) as saved:
                     L, m = int(saved["L"]), float(saved["m"])
+                    self.assertEqual(path.parent.name, f"L={L}")
                     seen.add((L, m))
                     self.assertEqual(m, config["ms"][int(saved["m_index"])])
                     for name in ("temperatures", "real_times"):
@@ -437,6 +456,55 @@ imaginary_times = { start = -1, stop = 4, length = 201, scale = "log10" }
                     for name in saved.files:
                         self.assertFalse(np.iscomplexobj(saved[name]))
             self.assertEqual(seen, {(L, m) for L in config["sizes"] for m in config["ms"]})
+
+    def test_existing_result_is_never_overwritten(self):
+        with tempfile.TemporaryDirectory() as directory:
+            args = (4, 0, .2, [1.], [0.], [0.], directory)
+            path = scan.run_point(*args)
+            before = path.read_bytes()
+            with self.assertRaises(FileExistsError):
+                scan.run_point(*args)
+            self.assertEqual(path.read_bytes(), before)
+            self.assertFalse(path.with_suffix(".npz.tmp").exists())
+
+    def test_competing_writer_cannot_remove_active_temporary_file(self):
+        save = np.savez_compressed
+        with tempfile.TemporaryDirectory() as directory:
+            args = (4, 0, .2, [1.], [0.], [0.], directory)
+
+            def competing_save(handle, **arrays):
+                with self.assertRaises(FileExistsError):
+                    scan.run_point(*args)
+                self.assertTrue(Path(handle.name).exists())
+                save(handle, **arrays)
+
+            with patch.object(np, "savez_compressed", side_effect=competing_save):
+                path = scan.run_point(*args)
+            with np.load(path, allow_pickle=False) as saved:
+                self.assertEqual(int(saved["L"]), 4)
+            self.assertFalse(path.with_suffix(".npz.tmp").exists())
+
+    def test_failed_write_cleans_its_temporary_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(np, "savez_compressed", side_effect=OSError("write failed")), \
+                 self.assertRaisesRegex(OSError, "write failed"):
+                scan.run_point(4, 0, .2, [1.], [0.], [0.], directory)
+            self.assertEqual(list((Path(directory) / "L=4").iterdir()), [])
+
+    def test_successful_write_does_not_unlink_a_later_writers_temporary_file(self):
+        replace = Path.replace
+
+        def publish_then_compete(temporary, target):
+            result = replace(temporary, target)
+            # Another writer can acquire this name immediately after publication.
+            temporary.write_bytes(b"next writer")
+            return result
+
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.object(Path, "replace", autospec=True, side_effect=publish_then_compete):
+            path = scan.run_point(4, 0, .2, [1.], [0.], [0.], directory)
+            self.assertTrue(path.is_file())
+            self.assertEqual(path.with_suffix(".npz.tmp").read_bytes(), b"next writer")
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@
 # All ranks must read the same config on shared storage.
 # Arrays or ranges; log10 start/stop are base-10 exponents.
 # Arrays retain their order. sizes and ms must not contain duplicates.
-sizes = [12, 14, 16, 18, 20, 22, 24]
+sizes = [12, 14, 16, 18, 20, 22, 24, 26]
 ms = { start = 0.0, stop = 1.0, length = 51, scale = "linear" }
 temperatures = { start = 0.0, stop = 1.0, length = 101, scale = "linear" }
 # T=0 selects the ground-state mixture; TOML inf gives infinite temperature.
@@ -17,20 +17,22 @@ imaginary_times = { start = -1, stop = 4, length = 201, scale = "log10" }
 # NPZ imaginary_times is the 2D actual grid (time, temperature).
 
 # Per node: at most workers independent (L,m) points run concurrently.
-# At most one L=max(sizes) point runs per node; other sizes fill remaining worker slots.
+# Multiple largest-size points may run if their summed memory estimates fit.
+# Smaller points fill spare memory; 512 MiB/node is reserved for the parent.
 # Per task: 8 workers * 8 threads = 64 CPUs/node (512 over eight nodes).
 # Match submit_autocorrelation.sh's --cpus-per-task and budget RAM per worker.
-# These are starting values, not measured optima. Reduce workers for large L.
+# These are starting values, not measured optima. Memory limits concurrency.
 workers = 8
 threads = 8
-# Normal runs skip memory checks. For manual check_memory calls, the optional
-# budget below is in GiB per node and may only LOWER a known Slurm limit.
-# Manual checks need this if Slurm reports no numeric memory limit.
+# Scheduling uses the smaller of this budget (GiB/node) and Slurm's limit.
+# Set this for local runs or if Slurm reports no numeric memory limit (--mem=0).
+# Unknown budgets or individually oversized points fail before creating output.
 # memory_gib = 128.0  # Example only: replace with your usable per-node budget.
 # Estimates include all sectors, solver buffers and concurrent workers;
 # array estimates carry a 25% safety margin plus 512 MiB per process.
 # they are heuristic, not a guaranteed RSS bound.
 # Relative to this TOML file; must be shared across nodes.
-# Slurm outputs: <output_dir>/<run-id>/rank_0000/*.npz, rank_0001/*.npz, ...
-# Local runs without --run-id retain a flat timestamped directory.
+# Local and Slurm outputs: <output_dir>/<run-id or timestamp>/L=<L>/*.npz.
+# Rank zero saves the only config.toml at the run root; ranks share L directories.
+# Hidden .rank_<rank> files guard against duplicate launches; retain them.
 output_dir = "data/autocorrelation"
