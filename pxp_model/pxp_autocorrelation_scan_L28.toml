@@ -1,0 +1,24 @@
+# L=28 full-ensemble autocorrelations on C064M1024G (64 CPUs, 1024 GiB/node).
+# Default submission runs L<=26 first, then this scan in the same 8-node job:
+# sbatch pxp_model/submit_autocorrelation.sh
+# Only L=28: sbatch pxp_model/submit_autocorrelation_L28.sh
+# For one node, add --nodes=1 --ntasks=1 before the script path.
+sizes = [28]
+# 51 fields; loading replaces 0.66 with exactly 0.655, preserving the count.
+ms = { start = 0.0, stop = 1.0, length = 51, scale = "linear" }
+# 101 temperatures, logarithmically spaced from 0.01 to 1.0.
+temperatures = { start = -2.0, stop = 0.0, length = 101, scale = "log10" }
+real_times = { start = -1, stop = 4, length = 201, scale = "log10" }
+imaginary_times = { start = -1, stop = 4, length = 201, scale = "log10" }
+# At T>0: tau = ts/max(ts)/(2*T); at T=0: tau = ts unchanged.
+# NPZ stores the actual 2D imaginary_times and the 1D imaginary_times_input.
+
+# Each (L,m) worker holds all independent momentum eigensystems.
+# Estimated peak: 271.1 GiB/worker; two workers + parent: 542.7 GiB/node.
+# 2 workers * 32 threads = 64 CPUs/node; retain headroom for unmeasured RSS.
+workers = 2
+threads = 32
+# Reserve 64 GiB of nominal node RAM; a smaller Slurm limit takes precedence.
+# Estimates include solver workspace and a 25% margin, but are not RSS bounds.
+memory_gib = 960.0
+output_dir = "data/autocorrelation"

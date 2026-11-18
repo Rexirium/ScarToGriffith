@@ -31,7 +31,7 @@ def prepare_time_grid(Ts, ts, imaginary=False):
     """Return temperatures and the actual time grid, preserving input order.
 
     Real time stays 1D. Imaginary time has axes (time, temperature): for T>0
-    use ts/max(ts)/T; at T=0 retain ts. Empty and all-zero grids stay empty
+    use ts/max(ts)/(2*T); at T=0 retain ts. Empty and all-zero grids stay empty
     and zero, respectively. A nonzero grid with max(ts)=0 cannot be normalized.
     """
     if not isinstance(imaginary, (bool, np.bool_)):
@@ -53,7 +53,7 @@ def prepare_time_grid(Ts, ts, imaginary=False):
             if maximum == 0:
                 raise ValueError("max(ts) must be nonzero to normalize a nonzero imaginary-time grid")
             with np.errstate(over="ignore", invalid="ignore"):
-                actual[:, positive] = (times / maximum)[:, None] / temperatures[positive]
+                actual[:, positive] = (times / maximum)[:, None] * 0.5 / temperatures[positive]
             if not np.all(np.isfinite(actual)):
                 raise ValueError("normalized imaginary times must be finite")
         times = actual
@@ -339,9 +339,9 @@ def average_connected_autocorrelation(L, m, Ts, ts, imaginary=False):
         equal weight to every constrained state, not to every sector.
     ts : one-dimensional array_like
         Finite times, retained in the supplied order. Empty arrays are valid.
-        For imaginary=True and T>0, actual tau = ts/max(ts)/T; at T=0,
+        For imaginary=True and T>0, actual tau = ts/max(ts)/(2*T); at T=0,
         actual tau = ts unchanged. All-zero grids stay zero. For nonnegative
-        grids the finite-temperature times lie in [0,1/T].
+        grids the finite-temperature times lie in [0,1/(2*T)].
     imaginary : bool, optional
         False: M(t) = exp(i H t) M exp(-i H t).
         True: M(tau) = exp(H tau) M exp(-H tau), in units hbar=k_B=1.
@@ -444,7 +444,7 @@ def connected_autocorrelation_both_times(L, m, Ts, ts, taus):
     imaginary-time outputs are real. Here "real" names the time domain,
     not the real part of the correlation.
 
-    Actual imaginary time is taus/max(taus)/T for T>0, and taus unchanged
+    Actual imaginary time is taus/max(taus)/(2*T) for T>0, and taus unchanged
     for T=0, exactly as in connected_autocorrelation(..., imaginary=True).
 
     Reuse one set of eigensystems and global Gibbs weights for both domains.

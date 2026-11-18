@@ -25,8 +25,10 @@ class ScanSchedulingTest(unittest.TestCase):
             point = (L, index, m)
             submitted.append(point)
             active[future] = point
-            self.assertLessEqual(len(active), workers)
-            self.assertLessEqual(512 * 2**20 + sum(estimates[p[0]] for p in active.values()),
+            pool_size = executor.call_args.kwargs["max_workers"]
+            self.assertLessEqual(len(active), pool_size)
+            self.assertLessEqual((1 + pool_size - len(active)) * scan._PROCESS_MEMORY
+                                 + sum(estimates[p[0]] for p in active.values()),
                                  memory_gib * 2**30)
             return future
 
@@ -77,7 +79,7 @@ class ScanSchedulingTest(unittest.TestCase):
                 with self.subTest(sizes=sizes, workers=workers, budget=memory_gib, large_first=large_first):
                     submitted, _, active = self.run_schedule(
                         sizes, workers, memory_gib, large_first=large_first)
-                    expected = [(L, i, m) for L in sizes for i, m in enumerate([0., .1, .2])]
+                    expected = [(L, i, m) for L in sizes for i, m in enumerate([0., .1, .655])]
                     self.assertCountEqual(submitted, expected)
                     self.assertFalse(active)
 
@@ -86,16 +88,16 @@ class ScanSchedulingTest(unittest.TestCase):
         self.assertEqual([p[0] for p in batches[0]], [26, 26, 26])
 
     def test_smaller_points_fill_remaining_memory(self):
-        _, batches, _ = self.run_schedule([28, 26, 24], 4, 4.5)
+        _, batches, _ = self.run_schedule([28, 26, 24], 3, 5.0)
         self.assertEqual([p[0] for p in batches[0]], [28, 24])
         self.assertIn((28, 0, 0.), batches[1])
         self.assertIn((24, 1, .1), batches[1])
 
     def test_completed_point_releases_budget(self):
-        _, batches, _ = self.run_schedule([26, 24], 3, 4.5, large_first=True)
+        _, batches, _ = self.run_schedule([26, 24], 3, 5.0, large_first=True)
         self.assertEqual([p[0] for p in batches[0]], [26, 26])
         self.assertEqual([p[0] for p in batches[1]], [26, 26])
-        self.assertIn((26, 2, .2), batches[1])
+        self.assertIn((26, 2, .655), batches[1])
 
     def test_failure_cancels_active_jobs_without_submitting_more(self):
         submitted, batches, active = self.run_schedule([28, 26], 3, 6.5, fail=True)
@@ -119,10 +121,22 @@ class ScanSchedulingTest(unittest.TestCase):
             for Lmax in (26, 28, 30):
                 with self.subTest(Lmax=Lmax):
                     config = {"memory_gib": 8, "sizes": [Lmax - 2, Lmax]}
-                    budget, estimates = scan.check_memory(
+                    budget, estimates, workers = scan.check_memory(
                         config, [(L, i, float(i)) for L in config["sizes"] for i in range(4)], 4)
                     self.assertEqual(budget, 7.5 * 2**30)
                     self.assertEqual(estimates, {L: 3 * 2**30 for L in config["sizes"]})
+                    self.assertEqual(workers, 4)
+
+    def test_idle_workers_are_reserved_when_only_one_point_runs(self):
+        _, batches, _ = self.run_schedule([28, 26, 24], 4, 4.5)
+        self.assertEqual([p[0] for p in batches[0]], [28])
+
+    def test_unschedulable_point_fails_instead_of_waiting_on_empty_futures(self):
+        with patch.object(scan, "ProcessPoolExecutor"), patch.object(scan, "wait") as wait:
+            with self.assertRaisesRegex(RuntimeError, "No queued point fits"):
+                scan._run_points({}, [(28, 0, .655)], Path("unused"), 1, 0,
+                                 .5 * 2**30, {28: 2**30})
+            wait.assert_not_called()
 
 
 if __name__ == "__main__":

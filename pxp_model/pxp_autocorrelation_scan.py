@@ -6,11 +6,13 @@ Requires Python >= 3.11 and pxp_model/requirements.txt. The default config
 is pxp_autocorrelation_scan.toml beside this script. sizes is an integer
 array; other grids accept arrays or {start, stop, length, scale} tables.
 scale defaults to "linear"; "log10" interprets start/stop as base-10 exponents.
+After expanding ms, replace the value nearest 0.655 with exactly 0.655
+(the first in input order wins a tie), preserving length and order.
 workers and threads control LOCAL process count and BLAS/OpenMP threads per
 process. Thread limits are inherited before workers import NumPy/QuSpin.
 No additional pools are created for temperatures, times or momentum blocks.
 imaginary_times specifies the input grid: the correlation functions use
-ts/max(ts)/T for T>0 and retain ts at T=0. No scaling is done by the scanner.
+ts/max(ts)/(2*T) for T>0 and retain ts at T=0. No scaling is done by the scanner.
 Memory-limited scheduling uses the smaller of Slurm's allocation and
 memory_gib (GiB per node), requiring at least one known budget and one Slurm
 task per node. Unknown budgets or individually oversized points fail before
@@ -18,12 +20,16 @@ creating output or workers. Estimates are heuristic, not an RSS guarantee.
 
 For Slurm, use submit_autocorrelation.sh: srun launches one copy per node.
 The supplied Slurm script uses 8 nodes, 1 task/node and 64 CPUs/task.
+By default it runs L<=26 then L=28 sequentially within one allocation;
+pass --config to the submission script to run only that configuration.
 The TOML controls worker processes/task and threads/process.
 SLURM_PROCID and SLURM_NTASKS partition (L,m) points without MPI dependencies.
 Larger sizes are queued first, with each size spread across ranks. Each rank
 has its own local pool; there is no work stealing between nodes.
-Each rank reserves 512 MiB for the parent and admits tasks while their summed
-memory estimates fit the remaining budget, up to workers concurrent points.
+Each rank reserves 512 MiB for the parent and every worker, including idle
+workers, then admits tasks while their estimated extra memory fits the budget.
+The pool is reduced if idle worker overhead would prevent the largest point
+from fitting. Startup reports each size's peak and allowed concurrency.
 Smaller sizes can fill slots when a larger queued point does not fit.
 
 output_dir is relative to the TOML file, unless absolute. Each run uses a new
@@ -65,6 +71,7 @@ import tomllib
 
 
 _OUTPUT_WAIT_SECONDS = 60
+_PROCESS_MEMORY = 512 * 2**20
 
 
 def _range_grid(value, name):
@@ -131,6 +138,8 @@ def load_config(path):
     if missing:
         raise ValueError(f"Missing config keys: {', '.join(sorted(missing))}")
     config.update({key: config_grid(config[key], key) for key in grids})
+    ms = config["ms"]
+    ms[min(range(len(ms)), key=lambda i: abs(ms[i] - 0.655))] = 0.655
     for key in ("workers", "threads"):
         value = config.setdefault(key, 1)
         if type(value) is not int or value < 1:
@@ -165,27 +174,43 @@ def estimate_point_memory(L, config):
     """Heuristic peak bytes, not a guaranteed upper bound or measured RSS.
 
     Count independent real/complex eigenvectors once, then budget eight complex
-    largest-block buffers for operator products and workspace, thermal arrays
-    and returned matrices. Add 25% for solver/allocator uncertainty and
+    largest-block buffers for operator products and workspace, basis/sparse
+    storage, batched spectral factors, thermal arrays and simultaneous time
+    grids/results/temporaries. Add 25% for solver/allocator uncertainty and
     512 MiB for the runtime.
     """
     dimensions = momentum_dimensions(L)
     eigenvectors = sum((8 if (2 * k) % L == 0 else 16) * d**2
                        for k, d in enumerate(dimensions[:L // 2 + 1]))
     buffers = 128 * max(dimensions)**2
+    basis = 64 * L * max(dimensions)
+    # Up to 256 queries in _spectral_correlation, without importing NumPy here.
+    queries = min(256, max(len(config["real_times"]),
+                           len(config["imaginary_times"]) * len(config["temperatures"])))
+    spectral = 128 * max(dimensions) * queries
     thermal = 64 * sum(dimensions) * len(config["temperatures"])
-    outputs = ((32 * len(config["real_times"]) + 24 * len(config["imaginary_times"]))
+    outputs = ((64 * len(config["real_times"]) + 48 * len(config["imaginary_times"]))
                * len(config["temperatures"]))
-    return 1.25 * (eigenvectors + buffers + thermal + outputs) + 512 * 2**20
+    return 1.25 * (eigenvectors + buffers + basis + spectral + thermal + outputs) + _PROCESS_MEMORY
 
 
 def memory_budget(config):
     """Use the smaller of an explicit budget and a known Slurm allocation."""
-    if int(os.environ.get("SLURM_NTASKS_PER_NODE", "1")) != 1:
-        raise ValueError("Memory scheduling requires one Slurm task per node (--ntasks-per-node=1)")
-    budgets = []
+    layout = ("SLURM_STEP_TASKS_PER_NODE" if "SLURM_STEP_TASKS_PER_NODE" in os.environ
+              else "SLURM_TASKS_PER_NODE")
+    for name in ("SLURM_NTASKS_PER_NODE", layout):
+        if name in os.environ:
+            counts = [re.fullmatch(r"1(?:\(x[1-9][0-9]*\))?", part.strip())
+                      for part in os.environ[name].split(",")]
+            if not all(counts):
+                raise ValueError("Memory scheduling requires one Slurm task per node "
+                                 f"(--ntasks-per-node=1); {name}={os.environ[name]!r}")
+    budgets = {}
     if "memory_gib" in config:
-        budgets.append(config["memory_gib"] * 2**30)
+        declared = config["memory_gib"] * 2**30
+        if not math.isfinite(declared) or declared <= 0:
+            raise ValueError("memory_gib must give a finite positive byte budget")
+        budgets["memory_gib"] = declared
     for name in ("SLURM_MEM_PER_NODE", "SLURM_MEM_PER_CPU"):
         if name in os.environ:
             megabytes = int(os.environ[name])
@@ -198,28 +223,39 @@ def memory_budget(config):
                 if cpus < 1:
                     raise ValueError("SLURM_MEM_PER_CPU requires SLURM_CPUS_PER_TASK")
                 megabytes *= cpus
-            budgets.append(megabytes * 2**20)
+            budgets[name] = megabytes * 2**20
     if not budgets:
         raise ValueError("Memory budget is unknown: set memory_gib in TOML or request Slurm --mem/--mem-per-cpu")
-    return min(budgets)
+    limiting = min(budgets, key=budgets.get)
+    print(f"Memory ceiling: {budgets[limiting] / 2**30:.2f} GiB from {limiting}", flush=True)
+    return budgets[limiting]
 
 
 def check_memory(config, points, workers):
-    """Reject oversized points; return the worker budget and per-size estimates."""
+    """Return worker budget, per-size peaks and a pool size with idle RAM reserved."""
     if not points:
         return
     budget = memory_budget(config)
     estimates = {L: estimate_point_memory(L, config) for L in {point[0] for point in points}}
     largest = max(estimates, key=estimates.get)
-    peak = 512 * 2**20 + estimates[largest]
+    peak = _PROCESS_MEMORY + estimates[largest]
     if peak > budget:
         raise ValueError(f"Estimated memory {peak / 2**30:.1f} GiB exceeds budget {budget / 2**30:.1f} GiB; "
                          f"L={largest} needs about {estimates[largest] / 2**30:.1f} GiB per worker. "
                          "Reduce sizes or request sufficient memory; a single oversized point cannot be split across nodes.")
-    print(f"Memory budget={budget / 2**30:.1f} GiB/node, reserving 0.5 GiB for the parent; "
-          f"largest point L={largest}: {estimates[largest] / 2**30:.1f} GiB; "
-          f"up to {workers} workers, limited by memory (heuristic, not an RSS guarantee)", flush=True)
-    return budget - 512 * 2**20, estimates
+    requested = workers
+    workers = min(workers, len(points), 1 + int((budget - peak) // _PROCESS_MEMORY))
+    budget -= _PROCESS_MEMORY
+    work_budget = budget - workers * _PROCESS_MEMORY
+    print(f"Memory budget={(budget + _PROCESS_MEMORY) / 2**30:.1f} GiB/node; "
+          f"reserving 0.5 GiB for the parent and each of {workers} workers "
+          f"(requested {requested}; heuristic, not an RSS guarantee)", flush=True)
+    for L, estimate in sorted(estimates.items(), reverse=True):
+        concurrent = min(workers, int(work_budget // (estimate - _PROCESS_MEMORY)))
+        print(f"  L={L}: largest block={max(momentum_dimensions(L))}, "
+              f"peak/worker={estimate / 2**30:.2f} GiB, "
+              f"up to {concurrent} concurrent points of this size", flush=True)
+    return budget, estimates, workers
 
 
 def slurm_tasks(sizes, ms):
@@ -324,15 +360,19 @@ def _run_points(config, points, output_dir, workers, rank, budget, estimates):
         completed = 0
         while queued or futures:
             while queued and len(futures) < workers:
-                used = sum(estimates[L] for L, _ in futures.values())
+                # Idle pool processes retain Python/QuSpin/BLAS runtime memory.
+                used = workers * _PROCESS_MEMORY + sum(
+                    estimates[L] - _PROCESS_MEMORY for L, _ in futures.values())
                 eligible = next((i for i, (L, _, _) in enumerate(queued)
-                                 if used + estimates[L] <= budget), None)
+                                 if used + estimates[L] - _PROCESS_MEMORY <= budget), None)
                 if eligible is None:
                     break
                 L, m_index, m = queued.pop(eligible)
                 future = pool.submit(run_point, L, m_index, m, config["temperatures"],
                                      config["real_times"], config["imaginary_times"], output_dir)
                 futures[future] = (L, m)
+            if not futures:
+                raise RuntimeError("No queued point fits the memory budget including idle workers")
             done, _ = wait(futures, return_when=FIRST_COMPLETED)
             for future in done:
                 L, m = futures.pop(future)
@@ -363,11 +403,11 @@ def main():
             raise ValueError("--run-id must start with a letter/digit and contain only letters, digits, _, . or -")
         workers = min(config["workers"], len(points))
         threads = config["threads"]
+        if points:
+            budget, estimates, workers = check_memory(config, points, workers)
         if ("SLURM_CPUS_PER_TASK" in os.environ
                 and workers * threads > int(os.environ["SLURM_CPUS_PER_TASK"])):
             raise ValueError("workers * threads exceeds SLURM_CPUS_PER_TASK")
-        if points:
-            budget, estimates = check_memory(config, points, workers)
     except (OSError, ValueError) as error:
         parser.error(str(error))
     total = len(config["sizes"]) * len(config["ms"])

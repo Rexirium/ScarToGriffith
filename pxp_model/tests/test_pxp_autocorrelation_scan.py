@@ -22,8 +22,8 @@ class BothTimeDomainsTest(unittest.TestCase):
         temperatures = [0., .5, 2., np.inf]
         times = np.array([4., 0., 2., 4.])
         _, actual = correlation.prepare_time_grid(temperatures, times, True)
-        np.testing.assert_array_equal(actual, [[4., 2., .5, 0.], [0., 0., 0., 0.],
-                                               [2., 1., .25, 0.], [4., 2., .5, 0.]])
+        np.testing.assert_array_equal(actual, [[4., 1., .25, 0.], [0., 0., 0., 0.],
+                                               [2., .5, .125, 0.], [4., 1., .25, 0.]])
         np.testing.assert_array_equal(times, [4., 0., 2., 4.])
         _, rescaled = correlation.prepare_time_grid(temperatures, times * 100, True)
         np.testing.assert_array_equal(actual[:, 1:], rescaled[:, 1:])
@@ -33,7 +33,11 @@ class BothTimeDomainsTest(unittest.TestCase):
         _, zeros = correlation.prepare_time_grid(temperatures, [0., 0.], True)
         np.testing.assert_array_equal(zeros, np.zeros((2, 4)))
         _, singleton = correlation.prepare_time_grid(temperatures, [4.], True)
-        np.testing.assert_array_equal(singleton, [[4., 2., .5, 0.]])
+        np.testing.assert_array_equal(singleton, [[4., 1., .25, 0.]])
+        # Avoid overflowing 2*T or 1/T when the final half-interval is finite.
+        extremes = np.array([np.finfo(float).max, np.finfo(float).tiny / 4])
+        _, endpoints = correlation.prepare_time_grid(extremes, [0., 1.], True)
+        np.testing.assert_array_equal(endpoints, [np.zeros(2), 0.5 / extremes])
         _, ground = correlation.prepare_time_grid([0.], [-1., 0.], True)
         np.testing.assert_array_equal(ground[:, 0], [-1., 0.])
         with patch.object(correlation, "_momentum_eigensystems") as diagonalize:
@@ -156,7 +160,7 @@ output_dir = "data/autocorrelation"
                 scan.main()
                 calls = executor.return_value.__enter__.return_value.submit.call_args_list
                 self.assertEqual([(call.args[1], call.args[3]) for call in calls],
-                                 [(6, 0.), (6, .2), (4, 0.), (4, .2)])
+                                 [(6, 0.), (6, .655), (4, 0.), (4, .655)])
                 self.assertTrue(all(len(call.args[4]) == 100 for call in calls))
                 self.assertEqual(executor.call_args.kwargs["max_workers"], 2)
                 self.assertEqual(executor.call_args.kwargs["mp_context"].get_start_method(), "spawn")
@@ -208,8 +212,10 @@ imaginary_times = { start = -1, stop = 4, length = 201, scale = "log10" }
         with tempfile.TemporaryDirectory() as directory:
             config, saved_source = scan.load_config(self.write_config(directory, source))
         self.assertEqual(saved_source, source)
+        fields = np.linspace(0, 1, 51)
+        fields[33] = .655
         for key, expected in (
-            ("ms", np.linspace(0, 1, 51)),
+            ("ms", fields),
             ("temperatures", np.linspace(0, 10, 101)),
             ("real_times", np.logspace(-1, 4, 201)),
             ("imaginary_times", np.logspace(-1, 4, 201)),
@@ -221,6 +227,21 @@ imaginary_times = { start = -1, stop = 4, length = 201, scale = "log10" }
         self.assertEqual(scan.config_grid(dict(start=1, stop=0, length=3), "ms"), [1., .5, 0.])
         self.assertEqual(scan.config_grid(dict(start=-1e308, stop=1e308, length=3), "ms"),
                          [-1e308, 0., 1e308])
+
+    def test_loading_snaps_only_the_nearest_field_in_input_order(self):
+        cases = [
+            ([1., .66, 0., .64], [1., .655, 0., .64]),
+            ([.66, .655, .64], [.66, .655, .64]),
+            ([0.], [.655]),
+            ([.78, .53], [.655, .53]),  # Exactly equal binary distances.
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            for fields, expected in cases:
+                source = self.template.replace("ms = [0.0, 0.2]", f"ms = {fields}")
+                with self.subTest(fields=fields):
+                    config, saved_source = scan.load_config(self.write_config(directory, source))
+                    self.assertEqual(config["ms"], expected)
+                    self.assertEqual(saved_source, source)
 
     def test_invalid_range_tables_are_rejected(self):
         invalid = [
@@ -274,12 +295,16 @@ imaginary_times = { start = -1, stop = 4, length = 201, scale = "log10" }
             ({"SLURM_MEM_PER_NODE": "16384"}, {"memory_gib": 8}, 8),
             ({"SLURM_MEM_PER_CPU": "2048", "SLURM_CPUS_PER_TASK": "4"}, {}, 8),
             ({"SLURM_MEM_PER_NODE": "0"}, {"memory_gib": 8}, 8),
+            ({"SLURM_TASKS_PER_NODE": "1(x8)"}, {"memory_gib": 8}, 8),
+            ({"SLURM_STEP_TASKS_PER_NODE": "1(x2),1", "SLURM_TASKS_PER_NODE": "2(x3)"},
+             {"memory_gib": 8}, 8),
         ]
         for environment, config, expected in cases:
             with self.subTest(environment=environment), patch.dict(os.environ, environment, clear=True):
                 self.assertEqual(scan.memory_budget(config), expected * 2**30)
         for environment in ({}, {"SLURM_MEM_PER_NODE": "0"}, {"SLURM_MEM_PER_NODE": "-1"},
-                            {"SLURM_MEM_PER_CPU": "1000"}, {"SLURM_NTASKS_PER_NODE": "2"}):
+                            {"SLURM_MEM_PER_CPU": "1000"}, {"SLURM_NTASKS_PER_NODE": "2"},
+                            {"SLURM_TASKS_PER_NODE": "2(x4)"}, {"SLURM_TASKS_PER_NODE": "1(x0)"}):
             with self.subTest(environment=environment), patch.dict(os.environ, environment, clear=True):
                 with self.assertRaises(ValueError):
                     scan.memory_budget({})
@@ -292,9 +317,10 @@ imaginary_times = { start = -1, stop = 4, length = 201, scale = "log10" }
             points = [(4, 0, 0.), (4, 1, .2)]
             with redirect_stdout(io.StringIO()):
                 for workers in (1, 2):
-                    budget, estimates = scan.check_memory(config, points, workers)
+                    budget, estimates, actual_workers = scan.check_memory(config, points, workers)
                     self.assertEqual(budget, .75 * 2**30)
                     self.assertEqual(estimates, {4: scan.estimate_point_memory(4, config)})
+                    self.assertEqual(actual_workers, 1)
             self.assertGreater(scan.estimate_point_memory(30, config), 1024 * 2**30)
             with redirect_stdout(io.StringIO()), self.assertRaisesRegex(ValueError, "exceeds budget"):
                 scan.check_memory(config, [(30, 0, 0.)], 1)
@@ -309,7 +335,7 @@ imaginary_times = { start = -1, stop = 4, length = 201, scale = "log10" }
             self.assertEqual(path.parent, Path(directory) / "L=4")
             with np.load(path, allow_pickle=False) as saved:
                 np.testing.assert_array_equal(saved["imaginary_times_input"], times)
-                np.testing.assert_allclose(saved["imaginary_times"], [[.1, 1e-5, 0.], [1e4, 1., 0.]], atol=1e-16)
+                np.testing.assert_allclose(saved["imaginary_times"], [[.1, 5e-6, 0.], [1e4, .5, 0.]], atol=1e-16)
                 for column, T in enumerate(temperatures):
                     expected = correlation.connected_autocorrelation(4, .2, T, times, True)
                     for name, baseline in zip(("average", "local"), expected):
@@ -435,7 +461,7 @@ imaginary_times = { start = -1, stop = 4, length = 201, scale = "log10" }
                     np.testing.assert_array_equal(saved["imaginary_times_input"], config["imaginary_times"])
                     fractions = np.array(config["imaginary_times"]) / max(config["imaginary_times"])
                     np.testing.assert_array_equal(saved["imaginary_times"],
-                                                  fractions[:, None] / np.array(config["temperatures"]))
+                                                  fractions[:, None] * .5 / np.array(config["temperatures"]))
                     for imaginary, grid in ((False, "real_times"), (True, "imaginary_times")):
                         if imaginary:
                             columns = [correlation.connected_autocorrelation(

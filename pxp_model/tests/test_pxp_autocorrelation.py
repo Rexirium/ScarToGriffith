@@ -174,7 +174,7 @@ class PXPAutocorrelationTest(unittest.TestCase):
                             rho /= np.trace(rho)
                         for row, t in enumerate(times):
                             if imaginary and T > 0:
-                                t = t / times.max() / T
+                                t = t / times.max() / (2 * T)
                             s = 1 if imaginary else 1j
                             evolved = expm(s * t * H) @ A @ expm(-s * t * H)
                             expected[row, column] = (
@@ -188,10 +188,12 @@ class PXPAutocorrelationTest(unittest.TestCase):
 
     def test_low_temperature_imaginary_time_and_kms(self):
         beta = 1000.0
-        times = np.array([0, 0.2, beta / 2, beta - 0.2, beta])
+        times = np.array([0, 0.4, beta / 2, beta - 0.2, beta])
         actual = average_connected_autocorrelation(6, 0.2, 1 / beta, times, imaginary=True)
         self.assertTrue(np.all(np.isfinite(actual)))
-        np.testing.assert_allclose(actual, actual[::-1], atol=2e-12)
+        sectors, logs = _full_ensemble(6, .2, np.array([1 / beta]))
+        reflected = _uniform_connected(sectors, logs, (beta - times / 2)[:, None], True)
+        np.testing.assert_allclose(actual, reflected, atol=2e-12)
         ground = average_connected_autocorrelation(6, 0.2, 0, [0, 0.2, 1e4], imaginary=True)
         np.testing.assert_allclose(actual[:2], ground[:2], atol=2e-12)
         self.assertAlmostEqual(ground[-1, 0], 0, places=12)
@@ -440,7 +442,7 @@ class PXPLocalAutocorrelationTest(unittest.TestCase):
                             rho /= np.trace(rho)
                         for row, t in enumerate(times):
                             if imaginary and T > 0:
-                                t = t / times.max() / T
+                                t = t / times.max() / (2 * T)
                             s = 1 if imaginary else 1j
                             left, right = expm(s * t * H), expm(-s * t * H)
                             for diagonal in z:
@@ -516,13 +518,17 @@ class PXPLocalAutocorrelationTest(unittest.TestCase):
                                              [0, 0.2], imaginary=True)
         # Full Gibbs weights restore local-operator KMS symmetry.
         for beta in (.5, 2., 1000.):
-            times = [0, .1, beta / 2, beta - .1, beta]
+            times = np.array([0, .1, beta / 2, beta - .1, beta])
             thermal = local_connected_autocorrelation(6, .2, 1 / beta, times, imaginary=True)
             self.assertTrue(np.all(np.isfinite(thermal)))
-            np.testing.assert_allclose(thermal, thermal[::-1], atol=3e-12)
+            sectors, logs = _full_ensemble(6, .2, np.array([1 / beta]))
+            reflected_times = (beta - times / 2)[:, None]
+            average = _uniform_connected(sectors, logs, reflected_times, True)
+            reflected = _local_from_average(sectors, logs, reflected_times, True, average)
+            np.testing.assert_allclose(thermal, reflected, atol=3e-12)
         mixed = local_connected_autocorrelation(6, .2, [0, 1e-3], [0, .2], imaginary=True)
         np.testing.assert_allclose(mixed[:, 0], ground[:2, 0], atol=1e-12)
-        self.assertAlmostEqual(mixed[0, 1], mixed[1, 1], places=12)  # tau=0 and beta
+        self.assertAlmostEqual(mixed[1, 1], 0., places=12)  # Low-T tail at tau=beta/2.
 
 
 if __name__ == "__main__":
