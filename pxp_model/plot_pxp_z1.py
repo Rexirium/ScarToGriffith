@@ -1,6 +1,6 @@
 """Plot eight <sigma_1^z> versus energy panels.
 
-    python pxp_model/plot_pxp_z1.py --data-dir pxp_model/data/20261027_222310 --L 28
+    python pxp_model/plot_pxp_z1.py --data-dir pxp_model/data/spectrum/20261027_222310 --L 28
 
 Requires only NumPy and Matplotlib. Expectations come from z1_expectations
 and fsa_z1_expectations in the saved scan. Circles and triangles mark matched

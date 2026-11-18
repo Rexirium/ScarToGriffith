@@ -53,7 +53,7 @@ class PXPScanTest(unittest.TestCase):
             self.assertEqual([call.args[1] for call in pool.submit.call_args_list], list(range(16, 29, 2)))
             output_dirs = [call.args[2] for call in pool.submit.call_args_list]
             self.assertEqual(len(set(output_dirs)), 1)
-            self.assertEqual(output_dirs[0].parent, Path(pxp_scan.__file__).resolve().parent / "data")
+            self.assertEqual(output_dirs[0].parent, Path(pxp_scan.__file__).resolve().parent / "data" / "spectrum")
             self.assertRegex(output_dirs[0].name, r"^\d{8}_\d{6}$")
             self.assertEqual(executor.call_args.kwargs["max_workers"], 7)
             self.assertEqual(executor.call_args.kwargs["mp_context"].get_start_method(), "spawn")

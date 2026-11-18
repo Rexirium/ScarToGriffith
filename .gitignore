@@ -39,6 +39,7 @@ JuliaLocalPreferences.toml
 *.h5
 *.npz
 *.csv
+.rank_*
 
 # LaTeX build artifacts
 *.aux

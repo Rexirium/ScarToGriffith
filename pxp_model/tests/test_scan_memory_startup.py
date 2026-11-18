@@ -60,6 +60,8 @@ class MemoryStartupTest(unittest.TestCase):
                     executor.return_value.__enter__.return_value.submit.return_value = completed
                     scan.main()
                 executor.return_value.__enter__.return_value.submit.assert_called_once()
+                output_dir = executor.return_value.__enter__.return_value.submit.call_args.args[-1]
+                self.assertRegex(output_dir.name, r"^\d{8}_\d{6}$")
 
     def test_empty_rank_needs_no_memory_budget_or_pool(self):
         with tempfile.TemporaryDirectory() as directory:

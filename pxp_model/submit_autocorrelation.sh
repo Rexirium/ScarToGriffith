@@ -24,7 +24,7 @@ source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate Quantum
 
 # Generate once in the batch shell so every rank uses the same directory name.
-run_id="$(TZ=Asia/Shanghai date +%Y%m%d_%H%M%S_%N)_job${SLURM_JOB_ID}"
+run_id="$(TZ=Asia/Shanghai date +%Y%m%d_%H%M%S)"
 srun --mpi=none --ntasks="$SLURM_NTASKS" --ntasks-per-node=1 \
     --cpus-per-task="$SLURM_CPUS_PER_TASK" --cpu-bind=cores --kill-on-bad-exit=1 \
     --output='pxp_autocorrelation.%j.rank%t.out' \

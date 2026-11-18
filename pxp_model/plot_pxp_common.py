@@ -9,7 +9,7 @@ from matplotlib.ticker import MaxNLocator
 import numpy as np
 
 ROOT = Path(__file__).resolve().parent
-DEFAULT_DATA_DIR = ROOT / "data" / "20261027_222310"
+DEFAULT_DATA_DIR = ROOT / "data" / "spectrum" / "20261027_222310"
 STYLE = {
     "font.family": "serif",
     "font.serif": ["Times New Roman"],

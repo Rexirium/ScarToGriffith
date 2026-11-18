@@ -1,6 +1,6 @@
 """Plot eight Z1 time traces and their saved thermal expectations.
 
-    python pxp_model/plot_pxp_z1_time.py --data-dir pxp_model/data/20261027_222310 --L 28
+    python pxp_model/plot_pxp_z1_time.py --data-dir pxp_model/data/spectrum/20261027_222310 --L 28
 
 Requires only NumPy and Matplotlib. The t=0 sample is omitted on the log axis.
 Default output is figures/<data-directory-name>/pxp_z1_time_L=<L>.png.

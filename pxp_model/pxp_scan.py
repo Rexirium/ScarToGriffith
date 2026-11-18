@@ -6,7 +6,8 @@
 The default sizes are 16, 18, ..., 28. Each spawned process scans one L
 and writes its own NPZ; m points remain sequential for scar tracking.
 Each invocation writes to <output-dir>/YYYYMMDD_HHMMSS (UTC+08:00),
-with one shared timestamp for all L workers.
+with one shared timestamp for all L workers. The default output directory
+is data/spectrum beside this script.
 Each L reuses its two Hilbert-space bases, projector, operators, entropy
 partition and m-independent FSA recurrence throughout the scan.
 --threads sets OpenMP/BLAS thread limits before the child imports NumPy.
@@ -168,8 +169,9 @@ def main():
                         help="even chain lengths (default: 16 18 20 22 24 26 28)")
     parser.add_argument("--workers", type=int, default=7, help="maximum concurrent sizes (default: 7)")
     parser.add_argument("--threads", type=int, default=8, help="OpenMP/BLAS threads per worker (default: 8)")
-    parser.add_argument("--output-dir", type=Path, default=Path(__file__).resolve().parent / "data",
-                        help="parent directory for a YYYYMMDD_HHMMSS run subdirectory (UTC+08:00)")
+    parser.add_argument("--output-dir", type=Path, default=Path(__file__).resolve().parent / "data" / "spectrum",
+                        help="parent directory for a YYYYMMDD_HHMMSS run subdirectory "
+                             "(UTC+08:00; default: data/spectrum beside this script)")
     args = parser.parse_args()
     if any(L < 4 or L > 32 or L % 2 for L in args.L) or len(set(args.L)) != len(args.L):
         parser.error("--L must contain distinct even integers between 4 and 32")

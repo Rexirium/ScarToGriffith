@@ -27,7 +27,7 @@ memory estimates fit the remaining budget, up to workers concurrent points.
 Smaller sizes can fill slots when a larger queued point does not fit.
 
 output_dir is relative to the TOML file, unless absolute. Each run uses a new
-YYYYMMDD_HHMMSS_microseconds directory (UTC+08:00) or the supplied --run-id.
+YYYYMMDD_HHMMSS directory (UTC+08:00) or the supplied --run-id.
 Rank zero creates this directory and atomically publishes its only config.toml.
 Results go under <run>/L=<L>/, with one NPZ per (L, m). Completed files survive
 a later task failure; failed tasks cause a nonzero exit. Existing runs and
@@ -375,7 +375,7 @@ def main():
         os.environ[name] = str(threads)
     os.environ["OMP_MAX_ACTIVE_LEVELS"] = "1"
 
-    stamp = datetime.now(timezone(timedelta(hours=8))).strftime("%Y%m%d_%H%M%S_%f")
+    stamp = datetime.now(timezone(timedelta(hours=8))).strftime("%Y%m%d_%H%M%S")
     output_dir = config["output_dir"] / (args.run_id or stamp)
     prepare_output(output_dir, source, rank, ranks)
     print(f"Rank={rank}/{ranks}, local tasks={len(points)}/{total}, "

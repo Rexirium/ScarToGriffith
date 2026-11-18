@@ -1,7 +1,7 @@
 """Plot eight Z2-overlap panels from the saved scan (no ED required).
 
 Run from the repository root:
-    python pxp_model/plot_pxp_overlaps.py --data-dir pxp_model/data/20261027_222310 --L 28
+    python pxp_model/plot_pxp_overlaps.py --data-dir pxp_model/data/spectrum/20261027_222310 --L 28
 
 Requires only NumPy and Matplotlib. Default paths are relative to this script.
 The eight plotted m values and their order come from the saved ms_plot field.
