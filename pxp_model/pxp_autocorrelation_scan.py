@@ -6,8 +6,10 @@ Requires Python >= 3.11 and pxp_model/requirements.txt. The default config
 is pxp_autocorrelation_scan.toml beside this script. sizes is an integer
 array; other grids accept arrays or {start, stop, length, scale} tables.
 scale defaults to "linear"; "log10" interprets start/stop as base-10 exponents.
-After expanding ms, replace the value nearest 0.655 with exactly 0.655
-(the first in input order wins a tie), preserving length and order.
+ms tables accept critical=true to append 0.655; temperatures tables accept
+zero=true to append 0.0. Both default to false and skip values already present.
+ms and temperatures are sorted in ascending order after expansion and additions;
+sizes and time grids retain their input order.
 workers and threads control LOCAL process count and BLAS/OpenMP threads per
 process. Thread limits are inherited before workers import NumPy/QuSpin.
 No additional pools are created for temperatures, times or momentum blocks.
@@ -49,7 +51,8 @@ elapsed_seconds, and six float64 correlation matrices:
 average_real_time_real, average_real_time_imag,
 local_real_time_real, local_real_time_imag,
 average_imaginary_time, local_imaginary_time.
-Every matrix has axes (time, temperature), in the configured array order.
+Every matrix has axes (time, temperature), with times in configured order and
+temperatures in ascending order.
 imaginary_times now stores the actual 2D tau grid with the same axes;
 imaginary_times_input stores the original 1D TOML grid.
 Both observables and both time domains share eigensystems and Gibbs weights.
@@ -76,9 +79,6 @@ _PROCESS_MEMORY = 512 * 2**20
 
 def _range_grid(value, name):
     """Expand a range table without importing NumPy before thread limits apply."""
-    required = {"start", "stop", "length"}
-    if not required <= value.keys() or value.keys() - required - {"scale"}:
-        raise ValueError(f"{name} range requires start, stop, length and optional scale")
     start, stop, length = value["start"], value["stop"], value["length"]
     scale = value.get("scale", "linear")
     if scale not in ("linear", "log10"):
@@ -88,7 +88,7 @@ def _range_grid(value, name):
     if any(type(x) not in (int, float) or not math.isfinite(x) for x in (start, stop)):
         raise ValueError(f"{name} start and stop must be finite numbers")
     fractions = (i / (length - 1) for i in range(length)) if length > 1 else (0.,)
-    grid = ((1 - fraction) * start + fraction * stop for fraction in fractions)
+    grid = [(1 - fraction) * start + fraction * stop for fraction in fractions]
     if scale == "log10":
         try:
             grid = [10.0 ** x for x in grid]
@@ -96,33 +96,39 @@ def _range_grid(value, name):
             raise ValueError(f"{name} log10 range overflows floating-point values") from error
         if any(x == 0 for x in grid):
             raise ValueError(f"{name} log10 range underflows to zero")
-    else:
-        grid = list(grid)
     if any(not math.isfinite(x) for x in grid):
         raise ValueError(f"{name} range must produce finite values")
     return grid
 
 
 def config_grid(value, name):
-    """Normalize and validate one grid, retaining input order and numeric types."""
+    """Parse, validate and add optional points; sort only ms/temperatures."""
+    values = value
     if isinstance(value, dict) and name != "sizes":
+        required = {"start", "stop", "length"}
+        additions = {"ms": {"critical": 0.655}, "temperatures": {"zero": 0.0}}.get(name, {})
+        if not required <= value.keys() or value.keys() - required - {"scale"} - additions.keys():
+            optional = ", ".join(("scale", *additions))
+            raise ValueError(f"{name} range requires start, stop, length and optional {optional}")
         values = _range_grid(value, name)
-    else:
-        if (not isinstance(value, list) or not value
-                or any(type(x) not in (int, float) for x in value)):
-            raise ValueError(f"{name} must be a nonempty array of numbers")
-        values = value
-    if name == "sizes":
-        if any(type(x) is not int or not 2 <= x <= 32 for x in values):
-            raise ValueError("sizes must contain integers between 2 and 32")
-    elif name == "temperatures":
-        if any(math.isnan(x) or x < 0 for x in values):
-            raise ValueError("temperatures must be >= 0 (positive inf is allowed)")
-    elif any(not math.isfinite(x) for x in values):
+        for option, extra in additions.items():
+            enabled = value.get(option, False)
+            if type(enabled) is not bool:
+                raise ValueError(f"{name}.{option} must be a boolean")
+            if enabled and extra not in values:
+                values.append(extra)
+    if (not isinstance(values, list) or not values
+            or any(type(x) not in (int, float) for x in values)):
+        raise ValueError(f"{name} must be a nonempty array of numbers")
+    if name == "sizes" and any(type(x) is not int or not 2 <= x <= 32 for x in values):
+        raise ValueError("sizes must contain integers between 2 and 32")
+    if name == "temperatures" and any(math.isnan(x) or x < 0 for x in values):
+        raise ValueError("temperatures must be >= 0 (positive inf is allowed)")
+    if name != "temperatures" and any(not math.isfinite(x) for x in values):
         raise ValueError(f"{name} must contain only finite numbers")
     if name in ("sizes", "ms") and len(set(values)) != len(values):
         raise ValueError(f"{name} must not contain duplicates")
-    return values
+    return sorted(values) if name in ("ms", "temperatures") else values
 
 
 def load_config(path):
@@ -138,8 +144,6 @@ def load_config(path):
     if missing:
         raise ValueError(f"Missing config keys: {', '.join(sorted(missing))}")
     config.update({key: config_grid(config[key], key) for key in grids})
-    ms = config["ms"]
-    ms[min(range(len(ms)), key=lambda i: abs(ms[i] - 0.655))] = 0.655
     for key in ("workers", "threads"):
         value = config.setdefault(key, 1)
         if type(value) is not int or value < 1:

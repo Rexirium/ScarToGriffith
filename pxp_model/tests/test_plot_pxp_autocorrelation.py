@@ -1,15 +1,17 @@
 """Check: python -m unittest pxp_model.tests.test_plot_pxp_autocorrelation"""
 
+import csv
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from ..plot_pxp_autocorrelation import M_INDICES, fit_decay_models, plot_autocorrelation
+from ..plot_pxp_autocorrelation import M_INDICES, fit_decay_models, main, plot_autocorrelation
 
 
 class AutocorrelationPlotTest(unittest.TestCase):
@@ -88,6 +90,53 @@ class AutocorrelationPlotTest(unittest.TestCase):
                     self.assertEqual(dashed.get_linestyle(), "--")
                     np.testing.assert_allclose(dashed.get_xdata()[[0, -1]], [.1, 10.])
             fig.canvas.draw()
+
+    def test_selects_size_and_positive_temperature_with_or_without_zero(self):
+        self.addCleanup(plt.close, "all")
+        with tempfile.TemporaryDirectory() as directory:
+            size_dir = Path(directory) / "L=12"
+            size_dir.mkdir()
+            tau = np.array([0., .1, 1., 10., 100.])
+            for temperatures in ([.5, 0., 1.], [.5, 1.]):
+                times = np.column_stack([tau / (1 + T) for T in temperatures])
+                local = np.column_stack([np.exp(-tau / (2 + T)) for T in temperatures])
+                for index in M_INDICES:
+                    np.savez(
+                        size_dir / f"autocorrelation_L=12_m_index={index:04d}.npz",
+                        L=12, m=index / 50, temperatures=temperatures,
+                        imaginary_times=times, local_imaginary_time=local,
+                        average_imaginary_time=local / 12,
+                    )
+                for T_index, T in ((1, .5), (2, 1.)):
+                    with self.subTest(temperatures=temperatures, T_index=T_index):
+                        fig, fits = plot_autocorrelation(directory, L=12, T_index=T_index)
+                        self.assertIn(f"L=12, T={T:g}", fig._suptitle.get_text())
+                        self.assertEqual({(fit["L"], fit["T_index"], fit["T"]) for fit in fits},
+                                         {(12, T_index, T)})
+                        for ax, factor in zip(fig.axes, (1, 12)):
+                            line = ax.lines[0]
+                            np.testing.assert_allclose(line.get_xdata(), tau / (1 + T))
+                            np.testing.assert_allclose(line.get_ydata().compressed(),
+                                                       np.exp(-tau[1:] / (2 + T)) / factor)
+                        plt.close(fig)
+
+            for T_index, message in ((-1, "must be >= 0"), (3, "out of range"),
+                                     (0, "requires exactly one T=0")):
+                with self.subTest(T_index=T_index), self.assertRaisesRegex(ValueError, message):
+                    plot_autocorrelation(directory, L=12, T_index=T_index)
+
+            output_dir = Path(directory) / "figures"
+            with patch("sys.argv", ["plot_pxp_autocorrelation.py", "--data-dir", directory,
+                                    "--L", "12", "--T_index", "2",
+                                    "--output-dir", str(output_dir)]):
+                main()
+            self.assertTrue((output_dir / "pxp_autocorrelation_T=1_L=12.png").is_file())
+            with (output_dir / "pxp_autocorrelation_fits_T=1_L=12.csv").open(
+                    newline="", encoding="utf-8") as stream:
+                records = list(csv.DictReader(stream))
+            self.assertEqual(len(records), 40)
+            self.assertEqual({(row["L"], row["T_index"], row["T"]) for row in records},
+                             {("12", "2", "1.0")})
 
 
 if __name__ == "__main__":

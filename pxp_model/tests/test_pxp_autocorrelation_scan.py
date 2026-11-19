@@ -123,11 +123,16 @@ output_dir = "data/autocorrelation"
                 ("sizes = [4, 6]", "sizes = [4, 4]"),
                 ("sizes = [4, 6]", "sizes = [4.0]"),
                 ("sizes = [4, 6]", "sizes = [33]"),
+                ("sizes = [4, 6]", "sizes = { start = 4, stop = 6, length = 2 }"),
                 ("ms = [0.0, 0.2]", "ms = [0.0, -0.0]"),
                 ("ms = [0.0, 0.2]", "ms = [inf]"),
                 ("ms = [0.0, 0.2]", "ms = [true]"),
+                ("ms = [0.0, 0.2]", "ms = 0.2"),
+                ("ms = [0.0, 0.2]", 'ms = ["0.2"]'),
+                ("ms = [0.0, 0.2]", "ms = { start = 0, stop = 0, length = 2, critical = true }"),
                 ("0.01, 0.02", "-0.01, 0.02"),
                 ("0.01, 0.02", "nan, 0.02"),
+                ("0.01, 0.02", "-inf, 0.02"),
                 ("real_times = [0.0, 0.1, 1.0, 10.0]", "real_times = []"),
                 ("imaginary_times = [0.0, 0.1, 0.5, 1.0]", "imaginary_times = [inf]"),
                 ("workers = 2", "workers = 0"),
@@ -143,7 +148,8 @@ output_dir = "data/autocorrelation"
                     scan.load_config(self.write_config(directory, self.template.replace(old, new)))
             valid = self.template.replace("0.01, 0.02", "0.0, inf")
             config, _ = scan.load_config(self.write_config(directory, valid))
-            self.assertEqual(config["temperatures"][:2], [0., np.inf])
+            self.assertEqual(config["temperatures"][0], 0.)
+            self.assertEqual(config["temperatures"][-1], np.inf)
 
     def test_task_granularity_and_thread_limits(self):
         def completed(*args):
@@ -160,7 +166,7 @@ output_dir = "data/autocorrelation"
                 scan.main()
                 calls = executor.return_value.__enter__.return_value.submit.call_args_list
                 self.assertEqual([(call.args[1], call.args[3]) for call in calls],
-                                 [(6, 0.), (6, .655), (4, 0.), (4, .655)])
+                                 [(6, 0.), (6, .2), (4, 0.), (4, .2)])
                 self.assertTrue(all(len(call.args[4]) == 100 for call in calls))
                 self.assertEqual(executor.call_args.kwargs["max_workers"], 2)
                 self.assertEqual(executor.call_args.kwargs["mp_context"].get_start_method(), "spawn")
@@ -212,10 +218,8 @@ imaginary_times = { start = -1, stop = 4, length = 201, scale = "log10" }
         with tempfile.TemporaryDirectory() as directory:
             config, saved_source = scan.load_config(self.write_config(directory, source))
         self.assertEqual(saved_source, source)
-        fields = np.linspace(0, 1, 51)
-        fields[33] = .655
         for key, expected in (
-            ("ms", fields),
+            ("ms", np.linspace(0, 1, 51)),
             ("temperatures", np.linspace(0, 10, 101)),
             ("real_times", np.logspace(-1, 4, 201)),
             ("imaginary_times", np.logspace(-1, 4, 201)),
@@ -224,24 +228,54 @@ imaginary_times = { start = -1, stop = 4, length = 201, scale = "log10" }
             self.assertEqual((config[key][0], config[key][-1]), (expected[0], expected[-1]))
             np.testing.assert_allclose(config[key], expected, rtol=3e-15, atol=1e-15)
         self.assertEqual(scan.config_grid(dict(start=2, stop=2, length=1), "ms"), [2])
-        self.assertEqual(scan.config_grid(dict(start=1, stop=0, length=3), "ms"), [1., .5, 0.])
+        self.assertEqual(scan.config_grid(dict(start=1, stop=0, length=3), "ms"), [0., .5, 1.])
         self.assertEqual(scan.config_grid(dict(start=-1e308, stop=1e308, length=3), "ms"),
                          [-1e308, 0., 1e308])
 
-    def test_loading_snaps_only_the_nearest_field_in_input_order(self):
+    def test_loading_sorts_explicit_fields_without_replacing_values(self):
         cases = [
-            ([1., .66, 0., .64], [1., .655, 0., .64]),
-            ([.66, .655, .64], [.66, .655, .64]),
-            ([0.], [.655]),
-            ([.78, .53], [.655, .53]),  # Exactly equal binary distances.
+            [1., .66, 0., .64], [.66, .655, .64], [0.], [.78, .53],
         ]
         with tempfile.TemporaryDirectory() as directory:
-            for fields, expected in cases:
+            for fields in cases:
                 source = self.template.replace("ms = [0.0, 0.2]", f"ms = {fields}")
                 with self.subTest(fields=fields):
                     config, saved_source = scan.load_config(self.write_config(directory, source))
-                    self.assertEqual(config["ms"], expected)
+                    self.assertEqual(config["ms"], sorted(fields))
                     self.assertEqual(saved_source, source)
+
+    def test_only_fields_and_temperatures_are_sorted(self):
+        values = [2, 0, 1]
+        for name in ("ms", "temperatures", "real_times", "imaginary_times"):
+            with self.subTest(name=name):
+                expected = [0, 1, 2] if name in ("ms", "temperatures") else values
+                self.assertEqual(scan.config_grid(values, name), expected)
+                self.assertEqual(values, [2, 0, 1])
+        self.assertEqual(scan.config_grid([6, 4], "sizes"), [6, 4])
+
+    def test_range_flags_add_and_sort_without_replacing_or_duplicating_values(self):
+        for name, option, extra in (("ms", "critical", .655), ("temperatures", "zero", 0.)):
+            for scale in ("linear", "log10"):
+                value = dict(start=.64, stop=.66, length=3, scale=scale)
+                original = scan.config_grid(value, name)
+                for enabled in (False, True):
+                    with self.subTest(name=name, scale=scale, enabled=enabled):
+                        configured = dict(value, **{option: enabled})
+                        actual = scan.config_grid(configured, name)
+                        self.assertEqual(actual, sorted(original + ([extra] if enabled else [])))
+                        self.assertEqual(configured, dict(value, **{option: enabled}))
+            value = dict(start=extra, stop=1., length=2, **{option: True})
+            self.assertEqual(scan.config_grid(value, name), [extra, 1.])
+
+    def test_range_flags_require_booleans_and_the_correct_grid(self):
+        for name, option in (("ms", "critical"), ("temperatures", "zero")):
+            for invalid in (0, 1, "true", [], {}):
+                with self.subTest(name=name, invalid=invalid), \
+                     self.assertRaisesRegex(ValueError, f"{name}.{option} must be a boolean"):
+                    scan.config_grid(dict(start=0, stop=1, length=2, **{option: invalid}), name)
+            for other in ("temperatures" if name == "ms" else "ms", "real_times", "imaginary_times"):
+                with self.subTest(name=other, option=option), self.assertRaises(ValueError):
+                    scan.config_grid(dict(start=0, stop=1, length=2, **{option: True}), other)
 
     def test_invalid_range_tables_are_rejected(self):
         invalid = [
