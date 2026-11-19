@@ -224,7 +224,8 @@ def pxp_get_proj(self, full_pxp_basis):
         amplitudes = np.real_if_close(
             self.get_amp(representatives, mode="full_basis")
         )
-        rows = np.flatnonzero(amplitudes)
+        # QuSpin can leave nonzero amplitudes on symmetry-forbidden short orbits.
+        rows = np.flatnonzero((amplitudes != 0) & np.isin(representatives, self.states))
         columns = self.Ns - 1 - np.searchsorted(
             self.states[::-1], representatives[rows]
         )

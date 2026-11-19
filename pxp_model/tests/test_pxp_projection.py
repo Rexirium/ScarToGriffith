@@ -34,7 +34,7 @@ class PXPProjectionTest(unittest.TestCase):
     def test_projector_and_state_shapes(self):
         full = pxp_basis_1d(8)
         rng = np.random.default_rng(42)
-        for k, p in ((0, 1), (4, -1), (1, None)):
+        for k, p in ((0, 1), (4, -1), (1, None), (2, None), (3, None)):
             with self.subTest(k=k, p=p):
                 basis = pxp_basis_1d(8, kblock=k, pblock=p)
                 P = basis.pxp_get_proj(full)

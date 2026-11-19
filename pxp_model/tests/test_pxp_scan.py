@@ -84,7 +84,7 @@ class PXPScanTest(unittest.TestCase):
     def test_tracking_and_reuse(self):
         L = 12
         times = np.array([0., 0.1])
-        baseline = solve(L, 0, times)
+        baseline = solve(L, 0, times, k=0, p=1)
         basis = pxp_basis_1d(L, kblock=0, pblock=1)
         construct = type(basis).construct_fsa_eigensystem
         with patch.object(pxp_scan, "pxp_basis_1d", wraps=pxp_basis_1d) as make_basis, \
@@ -118,7 +118,7 @@ class PXPScanTest(unittest.TestCase):
             np.testing.assert_array_equal(result["tracked_scar_indices"], indices)
             np.testing.assert_allclose(result["energies"], E, atol=1e-12)
             np.testing.assert_allclose(result["overlaps"], abs(z2 @ U)**2, atol=1e-12)
-            single = solve(L, result["m"], times)
+            single = solve(L, result["m"], times, k=0, p=1)
             np.testing.assert_array_equal(np.unique(result["matched_scar_indices"]), single["scar_indices"])
             for key in ("fsa_energies", "fsa_overlaps"):
                 np.testing.assert_allclose(result[key], single[key], atol=1e-12)
