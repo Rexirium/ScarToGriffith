@@ -16,4 +16,4 @@
 | [TRG / HOTRG](trg-hotrg/METHOD.md) | 对经典配分函数或离散虚时量子网络做局域截断和粗粒化。保存归一化因子及杂质张量，区分自由能与局域观测量。 |
 | [MERA](mera/METHOD.md) | 由 disentangler 与 isometry 构成分层网络，适合临界态和标度算符 |
 
-[量子线路](quantum-circuits.md) · [原文索引](../literature/README.md) · [独立验证基准](../solvable/INDEX.md)。ITensors 的版本/API 查仓库 using-itensors 技能；不以历史文献推断当前软件接口。
+[量子线路](circuit-sim/METHOD.md) · [原文索引](../literature/README.md) · [独立验证基准](../solvable/INDEX.md)。ITensors 的版本/API 查仓库 using-itensors 技能；不以历史文献推断当前软件接口。

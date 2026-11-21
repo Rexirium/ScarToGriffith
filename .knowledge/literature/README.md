@@ -9,6 +9,6 @@
 | [Choi 2019](Choi_2019_Emergent_SU2_Dynamics_and_Perfect_Quantum_Many_Body_Scars.md) | SU(2)/完美复苏背景；不等同当前均匀 m 形变 |
 | [Münster 2024](Munster_2024_Griffiths_phase_large_deviations.md) | [经典随机 Ising](../projects/random_ising.md)：稀有区与磁化率分布；当前代码没有其大偏差抽样 |
 
-保留的方法原文：[ED](ed/INDEX.md)、[MPS / DMRG / TDVP / 软件](mps-based-algorithm/INDEX.md)、[PEPS / CTMRG / 自动微分](peps-based-algorithm/INDEX.md)、[LTRG / XTRG](ltrg/INDEX.md)。MERA、HOTRG、有限温 MPS、DMRG-X 的原文在对应 [方法卡](../methods/INDEX.md) 旁；量子线路、精确 MPS 与稳定子资料见 [基准索引](../solvable/INDEX.md)。
+保留的方法原文：[ED](ed/INDEX.md)、[MPS / DMRG / TDVP / 软件](mps-based-algorithm/INDEX.md)、[PEPS / CTMRG / 自动微分](peps-based-algorithm/INDEX.md)、[LTRG / XTRG](ltrg/INDEX.md)。MERA、HOTRG、有限温 MPS、DMRG-X 的原文在对应 [方法卡](../methods/INDEX.md) 旁；量子线路的外部原文入口见 [线路方法卡](../methods/circuit-sim/METHOD.md)，精确 MPS、线路与稳定子验证见 [基准索引](../solvable/INDEX.md)。
 
 原文就近保留一份；通用软件目录中的重复副本已合并。BibTeX 统一在 [references.bib](../references.bib)，论文自身的编号文献表仍留在原文内。
