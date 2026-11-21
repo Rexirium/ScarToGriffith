@@ -1,6 +1,10 @@
 # ScarToGriffith
 From QMBS to QGP
 
+项目物理约定、基底、验证标准和文献对应见 [.knowledge/README.md](.knowledge/README.md)；
+按任务读取资料的规则见 [AGENTS.md](AGENTS.md)。论文统一放在 `.knowledge/literature/`，
+张量网络与量子线路参考也保留在知识库中。
+
 Julia 环境统一放在 `julia-env/`：`local/` 用于个人电脑，`server/` 用于服务器。
 分别安装依赖：
 

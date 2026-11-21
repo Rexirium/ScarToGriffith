@@ -8,7 +8,7 @@ $$ H = -\sum_v A_v \;-\; \sum_p B_p, \qquad A_v = \frac{1}{|G|}\sum_{g\in G} A_v
 
 **Kitaev's quantum double** `D(G)` for a finite group `G`, on an oriented square-lattice **torus** (PBC×PBC). Each **edge** carries a `|G|`-dimensional dof `\{|g\rangle : g\in G\}` (for `G = Z2` this is a qubit). The vertex operator `A_v` is the gauge-averaged local `G`-action at `v` (a projector, `A_v = \frac1{|G|}\sum_g A_v^g`), and the plaquette operator `B_p = B_p^e` projects onto trivial oriented flux around `p`. All `A_v`, `B_p` mutually commute — a **commuting-projector** (quantum-double stabilizer) Hamiltonian, coupling set to the energy unit. For `G = Z2` the dof are qubits, `A_v = \prod_{i\in v}\sigma^x_i`, `B_p = \prod_{i\in p}\sigma^z_i`, and this **is exactly the toric code**. See `.knowledge/conventions.md`.
 
-The **model-zoo sibling** is `models/toric-code` (the `G = Z2` special case); there is no general non-abelian quantum-double model card. This oracle card computes the anyon census and torus GSD for `G ∈ {Z2, Z3, Z4, S3}` from group data, and cross-checks the `Z2` count against `toric-code/oracle.py`.
+The **model-zoo sibling** is [toric-code 基准](../toric-code/ORACLE.md) (the `G = Z2` special case); there is no general non-abelian quantum-double model card. This oracle card computes the anyon census and torus GSD for `G ∈ {Z2, Z3, Z4, S3}` from group data, and cross-checks the `Z2` count against `toric-code/oracle.py`.
 
 ## Solvability statement
 
@@ -52,4 +52,4 @@ The anyon counts are **computed by this script** from group data (conjugacy clas
 
 ## Key reference
 
-[@Kitaev2003] — Kitaev, "Fault-tolerant quantum computation by anyons", Ann. Phys. **303**, 2 (2003): introduces the quantum-double models `D(G)` (the toric code is `G = Z2`), the commuting-projector vertex/plaquette construction, the dyonic `([c], \pi)` anyons with their ribbon operators and fusion/braiding, and topological degeneracy on surfaces — the exact structure whose anyon census and torus GSD this card computes. Rendered: ./quant-ph-9707021_fault-tolerant-quantum-computation-by-anyons.md.
+[@Kitaev2003] — Kitaev, "Fault-tolerant quantum computation by anyons", Ann. Phys. **303**, 2 (2003): introduces the quantum-double models `D(G)` (the toric code is `G = Z2`), the commuting-projector vertex/plaquette construction, the dyonic `([c], \pi)` anyons with their ribbon operators and fusion/braiding, and topological degeneracy on surfaces — the exact structure whose anyon census and torus GSD this card computes. Rendered: ./../toric-code/../toric-code/quant-ph-9707021_fault-tolerant-quantum-computation-by-anyons.md.

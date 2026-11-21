@@ -1,6 +1,8 @@
 # 二维随机键 Ising 的响应函数
 
-Slurm 扫描使用 [run_slurm.jl](run_slurm.jl)、[scan.toml](scan.toml) 和 [submit.sbatch](submit.sbatch)，用法见文末。
+物理约定、验证标准、研究限制和文献对应见 [项目知识卡](../.knowledge/projects/random_ising.md)。
+
+Slurm 扫描使用 [run_slurm.jl](run_slurm.jl)、[scan.toml](scan.toml) 和 [submit.sh](submit.sh)，用法见文末。
 
 在项目根目录启动 `julia --project=julia-env/local --threads=auto`，然后运行：
 
@@ -130,7 +132,7 @@ chi_local, err_local = random_bond_local_susceptibility(L, T, Js;
 
 修改 `scan.toml` 设置尺寸、温度、无序构型数和 MC 参数，脚本启动时自动读取。
 `output_dir` 的相对路径以 TOML 文件所在目录为基准。
-修改 `submit.sbatch` 设置节点、进程和每进程的 CPU 数。
+修改 `submit.sh` 设置节点、进程和每进程的 CPU 数。
 个人电脑使用 `julia-env/local/Project.toml`；服务器使用 `julia-env/server/Project.toml`，只安装 MC 扫描所需依赖。
 服务器的所有节点需能访问相同的仓库和服务器 Julia 环境，worker 自动沿用主进程的环境。
 `run_slurm.jl` 在加载依赖前自动激活服务器环境；独立测试脚本 `test_run_slurm.jl` 激活本地环境，路径相对于脚本位置解析。
@@ -138,7 +140,7 @@ chi_local, err_local = random_bond_local_susceptibility(L, T, Js;
 
 ```bash
 julia --project=julia-env/server -e 'using Pkg; Pkg.instantiate()'
-sbatch random_ising/submit.sbatch
+sbatch random_ising/submit.sh
 ```
 
 每个 worker 计算一个 `(L,T)`，内部使用 `--cpus-per-task` 个线程计算不同无序构型。

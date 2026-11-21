@@ -8,7 +8,7 @@ $$ H = -\sum_v A_v \;-\; \sum_p B_p, \qquad A_v=\prod_{i\in v}\sigma^x_i,\quad B
 
 on an `L×L` square-lattice **torus** (PBC×PBC). Spin-1/2 qubits live on the **edges** (`n = 2L²` qubits); the star `A_v` is the product of `σ^x` over the four edges meeting at vertex `v`, the plaquette `B_p` the product of `σ^z` over the four edges bounding face `p`. Any two stabilizers share `0` or `2` edges, so all `A_v`, `B_p` mutually commute; coupling set to the energy unit (`J = 1`). Edges are indexed `(site, direction)` — `edge_index(x,y,d) = 2(yL+x)+d`, `d = 0` horizontal / `d = 1` vertical — so at `L = 2` each vertex still touches four **distinct** edges (no degenerate stars). See `.knowledge/conventions.md`.
 
-Physics card: `.knowledge/models/toric-code/MODEL.md`. That card writes the **identical** Hamiltonian with the same Pauli convention, qubits-on-edges layout, and torus geometry. **Conventions match**; no translation needed. This oracle card adds the explicit `(site,direction)` edge indexing and the finite-`L` stabilizer-rank computation the model card leaves implicit.
+本卡独立保存模型约定与验证标准；用途见 [保留基准索引](../INDEX.md)。
 
 ## Solvability statement
 

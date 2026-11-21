@@ -7,7 +7,7 @@ description: Use when choosing or running ITensors.jl or ITensorMPS.jl for DMRG,
 
 Software-stack skill for ITensors.jl / ITensorMPS.jl — the harness's canonical 1D and quasi-1D tensor-network workflows. It owns the **software layer**: run mechanics, **software parameters (step 3)**, and the **time estimate (feeds step 4)**. It is the **step-2 handoff target** from `/method-mps` (DMRG/TEBD) and `/method-ltrg`.
 
-It does **not** own method selection or the method algorithm / "why" — the DMRG, TEBD, and LTRG algorithms and their convergence criteria live in `/method-mps` and `/method-ltrg` (`## Details`); model choice → `.knowledge/models/`; paper figure facts → `/reproduce-paper`. This card carries the ITensors API surface and parameter values to *express* those methods, not the methods themselves.
+It does **not** own method selection or the method algorithm / "why". In this repository, start at `.knowledge/methods/INDEX.md` for DMRG, TEBD, TDVP and LTRG/XTRG criteria; model conventions live in `.knowledge/projects/` and `.knowledge/models/`, and source papers are indexed by `.knowledge/literature/README.md`. This card owns the ITensors API and parameter choices used to express those methods.
 
 ## Sources
 

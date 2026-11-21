@@ -371,7 +371,7 @@ def construct_fsa_eigensystem(self, m=0, normalized=False):
     Memory is O(D*(N+1)) plus sparse operators, D=F_(N-1)+F_(N+1).
     This explicit-basis implementation is intended for modest sizes, not
     N=32 paper-scale runs; no full D-by-D dense Hamiltonian is constructed.
-    References: papers/Turner_2018_Weak_ergodicity_breaking.md, Eqs. (3)-(5)
+    References: .knowledge/literature/Turner_2018_Weak_ergodicity_breaking.md, Eqs. (3)-(5)
     (the hopping sum ends at N-1); .knowledge/models/rydberg-pxp/MODEL.md.
     """
     L = self.N

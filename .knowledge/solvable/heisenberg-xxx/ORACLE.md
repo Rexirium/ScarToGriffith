@@ -8,7 +8,7 @@ $$ H = J \sum_{i=1}^{N} \mathbf{S}_i\cdot\mathbf{S}_{i+1}, \qquad \text{PBC } (\
 
 Conventions: spin-1/2 `S`-operators (`S^a = σ^a/2`), `J = 1` antiferromagnetic, nearest-neighbour bonds counted once, `N` even. This is the isotropic (`Δ=1`) point of the XXZ family. See `.knowledge/conventions.md`.
 
-Physics card: `.knowledge/models/heisenberg/MODEL.md`. That card uses the **same** `S`-operator convention and the same `H = J Σ S_i·S_j` form, and quotes the identical thermodynamic-limit benchmark `E/N = 1/4 − ln 2 ≈ −0.443147` (Bethe/Hulthén, `J=1`). No convention translation is needed between the two cards. The `Δ`-tuned generalisation lives in the sibling card `xxz-chain`.
+本卡独立保存模型约定与验证标准；用途见 [保留基准索引](../INDEX.md)。
 
 ## Solvability statement
 

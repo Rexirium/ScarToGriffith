@@ -1,5 +1,7 @@
 # Clean 横场 Ising 链的虚时自关联
 
+约定、验证标准和与随机链的关系见 [项目知识卡](../.knowledge/projects/tfim.md)。
+
 采用 Pauli 约定的开边界链（OBC）：
 
 \[

@@ -1,7 +1,7 @@
 [project]
 name = "solvable-oracles"
 version = "0.1.0"
-description = "Exact-solution oracle scripts for the quantum harness solvable-models catalog"
+description = "Ising, PXP, tensor-network and quantum-circuit verification benchmarks"
 requires-python = ">=3.10"
 dependencies = ["numpy>=1.26", "scipy>=1.11"]
 

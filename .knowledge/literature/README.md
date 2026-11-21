@@ -1,31 +1,14 @@
-# Methodology Literature
+# 文献与实现
 
-Rendered methodology references for the quantum many-body physics harness.
+原 papers/ 的四篇全文统一存放在这里；Young–Rieger 的图 1–23 改为短文字描述，原锚点保留。论文是证据来源，项目改动见对应卡。
 
-`ref.bib` is the human-edited source of truth for which references belong to
-which method (entry `keywords = {mps-based-algorithm, …}`). The per-method JSON
-manifest consumed by `fetch_metadata.py` / `render.py` is derived via
-`skills/download-ref/helpers/bibtex_to_manifest.py` and is not
-committed. The rendered Markdown entries under each method folder are the
-agent-facing cite targets — agents cite the rendered Markdown path when one
-exists.
+| 文献 | 读取任务 / 对应实现 |
+|---|---|
+| [Young–Rieger 1996](Young_Rieger_1996_Numerical_study_random_transverse_field_Ising_chain.md) | [随机 TFIM](../projects/random_tfim.md)：自由费米子、G 矩阵、能隙和关联分布；注意 PBC→OBC 改动 |
+| [Turner 2018](Turner_2018_Weak_ergodicity_breaking.md) | [PXP](../projects/pxp_model.md)：FSA Eqs. (3)–(5)、scar 重叠与复苏 |
+| [Choi 2019](Choi_2019_Emergent_SU2_Dynamics_and_Perfect_Quantum_Many_Body_Scars.md) | SU(2)/完美复苏背景；不等同当前均匀 m 形变 |
+| [Münster 2024](Munster_2024_Griffiths_phase_large_deviations.md) | [经典随机 Ising](../projects/random_ising.md)：稀有区与磁化率分布；当前代码没有其大偏差抽样 |
 
-Each method folder has its own `INDEX.md` and rendered markdown entries. Raw
-PDFs, Semantic Scholar metadata, and extracted figures live in ignored `.raw/`
-and `.figures/` directories inside each method folder.
+保留的方法原文：[ED](ed/INDEX.md)、[MPS / DMRG / TDVP / 软件](mps-based-algorithm/INDEX.md)、[PEPS / CTMRG / 自动微分](peps-based-algorithm/INDEX.md)、[LTRG / XTRG](ltrg/INDEX.md)。MERA、HOTRG、有限温 MPS、DMRG-X 的原文在对应 [方法卡](../methods/INDEX.md) 旁；量子线路、精确 MPS 与稳定子资料见 [基准索引](../solvable/INDEX.md)。
 
-## Folders
-
-- `mps-based-algorithm/` - DMRG, TEBD, and matrix-product-state references.
-- `peps-based-algorithm/` - CTMRG and PEPS-based references.
-- `ltrg/` - linearized tensor renormalization group (finite-temperature) references.
-- `quantum-monte-carlo/` - quantum Monte Carlo references.
-- `variational-monte-carlo-neural-quantum-states/` - variational Monte Carlo and neural quantum state references.
-- `quantum-circuit-simulation/` - tensor-network / VQE-style circuit simulation references.
-- `anderson-impurity/` - Anderson/Kondo impurity solver references.
-- `dmft/` - DMFT references mentioned as adjacent/future methodology.
-- `ed/` - exact diagonalization references.
-
-`ref.bib` lives at this directory's root. To regenerate it from the rendered
-markdown (e.g. after a manual edit drift) run
-`python3 skills/download-ref/helpers/md_to_bibtex.py` from the repo root.
+原文就近保留一份；通用软件目录中的重复副本已合并。BibTeX 统一在 [references.bib](../references.bib)，论文自身的编号文献表仍留在原文内。

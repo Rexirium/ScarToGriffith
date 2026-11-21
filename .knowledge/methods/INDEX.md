@@ -1,90 +1,19 @@
-# Method Zoo — Index
+# 方法入口
 
-36 quantum-many-body computational-method cards, one per distinct method in
-`.knowledge/method-survey.md`. Each `METHOD.md` carries a structured **M1–M14**
-property table (axes defined in `../method-property-checklist.md`), cost & accuracy
-classes, recommended models, one key reference, and verified benchmarks.
+当前实现优先：[random_tfim 的自由费米子](../projects/random_tfim.md)、[PXP 的 ED](../projects/pxp_model.md)、[经典 Ising 的 MC](../projects/random_ising.md)。新增 ED 任务读仓库 method-ed 技能与 [ED 文献](../literature/ed/INDEX.md)。
 
-- **Axis schema:** `../method-property-checklist.md` (M1–M14, four groups).
-- **Card template:** `_TEMPLATE.md`.
-- **Shared bibliography:** `ref.bib` (reused entries carry their
-  `../literature/ref.bib` cite keys verbatim; fresh downloads appended).
-- **Prose catalog & cost derivations:** `../method-survey.md`.
-- **Model → method gate:** `../method-property-map.md`.
+下列张量网络和量子线路资料按用户要求保留，属于方法储备，不表示已在各子项目中实现。
 
-Accuracy class abbreviations: **exact** = numerically exact (to machine/statistical
-error); **upper** = variational upper bound; **lower** = certified lower bound;
-**controlled** = systematically improvable (convergence knob); **uncontrolled** =
-no internal convergence parameter; **(stoch)** = carries statistical error bars.
+| 张量网络方法 | 用途 |
+|---|---|
+| [DMRG / iDMRG / VUMPS](dmrg/METHOD.md) | 有限链基态用 MPS 变分扫描 |
+| [TEBD](tebd/METHOD.md) | 将实/虚时间演化分解成局域门，逐门 SVD 截断 MPS。近邻链最直接 |
+| [TDVP / MPO 时间演化](tdvp/METHOD.md) | 把 Schrödinger 方程投影到 MPS 切空间 |
+| [有限温 MPS：purification / METTS](mps-finite-t/METHOD.md) | purification 从无限温物理-辅助纠缠对出发，对物理自由度演化 exp(-βH/2)，再迹掉辅助空间 |
+| [LTRG / XTRG](ltrg-xtrg/METHOD.md) | 用 MPO 表示热密度矩阵 |
+| [DMRG-X](dmrg-x/METHOD.md) | 在扫描时按与当前态重叠选择局部激发态，面向低纠缠的局域化本征态。与只瞄准能量的基态 DMRG 不同。 |
+| [PEPS / iPEPS](peps-ipeps/METHOD.md) | 二维有限/无限张量网络变分态 |
+| [TRG / HOTRG](trg-hotrg/METHOD.md) | 对经典配分函数或离散虚时量子网络做局域截断和粗粒化。保存归一化因子及杂质张量，区分自由能与局域观测量。 |
+| [MERA](mera/METHOD.md) | 由 disentangler 与 isometry 构成分层网络，适合临界态和标度算符 |
 
-## 1. Exact methods
-| Method | Card | Accuracy | Owning skill | Key ref |
-|---|---|---|---|---|
-| Exact diagonalization — full | `ed-full` | exact | `/method-ed` | [@sandvik_2010_computational] |
-| Exact diagonalization — Lanczos/Krylov | `ed-lanczos` | exact | `/method-ed` | [@sandvik_2010_computational] |
-| Finite-T Lanczos / thermal pure states | `ftlm-tpq` | controlled (stoch) | `/method-ed` | [@jaklic_1994_lanczos] |
-| Kernel polynomial method | `kpm` | controlled (stoch) | `/method-ed` | [@weisse_2006_kernel] |
-| Full configuration interaction | `fci` | exact | `/method-ed` | [@booth_2009_fermion] |
-
-## 2. Classical Monte Carlo & critical RG
-| Method | Card | Accuracy | Owning skill | Key ref |
-|---|---|---|---|---|
-| Metropolis Monte Carlo | `metropolis-mc` | exact (stoch) | classical MC (no dedicated skill) | [@sandvik_2010_computational] |
-| Cluster MC / Wang–Landau / parallel tempering | `cluster-mc` | exact (stoch) | classical MC (no dedicated skill) | [@wolff_1989_collective] |
-| Monte Carlo renormalization group | `mcrg` | controlled (stoch) | outside core harness | [@wu_2017_variational] |
-
-## 3. Ground-state tensor networks
-| Method | Card | Accuracy | Owning skill | Key ref |
-|---|---|---|---|---|
-| Density-matrix renormalization group | `dmrg` | controlled | `/method-mps` | [@schollwoeck_2010_density] |
-| Projected entangled pair states | `peps-ipeps` | controlled | `/method-peps` | [@naumann_2023_introduction] |
-| Tensor RG (TRG / HOTRG) | `trg-hotrg` | controlled | `/method-peps` | [@xie_2012_coarse] |
-| Multiscale entanglement renormalization | `mera` | controlled | specialized (no dedicated skill) | [@evenbly_2007_algorithms] |
-
-## 4. Tensor-network dynamics & finite-T
-| Method | Card | Accuracy | Owning skill | Key ref |
-|---|---|---|---|---|
-| Time-evolving block decimation | `tebd` | controlled | `/method-mps` | [@vidal_2003_efficient] |
-| Time-dependent variational principle | `tdvp` | controlled | `/method-mps` | [@haegeman_2016_unifying] |
-| MPS finite-T (purification / METTS) | `mps-finite-t` | controlled (+stoch) | `/method-mps` | [@paeckel_2019_timeevolution] |
-| Linearized / exponential thermal tensor RG | `ltrg-xtrg` | controlled | `/method-ltrg` | [@chen_2018_exponential] |
-| DMRG-X (excited / MBL eigenstates) | `dmrg-x` | controlled | `/method-mps` | [@khemani_2016_obtaining] |
-
-## 5. Quantum Monte Carlo
-| Method | Card | Accuracy | Owning skill | Key ref |
-|---|---|---|---|---|
-| Variational MC & neural quantum states | `vmc-nqs` | upper (stoch) | `/method-vmc` | [@carleo_2016_solving] |
-| Stochastic series expansion / worldline | `sse` | exact (stoch) | `/method-qmc` | [@syljuasen_2002_quantum] |
-| Determinant QMC (BSS) | `dqmc` | exact (stoch) | `/method-qmc` | [@bercx_2017_alf] |
-| Auxiliary-field QMC / constrained-path | `afqmc-cpmc` | controlled (stoch) | `/method-qmc` | [@zhang_2019_auxiliary] |
-| Projector / diffusion MC + fixed-node | `dmc-gfmc` | controlled (stoch) | `/method-qmc` | [@becca_2017_quantum] |
-| Path-integral Monte Carlo | `pimc` | exact (stoch) | `/method-qmc` | [@ceperley_1995_path] |
-| Diagrammatic Monte Carlo | `diagmc` | controlled (stoch) | `/method-qmc` | [@prokofev_1998_polaron] |
-
-## 6. Quantum embedding & perturbative
-| Method | Card | Accuracy | Owning skill | Key ref |
-|---|---|---|---|---|
-| Dynamical mean-field theory | `dmft` | controlled (exact `Z→∞`) | outside core harness | [@georges_1996_dynamical] |
-| Density-matrix embedding | `dmet` | controlled | outside core harness | [@knizia_2012_density] |
-| Numerical renormalization group | `nrg` | controlled | outside core harness | [@bulla_2007_numerical] |
-| Functional renormalization group | `frg` | controlled | outside core harness | [@metzner_2011_functional] |
-| Coupled cluster | `coupled-cluster` | controlled | outside core harness | [@bartlett_2007_coupled] |
-| Many-body perturbation theory (GW/RPA/GF2) | `mbpt-gw` | uncontrolled | outside core harness | [@golze_2019_gw] |
-
-## 7. Mean-field, circuit, certified
-| Method | Card | Accuracy | Owning skill | Key ref |
-|---|---|---|---|---|
-| Hartree–Fock / UHF (+ DFT baseline) | `hartree-fock` | uncontrolled | `/method-mf` | [@arovas_2022_hubbard] |
-| Linear spin-wave / large-S | `spin-wave` | controlled (`1/S`) | `/method-mf` | [@toth_2015_linear] |
-| Slave-particle / parton mean field | `slave-particle` | uncontrolled (MF) | `/method-mf` | [@kotliar_1986_new] |
-| Cluster mean field / VCA | `vca-cluster-mf` | controlled | `/method-mf` | [@maier_2004_quantum] |
-| Quantum-circuit simulation | `circuit-sim` | exact / controlled | `/method-qcs` | [@markov_2008_simulating] |
-| Certified bounds — SDP / NCTSSOS | `sdp-nctssos` | lower (certified) | `/method-polyopt` | [@wang_2024_certifying] |
-
----
-
-**References (55 entries):** see `ref.bib`. Reference full text is rendered next to
-each card (`<id>_<slug>.md`) for fresh downloads, or linked into
-`../literature/<family>/` for reused entries. Bib stubs (no reachable PDF):
-`fci` (Booth et al., paywalled), `cluster-mc` (Wolff PRL / Swendsen–Wang PRL),
-`coupled-cluster` (Bartlett–Musiał RMP), `slave-particle` (Kotliar–Ruckenstein PRL).
+[量子线路](quantum-circuits.md) · [原文索引](../literature/README.md) · [独立验证基准](../solvable/INDEX.md)。ITensors 的版本/API 查仓库 using-itensors 技能；不以历史文献推断当前软件接口。

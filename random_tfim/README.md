@@ -2,8 +2,9 @@
 
 计算有限链零温能隙、纵向空间关联、基态二分纠缠熵，以及实时间/虚时间自关联。
 核心采用自由费米子 SVD，统一使用开放边界条件（OBC）；无序样本可按 Julia 线程并行。
-模型与论文对照见 [Young & Rieger (1996)](../papers/Young_Rieger_1996_Numerical_study_random_transverse_field_Ising_chain.md)
+模型与论文对照见 [Young & Rieger (1996)](../.knowledge/literature/Young_Rieger_1996_Numerical_study_random_transverse_field_Ising_chain.md)
 和[模型卡](../.knowledge/models/transverse-field-ising/MODEL.md)。
+约定、验证标准与研究限制摘要见 [项目知识卡](../.knowledge/projects/random_tfim.md)。
 
 ## 快速运行
 

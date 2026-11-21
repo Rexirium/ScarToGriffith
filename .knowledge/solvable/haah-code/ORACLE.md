@@ -15,7 +15,7 @@ the generators at site `s` are (qubit 0 / qubit 1 columns):
 - **X-type** `A_s`: `σ^x` support `f` on qubit 0, `g` on qubit 1;
 - **Z-type** `B_s`: `σ^z` support `\bar g` on qubit 0, `\bar f` on qubit 1 (bar = `x → x^{-1}`, spatial inversion).
 
-Commutation is automatic: the CSS symplectic overlap is `f·g + g·f = 0` over `F₂`, so every X/Z translate pair commutes — the swapped-inverse arrangement is precisely what makes the code well defined. Sites are indexed `qubit_index(x,y,z,q) = 2((zL+y)L+x)+q`. See `.knowledge/conventions.md`. No model-zoo sibling card exists for the Haah code (the `models/toric-code` card is the closest relative).
+Commutation is automatic: the CSS symplectic overlap is `f·g + g·f = 0` over `F₂`, so every X/Z translate pair commutes — the swapped-inverse arrangement is precisely what makes the code well defined. Sites are indexed `qubit_index(x,y,z,q) = 2((zL+y)L+x)+q`. See `.knowledge/conventions.md`. No model-zoo sibling card exists for the Haah code (the [toric-code 基准](../toric-code/ORACLE.md) card is the closest relative).
 
 Rows are built by **XOR-toggling** bit positions so a Pauli landing twice on a qubit at a periodic wrap cancels rather than double-counting.
 

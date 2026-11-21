@@ -6,7 +6,7 @@ Technique: T5 (exact eigenstates embedded in a chaotic spectrum) · Tier: C (a f
 
 $$ H = \sum_{j} P_{j-1}\,X_j\,P_{j+1}, \qquad P=|0\rangle\langle 0|,\; X=\sigma^x,\; |0\rangle=g,\;|1\rangle=r $$
 
-Conventions: constrained Rydberg-blockade chain, `|0\rangle=g` (ground), `|1\rangle=r` (Rydberg); `X=\sigma^x` flips (Rabi unit `\Omega=1`), `P=|0\rangle\langle0|=1-n` projects a neighbour onto its ground state, so a spin flips only if **both** neighbours are in `|0\rangle` (infinite blockade → no two adjacent excitations). **OBC** with boundary terms `X_1P_2` and `P_{N-1}X_N` (the missing-neighbour ends carry a single projector) — this matches `.knowledge/models/rydberg-pxp/MODEL.md` exactly (`\Delta=0` pure PXP point). See `.knowledge/conventions.md`. Physics card: `models/rydberg-pxp` (same projector-dressed drive, the `|Z_2\rangle`-quench scar story, Fibonacci Hilbert space).
+Conventions: constrained Rydberg-blockade chain, `|0\rangle=g` (ground), `|1\rangle=r` (Rydberg); `X=\sigma^x` flips (Rabi unit `\Omega=1`), `P=|0\rangle\langle0|=1-n` projects a neighbour onto its ground state, so a spin flips only if **both** neighbours are in `|0\rangle` (infinite blockade → no two adjacent excitations). **OBC** with boundary terms `X_1P_2` and `P_{N-1}X_N` (the missing-neighbour ends carry a single projector) — the local pure-PXP drive agrees with the project, but this oracle uses OBC while pxp_model uses PBC. See `.knowledge/conventions.md`. Project conventions: [pxp_model](../../projects/pxp_model.md); use the correct OBC/PBC dimension and endpoint terms.
 
 ## Solvability statement
 
@@ -44,7 +44,7 @@ Self-test anchors: (1) **combinatorial ground truth** — `constrained_dim == F_
 
 - To check a PXP code: the constrained Hilbert-space dimension must equal `F_{N+2}` (OBC) or `L_N` (PBC) — the direct check that the blockade is imposed correctly. A `2^N` count means the constraint is missing.
 - To check the exact scars: build the bond-dimension-2 MPS above and confirm `H|\Gamma\rangle=E|\Gamma\rangle` at machine precision with `E=\pm\sqrt2` (for `X=\sigma^x`; if your `X=\sigma^x/\sqrt2` the eigenvalues rescale to `\pm1`). A nonzero residual flags a boundary-term or basis-labelling error.
-- To *prove* scarring (not just find an eigenstate): show the candidate is an entanglement/overlap **outlier** — its half-chain entropy far below the thermal mean in its energy window, and (dynamically) `|Z_2\rangle`-quench revivals absent for a generic product state (the negative control in `models/rydberg-pxp`).
+- To *prove* scarring (not just find an eigenstate): show the candidate is an entanglement/overlap **outlier** — its half-chain entropy far below the thermal mean in its energy window, and (dynamically) `|Z_2\rangle`-quench revivals absent for a generic product state (compare with the diagnostics in [pxp_model](../../projects/pxp_model.md)).
 
 ## Key reference
 

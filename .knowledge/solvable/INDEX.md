@@ -1,153 +1,26 @@
-# Exactly-Solvable Models Catalog — Index
+# 独立验证基准
 
-This is the harness's verification-oracle layer: for each entry below, an
-`ORACLE.md` card states the exact result(s) a numerical run (ED / DMRG / QMC /
-VMC) can be checked against, with provenance. It sits alongside the model zoo
-(`.knowledge/models/`) and the method zoo (`.knowledge/methods/`) as a third
-knowledge layer — cross-linked to both where a physics card or a method exists
-for the same model.
+保留与当前 Ising/PXP、张量网络和量子线路有关的 19 项。每项 ORACLE.md 给出边界、归一化、适用极限和 self_test；不把外部项目的历史性能记录当成本项目已运行的结果。
 
-**Tiers** (what is exactly known):
+无序机制对照：[anderson-1d](anderson-1d/ORACLE.md)。
 
-| Tier | Meaning |
-|---|---|
-| **A** | Full solution — complete spectrum and/or all correlators |
-| **B** | Integrable — Bethe ansatz / Yang–Baxter: exact GS energy, gap, some correlators, TBA thermodynamics |
-| **C** | Exact ground state / exact eigenstates only |
-| **D** | Exact in a limit |
+## 项目直接对照
 
-**Script flags** (oracle-script coverage):
+[tfim-chain](tfim-chain/ORACLE.md) · [ising-2d-onsager](ising-2d-onsager/ORACLE.md) · [pxp-scars](pxp-scars/ORACLE.md) · [random-matrix-stats](random-matrix-stats/ORACLE.md)
 
-| Flag | Meaning |
-|---|---|
-| **S** | Full oracle script — all card quantities computable via `oracle.py` |
-| **P** | Partial script — a subset of the exact results is scriptable; the rest are tabulated |
-| **T** | No oracle script — tabulated literature values only |
+## 张量网络精确态与能量
 
-**Running an oracle:**
+[aklt-chain](aklt-chain/ORACLE.md) · [aklt-honeycomb](aklt-honeycomb/ORACLE.md) · [majumdar-ghosh](majumdar-ghosh/ORACLE.md) · [motzkin-fredkin](motzkin-fredkin/ORACLE.md) · [heisenberg-xxx](heisenberg-xxx/ORACLE.md)
 
-```
-cd .knowledge/solvable && uv run python <card>/oracle.py --help
+## 量子线路、稳定子与拓扑码
+
+[dual-unitary-circuits](dual-unitary-circuits/ORACLE.md) · [kicked-ising-floquet](kicked-ising-floquet/ORACLE.md) · [cluster-spt](cluster-spt/ORACLE.md) · [toric-code](toric-code/ORACLE.md) · [color-code](color-code/ORACLE.md) · [quantum-double](quantum-double/ORACLE.md) · [string-net](string-net/ORACLE.md) · [haah-code](haah-code/ORACLE.md) · [x-cube](x-cube/ORACLE.md)
+
+从仓库根目录运行（需 NumPy、SciPy、pytest；依赖见本目录 pyproject.toml）：
+
+```sh
+python .knowledge/solvable/tfim-chain/oracle.py --L 16
+python -m pytest .knowledge/solvable/tests
 ```
 
-**Running the full self-test suite** (from repo root):
-
-```
-make test-oracles
-```
-
-63 models total, organized by solution technique (T1–T7) — the technique
-determines what is computable and what the script looks like. Tier and
-script-coverage are tag columns, not groupings. Status marks build wave
-(`.knowledge/solvable/`'s implementation phasing, spec §8); Card links to the
-built `ORACLE.md` where available.
-
-## T1 Quadratic / free-particle
-
-| Model | Tier | Script | Status | Card |
-|---|---|---|---|---|
-| `tfim-chain` | A | S | ✓ wave 1 | [ORACLE](./tfim-chain/ORACLE.md) |
-| `xy-chain` | A | S | ✓ wave 1 | [ORACLE](./xy-chain/ORACLE.md) |
-| `kitaev-chain` | A | S | ✓ wave 1 | [ORACLE](./kitaev-chain/ORACLE.md) |
-| `long-range-kitaev` | A | S | ✓ wave 1 | [ORACLE](./long-range-kitaev/ORACLE.md) |
-| `ssh-chain` | A | S | ✓ wave 1 | [ORACLE](./ssh-chain/ORACLE.md) |
-| `kitaev-honeycomb` | A | S | ✓ wave 1 | [ORACLE](./kitaev-honeycomb/ORACLE.md) |
-| `p-ip-superconductor` | A | S | ✓ wave 1 | [ORACLE](./p-ip-superconductor/ORACLE.md) |
-| `tight-binding-lattices` | A | S | ✓ wave 1 | [ORACLE](./tight-binding-lattices/ORACLE.md) |
-| `hofstadter-harper` | A | S | ✓ wave 1 | [ORACLE](./hofstadter-harper/ORACLE.md) |
-| `haldane-chern` | A | S | ✓ wave 1 | [ORACLE](./haldane-chern/ORACLE.md) |
-| `anderson-1d` | A | S | ✓ wave 1 | [ORACLE](./anderson-1d/ORACLE.md) |
-| `harmonic-chain` | A | S | ✓ wave 1 | [ORACLE](./harmonic-chain/ORACLE.md) |
-| `bogoliubov-bose-gas` | A/D | S | ✓ wave 1 | [ORACLE](./bogoliubov-bose-gas/ORACLE.md) |
-
-## T2 2D classical / transfer matrix
-
-| Model | Tier | Script | Status | Card |
-|---|---|---|---|---|
-| `ising-2d-onsager` | A | S | ✓ wave 2 | [ORACLE](./ising-2d-onsager/ORACLE.md) |
-| `ising-triangular` | A | S | ✓ wave 2 | [ORACLE](./ising-triangular/ORACLE.md) |
-| `dimer-kasteleyn` | A | S | ✓ wave 2 | [ORACLE](./dimer-kasteleyn/ORACLE.md) |
-| `six-vertex` | B | S | ✓ wave 2 | [ORACLE](./six-vertex/ORACLE.md) |
-| `eight-vertex` | B | P | ✓ wave 2 | [ORACLE](./eight-vertex/ORACLE.md) |
-| `hard-hexagons` | B | P | ✓ wave 2 | [ORACLE](./hard-hexagons/ORACLE.md) |
-
-## T3 Bethe ansatz / Yang–Baxter
-
-| Model | Tier | Script | Status | Card |
-|---|---|---|---|---|
-| `heisenberg-xxx` | B | S | ✓ wave 2 | [ORACLE](./heisenberg-xxx/ORACLE.md) |
-| `xxz-chain` | B | S | ✓ wave 2 | [ORACLE](./xxz-chain/ORACLE.md) |
-| `xyz-chain` | B | P | ✓ wave 2 | [ORACLE](./xyz-chain/ORACLE.md) |
-| `zamolodchikov-fateev-spin1` | B | T | ✓ wave 2 | [ORACLE](./zamolodchikov-fateev-spin1/ORACLE.md) |
-| `haldane-shastry` | B | S | ✓ wave 2 | [ORACLE](./haldane-shastry/ORACLE.md) |
-| `inozemtsev-chain` | B | T | ✓ wave 2 | [ORACLE](./inozemtsev-chain/ORACLE.md) |
-| `hubbard-1d-lieb-wu` | B | S | ✓ wave 2 | [ORACLE](./hubbard-1d-lieb-wu/ORACLE.md) |
-| `susy-t-j` | B | P | ✓ wave 2 | [ORACLE](./susy-t-j/ORACLE.md) |
-| `lieb-liniger` | B | S | ✓ wave 2 | [ORACLE](./lieb-liniger/ORACLE.md) |
-| `tonks-girardeau` | A | S | ✓ wave 2 | [ORACLE](./tonks-girardeau/ORACLE.md) |
-| `yang-gaudin` | B | S | ✓ wave 2 | [ORACLE](./yang-gaudin/ORACLE.md) |
-| `calogero-sutherland` | B | P | ✓ wave 2 | [ORACLE](./calogero-sutherland/ORACLE.md) |
-| `kondo-bethe` | B | T | ✓ wave 2 | [ORACLE](./kondo-bethe/ORACLE.md) |
-| `anderson-impurity-bethe` | B | T | ✓ wave 2 | [ORACLE](./anderson-impurity-bethe/ORACLE.md) |
-| `richardson-pairing` | B | S | ✓ wave 2 | [ORACLE](./richardson-pairing/ORACLE.md) |
-| `gaudin-central-spin` | B | S | ✓ wave 2 | [ORACLE](./gaudin-central-spin/ORACLE.md) |
-| `chiral-potts` | B | T | ✓ wave 2 | [ORACLE](./chiral-potts/ORACLE.md) |
-
-## T4 Commuting projector / stabilizer
-
-| Model | Tier | Script | Status | Card |
-|---|---|---|---|---|
-| `toric-code` | A | S | ✓ wave 1 | [ORACLE](./toric-code/ORACLE.md) |
-| `quantum-double` | A | P | ✓ wave 1 | [ORACLE](./quantum-double/ORACLE.md) |
-| `string-net` | A | P | ✓ wave 1 | [ORACLE](./string-net/ORACLE.md) |
-| `color-code` | A | S | ✓ wave 1 | [ORACLE](./color-code/ORACLE.md) |
-| `x-cube` | A | S | ✓ wave 1 | [ORACLE](./x-cube/ORACLE.md) |
-| `haah-code` | A | P | ✓ wave 1 | [ORACLE](./haah-code/ORACLE.md) |
-| `cluster-spt` | A | S | ✓ wave 1 | [ORACLE](./cluster-spt/ORACLE.md) |
-
-## T5 Frustration-free / exact eigenstates
-
-| Model | Tier | Script | Status | Card |
-|---|---|---|---|---|
-| `aklt-chain` | C | S | ✓ wave 3 | [ORACLE](./aklt-chain/ORACLE.md) |
-| `aklt-honeycomb` | C | P | ✓ wave 3 | [ORACLE](./aklt-honeycomb/ORACLE.md) |
-| `majumdar-ghosh` | C | S | ✓ wave 3 | [ORACLE](./majumdar-ghosh/ORACLE.md) |
-| `shastry-sutherland-dimer` | C | S | ✓ wave 3 | [ORACLE](./shastry-sutherland-dimer/ORACLE.md) |
-| `rk-quantum-dimer` | C | S | ✓ wave 3 | [ORACLE](./rk-quantum-dimer/ORACLE.md) |
-| `motzkin-fredkin` | C | S | ✓ wave 3 | [ORACLE](./motzkin-fredkin/ORACLE.md) |
-| `eta-pairing-hubbard` | C | S | ✓ wave 3 | [ORACLE](./eta-pairing-hubbard/ORACLE.md) |
-| `pxp-scars` | C | S | ✓ wave 3 | [ORACLE](./pxp-scars/ORACLE.md) |
-
-## T6 Collective / large-N / random
-
-| Model | Tier | Script | Status | Card |
-|---|---|---|---|---|
-| `lmg` | A | S | ✓ wave 3 | [ORACLE](./lmg/ORACLE.md) |
-| `dicke-tavis-cummings` | B | S | ✓ wave 3 | [ORACLE](./dicke-tavis-cummings/ORACLE.md) |
-| `jaynes-cummings` | A | S | ✓ wave 3 | [ORACLE](./jaynes-cummings/ORACLE.md) |
-| `quantum-rabi` | B | S | ✓ wave 3 | [ORACLE](./quantum-rabi/ORACLE.md) |
-| `syk` | D | P | ✓ wave 3 | [ORACLE](./syk/ORACLE.md) |
-| `curie-weiss-tfim` | D | S | ✓ wave 3 | [ORACLE](./curie-weiss-tfim/ORACLE.md) |
-| `random-matrix-stats` | A | S | ✓ wave 3 | [ORACLE](./random-matrix-stats/ORACLE.md) |
-| `falicov-kimball-dinf` | D | T | ✓ wave 3 | [ORACLE](./falicov-kimball-dinf/ORACLE.md) |
-
-## T7 Dualities & solvable dynamics
-
-| Model | Tier | Script | Status | Card |
-|---|---|---|---|---|
-| `kramers-wannier` | A | S | ✓ wave 3 | [ORACLE](./kramers-wannier/ORACLE.md) |
-| `jw-duality-dictionary` | — | T | ✓ wave 3 | [ORACLE](./jw-duality-dictionary/ORACLE.md) |
-| `dual-unitary-circuits` | A | S | ✓ wave 3 | [ORACLE](./dual-unitary-circuits/ORACLE.md) |
-| `kicked-ising-floquet` | A | S | ✓ wave 3 | [ORACLE](./kicked-ising-floquet/ORACLE.md) |
-
-## Totals
-
-63 of 63 models built — catalog complete (waves 1–3). Wave 1: 20 T1 + T4
-cards. Wave 2: 23 T2 + T3 cards. Wave 3: 20 cards across T5, T6, T7 —
-T5 (8): `aklt-chain`, `aklt-honeycomb`, `majumdar-ghosh`,
-`shastry-sutherland-dimer`, `rk-quantum-dimer`, `motzkin-fredkin`,
-`eta-pairing-hubbard`, `pxp-scars`; T6 (8): `lmg`, `curie-weiss-tfim`,
-`jaynes-cummings`, `dicke-tavis-cummings`, `quantum-rabi`, `syk`,
-`random-matrix-stats`, `falicov-kimball-dinf`; T7 (4): `kramers-wannier`,
-`jw-duality-dictionary`, `dual-unitary-circuits`, `kicked-ising-floquet`.
-Script-flag totals: **46 S · 10 P · 7 T**.
+引用元数据统一见 [references.bib](../references.bib)。基准之间会复用 _lib；quantum-double 还调用 toric-code，kicked-ising-floquet 调用 dual-unitary-circuits，不要单独移走依赖。

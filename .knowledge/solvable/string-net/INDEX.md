@@ -1,12 +1,5 @@
-# string-net key reference
+# string-net 来源
 
-Generated 2026-07-14. Key reference for the string-net solvable-model card.
+- [String-net condensation: A physical mechanism for topological phases](cond-mat-0404617_string-net-condensation-a-physical-mechanism-for-topological.md)
 
-Search inside this dir with `rg --hidden -g '!.raw' "term" .knowledge/` (or `rg` from inside `.knowledge/` itself). The `.raw/` subdir holds the original PDFs / clones / HTML and is gitignored.
-
-## arXiv (1 entries)
-
-| File | Title | Authors | Year | Venue | Full text |
-|---|---|---|---|---|:---:|
-| [cond-mat-0404617_string-net-condensation-a-physical-mechanism-for-topological.md](cond-mat-0404617_string-net-condensation-a-physical-mechanism-for-topological.md) | String-net condensation: A physical mechanism for topological phases | Michael Levin, X. Wen | 2004 | Physical Review B | ✅ |
-
+[基准约定](ORACLE.md) · [全部基准](../INDEX.md)。

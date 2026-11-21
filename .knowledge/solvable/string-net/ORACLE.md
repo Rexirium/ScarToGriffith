@@ -8,7 +8,7 @@ $$ H = -\sum_v Q_v \;-\; \sum_p B_p, \qquad B_p = \sum_{s} a_s\, B_p^{s} $$
 
 **Levin–Wen string-net model** on a trivalent (honeycomb) lattice **torus**, built from an input unitary fusion category: **simple objects** (string types) `i` with fusion rules `i × j = \sum_k N^k_{ij}\, k`, quantum dimensions `d_i`, and `F`-symbols. The **degrees of freedom** live on edges, labelled by string types. The vertex projector `Q_v` enforces the branching (fusion) rules at each trivalent vertex; the plaquette operator `B_p` (a weighted sum `\sum_s a_s B_p^s` with `a_s = d_s/\sum_t d_t^2`) fluctuates the string-net. All `Q_v`, `B_p` mutually commute — a **commuting-projector** Hamiltonian whose ground state is a **weighted loop/string-net gas** and which realizes the **doubled (Drinfeld-center) topological phase** of the input category. See `.knowledge/conventions.md`.
 
-The `Z2` gauge theory / toric code is the string-net of the group category `Z2`; the doubled Fibonacci and doubled Ising phases here have **no** free-fermion or stabilizer sibling model card. There is no model-zoo sibling for these categorical inputs (`models/toric-code` is the closest relative, via the `Z2` string-net).
+The `Z2` gauge theory / toric code is the string-net of the group category `Z2`; the doubled Fibonacci and doubled Ising phases here have **no** free-fermion or stabilizer sibling model card. There is no model-zoo sibling for these categorical inputs ([toric-code 基准](../toric-code/ORACLE.md) is the closest relative, via the `Z2` string-net).
 
 ## Solvability statement
 

@@ -20,7 +20,7 @@ Do not infer an exponent's physical identity or a universality class from its fi
 
 - User has a `(L, observable)` or `(L, parameter, observable)` table and wants exponents.
 - `/parameter-scan` flagged a critical-like / extremum / crossing label and exponents are wanted.
-- A physics card needs an exponent to compare against universality-class expectations (`.knowledge/physics/criticality/PHYSICS.md`, `.knowledge/physics/confinement/PHYSICS.md`).
+- A project or physics card needs an exponent to compare against its stated scaling expectations (`.knowledge/physics/criticality/PHYSICS.md` and the corresponding `.knowledge/projects/` card).
 
 ## Inputs
 

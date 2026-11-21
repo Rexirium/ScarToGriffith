@@ -1,51 +1,10 @@
-# Criticality
+# 临界、Griffiths 与 scar 的证据边界
 
-Diagnose quantum critical behavior on a concrete model. Produce evidence and a scaling argument, not a course on phase transitions.
+- QMBS 与 QGP 的联系是 [研究假设](../../../plans/plan.md)。异常重叠、低纠缠、振荡复苏可识别 scar 候选，却不证明稀有区机制或 Griffiths 相。
+- [随机 TFIM](../../projects/random_tfim.md)：平均与典型关联分离、能隙分布与尺度变化应相互支持；临界激活型标度不能硬拟合为有限 z。uniform 与 fixed 横场分布有不同的 Griffiths 区边界，见项目卡和 [Young–Rieger](../../literature/Young_Rieger_1996_Numerical_study_random_transverse_field_Ising_chain.md)。
+- [经典随机 Ising](../../projects/random_ising.md)：先独立定位 Tc，再讨论相对纯模型转变温度的 Griffiths 区；热容峰不是 Tc 的充分证据，低温铁磁记忆也不是顺磁 Griffiths 慢动力学。
+- [纯净 TFIM](../../projects/tfim.md) 是对照。对减项曲线拟合出的 α 不能直接称为随机 Griffiths 的 1/z。
+- 多尺寸、多时间窗、多无序样本及不同种子检查应分别进行；报告拟合窗口、剔除规则、SEM/协方差处理和有限尺寸漂移。等权 log SSE 的最小值只是同一数据上的模型比较。
+- 改变减项、边界、对称性 sector 或热系综后，旧指数与平台不可直接复用。尚无实现/数据支持的推断明确标为待验证，不以通用模型卡的默认值替代证据。
 
-## Diagnose
-
-Infer the diagnostic framing from the user's prompt and propose it for ratification.
-
-**Canonical framing:** "You're asking about criticality in [model] near [control parameter ≈ value]. I'll treat this as: locate the transition, check continuous vs first-order, estimate the critical exponent / universality class via finite-size scaling. The model card driving the calculation is [model card]."
-
-If the user already has data at multiple sizes, adjust: "You have [observables at sizes]. I'll run a finite-size scaling analysis on what you have, then recommend what to compute next."
-
-Do not ask 6 questions. Propose the framing; let the user correct if wrong.
-
-## Evidence to gather
-
-- **Order parameter** — vanishes continuously at the critical point if continuous QPT; jumps discontinuously if first-order.
-- **Gap behavior** — closes as a power law with system size at criticality (`Δ ~ L^{-z}`); stays open in gapped phases.
-- **Susceptibility** — diverges at criticality with universal exponent.
-- **Correlation length** — diverges at criticality. Use `ξ ~ L` finite-size scaling form.
-- **Entanglement entropy** — at 1D criticality, `S_A ~ (c/6) log L` (open) or `(c/3) log L` (periodic) where `c` is the central charge.
-- **Finite-size scaling collapse** — order parameter, susceptibility, correlation length collapsed onto a universal scaling function.
-
-For *how* to compute each, see the model card (`heisenberg`, `transverse-field-ising`, `j1-j2`, `hubbard`) and the relevant method card.
-
-## Cross-checks
-
-| Competing explanation | Test that rules it out |
-|---|---|
-| First-order transition | Order parameter discontinuous at the candidate point; coexisting phases. |
-| Crossover (no real transition) | No size-divergent susceptibility / correlation length. |
-| Finite-size artifact | Multiple sizes show consistent scaling; the apparent transition does not drift with `L`. |
-| Wrong universality class | Independently estimate two exponents; if they fail the universal scaling relations, reconsider. |
-| Gapless phase (not a critical point) | Compare with limit/known-gapless regions in `.knowledge/limits.md`. |
-
-## Interpretation rules
-
-- A *single* observable showing critical-looking behavior is suggestive, not conclusive. Demand at least two consistent indicators (e.g., gap closing AND scaling collapse).
-- Quote uncertainties on exponent estimates from finite-size extrapolation; do not claim three significant figures from `L = 6, 8, 10`.
-- For known-universality classes (1D Ising at `Γ = J` is `c = 1/2`, free-Majorana / Ising CFT), check consistency with the established conformal data, not just any fit.
-- For contested cases (J1-J2 around `J2/J1 ≈ 0.5`, deconfined criticality candidates), report your evidence's position within the literature debate. Do not claim closure where the field has none.
-
-## Frontier flag
-
-Genuine open questions in QMB criticality — deconfined criticality on the SU(2) checkerboard, the J1-J2 intermediate region, multi-orbital Mott QCPs — should be presented as constraint-only diagnostics rather than identification claims.
-
-Before interpreting evidence in a frontier regime, search recent literature with a tailored query (e.g., `J1-J2 square deconfined criticality`, `kagome Heisenberg gap exponent`) to surface the current state of the debate. The harness's claim should sit inside the literature, not outside it.
-
-## Model hooks
-
-`transverse-field-ising` (canonical Z2 QCP at `Γ = J`), `heisenberg` (gapless 1D, BKT), `j1-j2` (intermediate-regime debate), `hubbard` (Mott QCP), `t-j` (doping-driven transitions).
+实现侧定义先读 [项目索引](../../README.md)；有限尺寸拟合任务使用仓库 scaling-fit 技能。

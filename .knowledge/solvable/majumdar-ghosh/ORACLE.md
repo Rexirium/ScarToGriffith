@@ -8,7 +8,7 @@ $$ H = J \sum_{i=1}^{L} \left[ \mathbf{S}_i\cdot\mathbf{S}_{i+1} + \tfrac{1}{2}\
 
 Conventions: spin-½ `S`-operators (`S^a = σ^a/2`), `J=1` antiferromagnetic, `L` a multiple of 4. This is the special point `J₂/J₁ = 1/2` of the frustrated `J₁`–`J₂` chain — the Majumdar–Ghosh point. See `.knowledge/conventions.md`.
 
-Physics card: the `J₁`–`J₂` chain lives in the model zoo as `.knowledge/models/j1-j2`; the MG point is its exactly-solvable special case. Same `S`-operator convention.
+本卡自包含 J₁–J₂ 链在 Majumdar–Ghosh 点的定义与验证；使用 S 算符，作为张量网络二聚态基准保留。
 
 ## Solvability statement
 

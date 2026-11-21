@@ -8,7 +8,7 @@ $$ H = -J \sum_{i=1}^{L} \sigma^z_i \sigma^z_{i+1} - h \sum_{i=1}^{L} \sigma^x_i
 
 Conventions: Pauli-matrix operators (`σ^a`, not `S^a` — a factor of 4 per bond vs the `S^a` convention); `J` is the Ising coupling, `h` the transverse field, both set to `1` by default; see `.knowledge/conventions.md`.
 
-Physics card: `.knowledge/models/transverse-field-ising/MODEL.md`. That card uses the same Pauli convention and the same `H = -J Σ σ^z σ^z - Γ Σ σ^x` form (its field is named `Γ` where this card uses `h` — same object). No convention translation is needed between the two cards.
+项目入口：[TFIM](../../models/transverse-field-ising/MODEL.md)。Pauli 符号一致，但本 oracle 使用均匀 PBC，而当前 random_tfim/tfim 使用 OBC；有限链能隙和总能量不能直接比较。
 
 ## Solvability statement
 
