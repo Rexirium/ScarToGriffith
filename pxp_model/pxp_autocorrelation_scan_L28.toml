@@ -9,7 +9,7 @@ ms = { start = 0.0, stop = 1.0, length = 51, scale = "linear", critical = true }
 # 101 log temperatures from 0.01 to 1.0 plus T=0 appended by zero=true (102 total).
 # Both flags default to false and skip values already present.
 # ms and temperatures are then sorted ascending, with T=0 first.
-temperatures = { start = -2.0, stop = 0.0, length = 101, scale = "log10", zero = true }
+temperatures = { start = -2.0, stop = 0.0, length = 51, scale = "log10", zero = true }
 real_times = { start = -1, stop = 4, length = 201, scale = "log10" }
 imaginary_times = { start = -1, stop = 4, length = 201, scale = "log10" }
 # At T>0: tau = ts/max(ts)/(2*T); at T=0: tau = ts unchanged.
