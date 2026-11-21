@@ -1,15 +1,19 @@
 """Plot local and average-magnetization correlations side by side.
 
 Run from the repository root:
-    python pxp_model/plot_pxp_autocorrelation.py --L 26 --T_index 0
+    python pxp_model/plot_pxp_autocorrelation.py --L 26 --T 0.1
 
 Requires only NumPy and Matplotlib. Default paths are relative to this script.
-Defaults: L=26 and T_index=0 (zero temperature, which must exist in the data).
-T_index=1, 2, ... select positive temperatures in their saved order.
+Defaults: L=26 and the first saved temperature when neither selector is given.
+--T_index is a zero-based saved column index and takes precedence over --T.
+--T matches exactly one saved temperature with rtol=1e-10, atol=0.
 Read ten m points from the saved scan, with spacing 0.02 near m=0.655.
-Both axes are logarithmic; correlation axes show 1e-12 <= C <= 1.
-The local panel spans all positive times; the average panel shows 0.1 <= tau <= 1e3.
-Nonpositive times/correlations are masked, including underflowed zeros.
+--xscale and --yscale accept log10 (default) or linear independently.
+Logarithmic correlation axes show 1e-12 <= C <= 1; linear axes fit the data.
+Use saved actual imaginary_times for the horizontal coordinates.
+At T>0 both panels span all displayed times; at T=0 the average panel shows
+0.1 <= tau <= 1e3 while the local panel spans all displayed times.
+Nonpositive times/correlations are masked only on the corresponding log axis.
 For each trace, compare A*exp(-gamma*tau) and A*tau**(-alpha) on all saved
 finite, positive time/correlation pairs, independently of the display limits,
 minimizing equally weighted squared residuals in ln(C).
@@ -72,10 +76,19 @@ def fit_decay_models(tau, trace):
     return grid, predicted, fits
 
 
-def plot_autocorrelation(data_dir=DEFAULT_DATA_DIR, L=26, T_index=0):
-    """Return the two-panel figure and fits; index 0 is T=0, 1+ are saved T>0."""
+def plot_autocorrelation(data_dir=DEFAULT_DATA_DIR, L=26, T=None, T_index=None,
+                         xscale="log10", yscale="log10"):
+    """Select by index first, then temperature value, otherwise the first column."""
+    if xscale not in ("log10", "linear") or yscale not in ("log10", "linear"):
+        raise ValueError("xscale and yscale must be 'log10' or 'linear'")
+    if T_index is None:
+        T_index = 0
+    else:
+        T = None
     if T_index < 0:
-        raise ValueError("T_index must be >= 0 (0 selects T=0)")
+        raise ValueError("T_index must be >= 0")
+    if T is not None and (np.isnan(T) or T < 0):
+        raise ValueError("T must be >= 0 (positive inf is allowed)")
     curves = []
     temperature = None
     for index in M_INDICES:
@@ -84,23 +97,23 @@ def plot_autocorrelation(data_dir=DEFAULT_DATA_DIR, L=26, T_index=0):
             if data["L"].item() != L:
                 raise ValueError(f"Expected L={L}: {path}")
             temperatures = data["temperatures"]
-            if (temperatures.ndim != 1 or np.any(np.isnan(temperatures))
+            if (temperatures.ndim != 1 or not temperatures.size or np.any(np.isnan(temperatures))
                     or np.any(temperatures < 0)):
-                raise ValueError(f"Expected one-dimensional nonnegative temperatures: {path}")
-            if T_index == 0:
-                columns = np.flatnonzero(temperatures == 0)
-                if columns.size != 1:
-                    raise ValueError(f"T_index=0 requires exactly one T=0 column: {path}")
-                column = columns.item()
-            else:
-                columns = np.flatnonzero(temperatures > 0)
-                if T_index > columns.size:
-                    raise ValueError(f"T_index={T_index} out of range; "
-                                     f"found {columns.size} positive temperatures: {path}")
-                column = columns[T_index - 1]
+                raise ValueError(f"Expected nonempty one-dimensional nonnegative temperatures: {path}")
+            column = T_index
+            if T is not None:
+                matches = np.flatnonzero(np.isclose(temperatures, T, rtol=1e-10, atol=0))
+                if not matches.size:
+                    raise ValueError(f"No saved temperature matches T={T:g}: {path}")
+                if matches.size != 1:
+                    raise ValueError(f"T={T:g} matches multiple temperature columns: {path}")
+                column = matches.item()
+            if column >= temperatures.size:
+                raise ValueError(f"T_index={column} out of range; "
+                                 f"found {temperatures.size} temperatures: {path}")
             selected_temperature = temperatures[column].item()
             if temperature is not None and selected_temperature != temperature:
-                raise ValueError(f"Inconsistent temperature for T_index={T_index}: {path}")
+                raise ValueError(f"Inconsistent selected temperature: {path}")
             temperature = selected_temperature
             times = data["imaginary_times"]
             if times.ndim != 2 or times.shape[1] != temperatures.size:
@@ -117,32 +130,38 @@ def plot_autocorrelation(data_dir=DEFAULT_DATA_DIR, L=26, T_index=0):
                 trace = values[:, column]
                 if not np.all(np.isfinite(trace)):
                     raise ValueError(f"Nonfinite {observable} correlation at T={temperature:g}: {path}")
-                valid = (tau > 0) & (trace > 0)
-                if np.count_nonzero(valid) < 2:
+                if np.count_nonzero((tau > 0) & (trace > 0)) < 2:
                     raise ValueError(f"Need two positive {observable} samples: {path}")
+                valid = ((tau > 0) | (xscale == "linear")) & ((trace > 0) | (yscale == "linear"))
                 traces[observable] = np.ma.masked_where(~valid, trace)
-            curves.append((m, tau, traces))
+            curves.append((m, column, tau, traces))
 
-    positive_times = np.concatenate([tau[tau > 0] for _, tau, _ in curves])
+    displayed_times = np.concatenate([tau[(tau > 0) | (xscale == "linear")]
+                                      for _, _, tau, _ in curves])
     fit_records = []
     with plt.rc_context(STYLE):
         fig, axes = plt.subplots(1, 2, figsize=(14, 6.5), layout="constrained")
         for ax, (observable, label) in zip(axes, OBSERVABLES.items()):
-            xlim = ((0.1, 1e3) if observable == "average"
-                    else (positive_times.min(), positive_times.max()))
-            for color, (m, tau, traces) in enumerate(curves):
-                ax.loglog(tau, traces[observable], color=f"C{color}", lw=1.8,
-                          label=rf"$m={m:g}$")
-            for color, (m, tau, traces) in enumerate(curves):
+            ax.set_xscale("log" if xscale == "log10" else "linear")
+            ax.set_yscale("log" if yscale == "log10" else "linear")
+            xlim = ((0.1, 1e3) if observable == "average" and temperature == 0
+                    else (displayed_times.min(), displayed_times.max()))
+            for color, (m, column, tau, traces) in enumerate(curves):
+                ax.plot(tau, traces[observable], color=f"C{color}", lw=1.8,
+                        label=rf"$m={m:g}$")
+            # Scale linear panels to the data before adding approximate fits.
+            ylim = Y_LIMITS if yscale == "log10" else ax.get_ylim()
+            for color, (m, column, tau, traces) in enumerate(curves):
                 grid, predicted, fits = fit_decay_models(tau, traces[observable])
-                fit_records.extend(dict(L=L, T_index=T_index, T=temperature,
+                fit_records.extend(dict(L=L, T_index=column, T=temperature,
                                         observable=observable, m=m, **fit) for fit in fits)
                 # White edges keep coincident dashed fits visible over the data.
                 ax.plot(grid, predicted, color=f"C{color}", ls="--", lw=2.2,
                         path_effects=[pe.Stroke(linewidth=4, foreground="white"), pe.Normal()])
-            ax.set(xlabel=r"$\tau$", ylabel=label, ylim=Y_LIMITS, xlim=xlim)
+            ax.set(xlabel=r"$\tau$", ylabel=label, ylim=ylim, xlim=xlim)
             ax.grid(which="major", color="0.9", linewidth=0.6)
-            ax.text(0.04, 0.06, "Dashed: best log-space fit", transform=ax.transAxes, fontsize=11)
+            ax.text(0.04, 0.92 if yscale == "linear" else 0.06,
+                    "Dashed: best log-space fit", transform=ax.transAxes, fontsize=11)
         handles, labels = axes[0].get_legend_handles_labels()
         fig.legend(handles, labels, ncol=5, fontsize=11, loc="outside lower center")
         fig.suptitle(f"{HAMILTONIAN}\nPBC, L={L}, T={temperature:g}")
@@ -154,15 +173,24 @@ def main():
     parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR,
                         help="Autocorrelation run directory containing L=<L>/")
     parser.add_argument("--L", type=int, default=26, help="Chain length (default: 26)")
-    parser.add_argument("--T_index", type=int, default=0,
-                        help="0: T=0 (default); 1, 2, ...: positive temperatures in saved order")
+    parser.add_argument("--T", type=float,
+                        help="Match a saved temperature value; ignored when --T_index is given")
+    parser.add_argument("--T_index", type=int,
+                        help="Zero-based saved column index; takes precedence over --T. "
+                             "If neither is given, use the first saved temperature")
+    parser.add_argument("--xscale", choices=("log10", "linear"), default="log10",
+                        help="Horizontal axis scale (default: log10)")
+    parser.add_argument("--yscale", choices=("log10", "linear"), default="log10",
+                        help="Vertical axis scale (default: log10)")
     parser.add_argument("--output-dir", type=Path)
     args = parser.parse_args()
     output_dir = args.output_dir
     if output_dir is None:
         output_dir = ROOT / "figures" / "autocorrelation" / args.data_dir.resolve().name
     try:
-        fig, fit_records = plot_autocorrelation(args.data_dir, L=args.L, T_index=args.T_index)
+        fig, fit_records = plot_autocorrelation(args.data_dir, L=args.L, T=args.T,
+                                              T_index=args.T_index,
+                                              xscale=args.xscale, yscale=args.yscale)
     except (OSError, ValueError) as error:
         parser.error(str(error))
     temperature = fit_records[0]["T"]
