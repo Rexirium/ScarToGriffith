@@ -61,7 +61,7 @@ class AutocorrelationPlotTest(unittest.TestCase):
                     local_imaginary_time=np.column_stack((np.ones(5), local)),
                     average_imaginary_time=np.column_stack((np.ones(5), local / 26)),
                 )
-            fig, fits = plot_autocorrelation(directory, T=0)
+            fig, fits, _ = plot_autocorrelation(directory, T=0)
             self.addCleanup(plt.close, "all")
             self.assertEqual(len(fits), 40)
             self.assertEqual(sum(fit["selected"] for fit in fits), 20)
@@ -113,7 +113,7 @@ class AutocorrelationPlotTest(unittest.TestCase):
                     T = temperatures[0] if requested is None else requested
                     T_index = temperatures.index(T)
                     with self.subTest(temperatures=temperatures, T=requested):
-                        fig, fits = plot_autocorrelation(directory, L=12, T=requested)
+                        fig, fits, _ = plot_autocorrelation(directory, L=12, T=requested)
                         self.assertIn(f"L=12, T={T:g}", fig._suptitle.get_text())
                         self.assertEqual({(fit["L"], fit["T_index"], fit["T"]) for fit in fits},
                                          {(12, T_index, T)})
@@ -156,12 +156,12 @@ class AutocorrelationPlotTest(unittest.TestCase):
                      L=26, m=0., temperatures=[.1], imaginary_times=tau[:, None],
                      local_imaginary_time=local[:, None],
                      average_imaginary_time=local[:, None] / 26)
-            default_fig, expected_fits = plot_autocorrelation(directory)
+            default_fig, expected_fits, _ = plot_autocorrelation(directory)
             plt.close(default_fig)
             for xscale in ("log10", "linear"):
                 for yscale in ("log10", "linear"):
                     with self.subTest(xscale=xscale, yscale=yscale):
-                        fig, fits = plot_autocorrelation(directory, xscale=xscale, yscale=yscale)
+                        fig, fits, _ = plot_autocorrelation(directory, xscale=xscale, yscale=yscale)
                         self.assertEqual(fits, expected_fits)
                         for ax, factor in zip(fig.axes, (1, 26)):
                             self.assertEqual(ax.get_xscale(), "log" if xscale == "log10" else "linear")
@@ -196,7 +196,7 @@ class AutocorrelationPlotTest(unittest.TestCase):
                          L=12, m=float(index), temperatures=temperatures,
                          imaginary_times=times, local_imaginary_time=local,
                          average_imaginary_time=local / 12)
-            fig, fits = plot_autocorrelation(directory, L=12, T=.1)
+            fig, fits, _ = plot_autocorrelation(directory, L=12, T=.1)
             self.assertEqual({(fit["m"], fit["T_index"], fit["T"]) for fit in fits},
                              {(0., 1, saved_T), (1., 0, saved_T)})
             for line in fig.axes[0].lines[:2]:
@@ -218,7 +218,7 @@ class AutocorrelationPlotTest(unittest.TestCase):
                      local_imaginary_time=local, average_imaginary_time=local / 12)
             for T, column in ((None, 0), (.1, 0), (-1., 1), (np.nan, 2), (0., 2)):
                 with self.subTest(T=T, column=column):
-                    fig, fits = plot_autocorrelation(directory, L=12, T=T, T_index=column)
+                    fig, fits, _ = plot_autocorrelation(directory, L=12, T=T, T_index=column)
                     self.assertEqual({(fit["T_index"], fit["T"]) for fit in fits},
                                      {(column, temperatures[column])})
                     np.testing.assert_array_equal(fig.axes[0].lines[0].get_xdata(), times[:, column])
@@ -238,6 +238,66 @@ class AutocorrelationPlotTest(unittest.TestCase):
                         newline="", encoding="utf-8") as stream:
                     self.assertEqual({(row["T_index"], row["T"]) for row in csv.DictReader(stream)},
                                      {("1", "0.0")})
+
+    def test_disabled_fitting_keeps_data_without_calling_models(self):
+        self.addCleanup(plt.close, "all")
+        with tempfile.TemporaryDirectory() as directory, \
+             patch("pxp_model.plot_pxp_autocorrelation.M_INDICES", (0,)), \
+             patch("pxp_model.plot_pxp_autocorrelation.fit_decay_models") as fit:
+            size_dir = Path(directory) / "L=12"
+            size_dir.mkdir()
+            tau = np.array([.1, 1.])
+            local = np.exp(-tau)
+            np.savez(size_dir / "autocorrelation_L=12_m_index=0000.npz",
+                     L=12, m=0., temperatures=[.5], imaginary_times=tau[:, None],
+                     local_imaginary_time=local[:, None],
+                     average_imaginary_time=local[:, None] / 12)
+            fig, fits, temperature = plot_autocorrelation(directory, L=12, fitting=False)
+            fit.assert_not_called()
+            self.assertEqual(fits, [])
+            self.assertEqual(temperature, .5)
+            for ax, factor in zip(fig.axes, (1, 12)):
+                self.assertEqual(len(ax.lines), 1)
+                self.assertEqual(len(ax.texts), 0)
+                self.assertEqual(ax.lines[0].get_linestyle(), "-")
+                np.testing.assert_array_equal(ax.lines[0].get_xdata(), tau)
+                np.testing.assert_allclose(ax.lines[0].get_ydata(), local / factor)
+
+    def test_cli_fitting_switch_controls_csv_output(self):
+        with tempfile.TemporaryDirectory() as directory, \
+             patch("pxp_model.plot_pxp_autocorrelation.M_INDICES", (0,)):
+            size_dir = Path(directory) / "L=12"
+            size_dir.mkdir()
+            times = np.array([[.1, .2], [1., 2.], [10., 20.]])
+            local = np.exp(-times)
+            np.savez(size_dir / "autocorrelation_L=12_m_index=0000.npz",
+                     L=12, m=0., temperatures=[.5, 0.], imaginary_times=times,
+                     local_imaginary_time=local, average_imaginary_time=local / 12)
+            cases = (("true", ["--T", ".50000000001"], .5),
+                     ("false", ["--T", ".50000000001"], .5),
+                     ("false", ["--T", ".5", "--T_index", "1"], 0.),
+                     ("false", [], .5))
+            for index, (fitting, selectors, temperature) in enumerate(cases):
+                output_dir = Path(directory) / f"figures_{index}"
+                with self.subTest(fitting=fitting, selectors=selectors), \
+                     patch("sys.argv", ["plot_pxp_autocorrelation.py", "--data-dir", directory,
+                                        "--L", "12", *selectors, "--fitting", fitting,
+                                        "--output-dir", str(output_dir)]):
+                    main()
+                    output = output_dir / f"pxp_autocorrelation_T={temperature:g}_L=12.png"
+                    self.assertTrue(output.is_file())
+                    fit_output = output_dir / f"pxp_autocorrelation_fits_T={temperature:g}_L=12.csv"
+                    self.assertEqual(fit_output.is_file(), fitting == "true")
+                    if fitting == "true":
+                        with fit_output.open(newline="", encoding="utf-8") as stream:
+                            records = list(csv.DictReader(stream))
+                        self.assertEqual({row["model"] for row in records},
+                                         {"exponential", "power_law"})
+                        self.assertEqual(len(records), 4)
+            with patch("sys.argv", ["plot_pxp_autocorrelation.py", "--fitting", "invalid"]), \
+                 patch("sys.stderr"), self.assertRaises(SystemExit) as error:
+                main()
+            self.assertEqual(error.exception.code, 2)
 
     def test_invalid_missing_and_ambiguous_temperatures_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:

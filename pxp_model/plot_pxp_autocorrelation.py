@@ -19,6 +19,7 @@ finite, positive time/correlation pairs, independently of the display limits,
 minimizing equally weighted squared residuals in ln(C).
 Dashed curves show the model with lower log-space RMSE, only over its fit range.
 Save both models' parameters, scores and selection in a CSV beside the figure.
+--fitting false skips both fits, dashed curves and CSV output (default: true).
 Default output: figures/autocorrelation/<data-timestamp>/ beside this script.
 """
 
@@ -77,8 +78,8 @@ def fit_decay_models(tau, trace):
 
 
 def plot_autocorrelation(data_dir=DEFAULT_DATA_DIR, L=26, T=None, T_index=None,
-                         xscale="log10", yscale="log10"):
-    """Select by index first, then temperature value, otherwise the first column."""
+                         xscale="log10", yscale="log10", fitting=True):
+    """Select by index, value or first column; return figure, fits and saved T."""
     if xscale not in ("log10", "linear") or yscale not in ("log10", "linear"):
         raise ValueError("xscale and yscale must be 'log10' or 'linear'")
     if T_index is None:
@@ -151,21 +152,23 @@ def plot_autocorrelation(data_dir=DEFAULT_DATA_DIR, L=26, T=None, T_index=None,
                         label=rf"$m={m:g}$")
             # Scale linear panels to the data before adding approximate fits.
             ylim = Y_LIMITS if yscale == "log10" else ax.get_ylim()
-            for color, (m, column, tau, traces) in enumerate(curves):
-                grid, predicted, fits = fit_decay_models(tau, traces[observable])
-                fit_records.extend(dict(L=L, T_index=column, T=temperature,
-                                        observable=observable, m=m, **fit) for fit in fits)
-                # White edges keep coincident dashed fits visible over the data.
-                ax.plot(grid, predicted, color=f"C{color}", ls="--", lw=2.2,
-                        path_effects=[pe.Stroke(linewidth=4, foreground="white"), pe.Normal()])
+            if fitting:
+                for color, (m, column, tau, traces) in enumerate(curves):
+                    grid, predicted, fits = fit_decay_models(tau, traces[observable])
+                    fit_records.extend(dict(L=L, T_index=column, T=temperature,
+                                            observable=observable, m=m, **fit) for fit in fits)
+                    # White edges keep coincident dashed fits visible over the data.
+                    ax.plot(grid, predicted, color=f"C{color}", ls="--", lw=2.2,
+                            path_effects=[pe.Stroke(linewidth=4, foreground="white"), pe.Normal()])
             ax.set(xlabel=r"$\tau$", ylabel=label, ylim=ylim, xlim=xlim)
             ax.grid(which="major", color="0.9", linewidth=0.6)
-            ax.text(0.04, 0.92 if yscale == "linear" else 0.06,
-                    "Dashed: best log-space fit", transform=ax.transAxes, fontsize=11)
+            if fitting:
+                ax.text(0.04, 0.92 if yscale == "linear" else 0.06,
+                        "Dashed: best log-space fit", transform=ax.transAxes, fontsize=11)
         handles, labels = axes[0].get_legend_handles_labels()
         fig.legend(handles, labels, ncol=5, fontsize=11, loc="outside lower center")
         fig.suptitle(f"{HAMILTONIAN}\nPBC, L={L}, T={temperature:g}")
-    return fig, fit_records
+    return fig, fit_records, temperature
 
 
 def main():
@@ -182,29 +185,31 @@ def main():
                         help="Horizontal axis scale (default: log10)")
     parser.add_argument("--yscale", choices=("log10", "linear"), default="log10",
                         help="Vertical axis scale (default: log10)")
+    parser.add_argument("--fitting", choices=("true", "false"), default="true",
+                        help="Fit exponential and power-law models and save CSV (default: true)")
     parser.add_argument("--output-dir", type=Path)
     args = parser.parse_args()
     output_dir = args.output_dir
     if output_dir is None:
         output_dir = ROOT / "figures" / "autocorrelation" / args.data_dir.resolve().name
     try:
-        fig, fit_records = plot_autocorrelation(args.data_dir, L=args.L, T=args.T,
-                                              T_index=args.T_index,
-                                              xscale=args.xscale, yscale=args.yscale)
+        fig, fit_records, temperature = plot_autocorrelation(
+            args.data_dir, L=args.L, T=args.T, T_index=args.T_index,
+            xscale=args.xscale, yscale=args.yscale, fitting=args.fitting == "true")
     except (OSError, ValueError) as error:
         parser.error(str(error))
-    temperature = fit_records[0]["T"]
     try:
         output_dir.mkdir(parents=True, exist_ok=True)
         output = output_dir / f"pxp_autocorrelation_T={temperature:g}_L={args.L}.png"
         fig.savefig(output, dpi=180)
         print(f"Saved {output}")
-        fit_output = output_dir / f"pxp_autocorrelation_fits_T={temperature:g}_L={args.L}.csv"
-        with fit_output.open("w", newline="", encoding="utf-8") as stream:
-            writer = csv.DictWriter(stream, fieldnames=fit_records[0].keys())
-            writer.writeheader()
-            writer.writerows(fit_records)
-        print(f"Saved {fit_output}")
+        if fit_records:
+            fit_output = output_dir / f"pxp_autocorrelation_fits_T={temperature:g}_L={args.L}.csv"
+            with fit_output.open("w", newline="", encoding="utf-8") as stream:
+                writer = csv.DictWriter(stream, fieldnames=fit_records[0].keys())
+                writer.writeheader()
+                writer.writerows(fit_records)
+            print(f"Saved {fit_output}")
     finally:
         plt.close(fig)
 
